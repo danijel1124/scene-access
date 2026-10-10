@@ -1,0 +1,47 @@
+name: Build Windows package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -p no:cacheprovider tests/ -q
+
+      - name: Build SceneAccess.exe
+        run: >-
+          pyinstaller --noconfirm --clean --windowed --onedir
+          --name SceneAccess --paths . SceneAccess.py
+
+      - name: Assemble source and Windows application
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP "SceneAccess"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          $excluded = @(".git", ".github", "build", "dist", ".pytest_cache", "__pycache__")
+          Get-ChildItem -Force | Where-Object { $excluded -notcontains $_.Name } | Copy-Item -Destination $package -Recurse -Force
+          Copy-Item "dist\SceneAccess\*" -Destination $package -Recurse -Force
+          Compress-Archive -Path "$package\*" -DestinationPath "dist\SceneAccess-windows-x64.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SceneAccess-windows-x64
+          path: dist/SceneAccess-windows-x64.zip
+          if-no-files-found: error
