@@ -35,8 +35,9 @@ jobs:
         run: |
           $package = Join-Path $env:RUNNER_TEMP "SceneAccess"
           New-Item -ItemType Directory -Force -Path $package | Out-Null
-          $excluded = @(".git", ".github", "build", "dist", ".pytest_cache", "__pycache__")
-          Get-ChildItem -Force | Where-Object { $excluded -notcontains $_.Name } | Copy-Item -Destination $package -Recurse -Force
+          $sourceArchive = Join-Path $env:RUNNER_TEMP "sceneaccess-source.zip"
+          git archive --format=zip --output $sourceArchive HEAD
+          Expand-Archive -Path $sourceArchive -DestinationPath $package -Force
           Copy-Item "dist\SceneAccess\*" -Destination $package -Recurse -Force
           Compress-Archive -Path "$package\*" -DestinationPath "dist\SceneAccess-windows-x64.zip" -Force
 
