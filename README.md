@@ -1,29 +1,31 @@
 # SceneAccess
 
-SceneAccess ist ein natives, zugängliches Werkzeug für fortlaufende Gespräche über lokale Videos. Es speichert den Videokontext lokal, führt Folgefragen mit stabiler OpenRouter-Session-ID weiter und ist als Grundlage für spätere Audio-Descriptions gedacht.
+SceneAccess is a native accessibility tool for continuing conversations about local videos. It stores the video context locally, continues follow-up questions with a stable OpenRouter session ID, and provides a foundation for future audio description features.
 
-## Bedienung
+[German translation](README.de.md)
 
-1. **Einstellungen** öffnen und Modell, Base-URL sowie optional den API-Key eintragen.
-2. **Neuer Chat mit Video** wählen und eine lokale `.mp4`, `.webm` oder `.mov` auswählen.
-3. Die erste Frage eingeben.
-4. Folgefragen im Eingabefeld stellen.
+## Usage
 
-Die Seitenleiste enthält die letzten Chats. Ein Chat funktioniert weiter, wenn die Originaldatei verschoben oder gelöscht wurde, denn der private lokale Video-Kontext bleibt erhalten.
+1. Open **Settings** and enter a model, base URL, and optionally an API key.
+2. Choose **New video chat** and select a local `.mp4`, `.webm`, or `.mov` file.
+3. Enter the first question.
+4. Ask follow-up questions in the question field.
 
-## Konfiguration und Datenschutz
+The sidebar lists recent chats. A chat remains usable if the original file is moved or deleted because the private local video context is retained.
 
-SceneAccess verwendet `wx.StandardPaths.GetUserDataDir()` und damit den nativen Benutzer-Anwendungsdatenordner des jeweiligen Betriebssystems. Es gibt keine fest codierten Linux-, Windows- oder Hermes-Pfade.
+## Configuration and privacy
 
-Dort liegen:
+SceneAccess uses `wx.StandardPaths.GetUserDataDir()` and therefore the native per-user application-data directory of the operating system. No Linux, Windows, or Hermes paths are hard-coded.
 
-- `config.json`: Modell, Base-URL und optional der API-Key
-- `chats/sceneaccess.db`: Titel, Modell, Pfad und Gesprächshistorie
-- `chats/sessions/<id>/context.data-url`: vollständige rekonstruierbare Videokopie als Base64-Data-URL
+That directory contains:
 
-Der API-Key kann alternativ über `OPENROUTER_API_KEY` gesetzt werden, diese Umgebungsvariable hat Vorrang. Base64 ist keine Verschlüsselung. Wer auf `context.data-url` zugreifen kann, besitzt eine Videokopie.
+- `config.json`: model, base URL, and optionally the API key
+- `chats/sceneaccess.db`: titles, models, paths, and conversation histories
+- `chats/sessions/<id>/context.data-url`: a complete reconstructable video copy as a Base64 data URL
 
-## Start aus dem Quellcode
+Alternatively, set `OPENROUTER_API_KEY`; the environment variable takes precedence. Base64 is not encryption. Anyone who can access `context.data-url` has a copy of the video.
+
+## Run from source
 
 ```bash
 python -m pip install -r requirements-dev.txt
@@ -31,11 +33,11 @@ python -m pytest -p no:cacheprovider tests/ -q
 python SceneAccess.py
 ```
 
-## Windows-Paket via GitHub Actions
+## Windows package through GitHub Actions
 
-Der Workflow `.github/workflows/windows-release.yml` läuft auf einem echten Windows-Runner. Er testet den Code, baut `SceneAccess.exe` mit PyInstaller im `--onedir`-Modus und erzeugt ein Artifact `SceneAccess-windows-x64.zip`.
+The workflow in `.github/workflows/windows-release.yml` runs on a real Windows runner. It tests the source, builds `SceneAccess.exe` with PyInstaller in `--onedir` mode, and uploads a `SceneAccess-windows-x64.zip` artifact.
 
-Nach dem Entpacken enthält die ZIP direkt:
+After extraction, the ZIP contains these entries directly:
 
 ```text
 SceneAccess.exe
@@ -43,7 +45,8 @@ _internal/
 sceneaccess/
 tests/
 README.md
+README.de.md
 ...
 ```
 
-Es gibt keinen zusätzlichen `windows/`-Ordner und keine selbstentpackende EXE. `_internal` muss neben `SceneAccess.exe` bleiben, weil es die Python- und wxPython-Laufzeit enthält.
+There is no additional `windows/` directory and no self-extracting executable. `_internal` must remain beside `SceneAccess.exe` because it contains the Python and wxPython runtime.
