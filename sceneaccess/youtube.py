@@ -157,9 +157,10 @@ class _QuietLogger:
 def download_options(target_dir: Path, max_height: int, progress: Callable[[dict[str, Any]], None] | None = None,
                      filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS) -> dict[str, Any]:
     options: dict[str, Any] = {
-        # Best resolution up to max_height, preferring mp4/m4a (most widely accepted by models),
-        # then the smallest file. Video and audio are merged, so the model also gets the sound.
-        "format_sort": [f"res:{max_height}", "ext:mp4:m4a", "+size"],
+        # Best resolution up to max_height, preferring H.264 in mp4 with m4a audio (most widely accepted
+        # by models; YouTube otherwise often picks AV1), then the smallest file. Video and audio are
+        # merged, so the model also gets the sound.
+        "format_sort": [f"res:{max_height}", "vcodec:h264", "ext:mp4:m4a", "+size"],
         "merge_output_format": "mp4",
         "noplaylist": True,
         "outtmpl": str(target_dir / output_template(filename_fields)),
