@@ -98,6 +98,34 @@ def test_record_follow_up_persists_question_and_answer(tmp_path: Path):
     assert [message["content"] for message in store.get_session(session.id, "matrix:room-a").history] == ["Is it glossy?", "No, it is matte."]
 
 
+def test_reassign_owner_moves_legacy_chats_to_the_new_owner(tmp_path: Path):
+    source = tmp_path / "jacket.mp4"
+    source.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="local:user", source_path=source, title="Jacket", model="openrouter/auto", initial_question="Describe it.")
+
+    store.reassign_owner("local:user", "local:danijel")
+
+    assert [item.id for item in store.list_sessions("local:danijel")] == [session.id]
+    assert store.list_sessions("local:user") == []
+
+
+def test_failed_video_read_leaves_no_session_behind(tmp_path: Path, monkeypatch):
+    source = tmp_path / "jacket.mp4"
+    source.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+
+    def fail(_self):
+        raise MemoryError
+
+    monkeypatch.setattr(Path, "read_bytes", fail)
+    with pytest.raises(MemoryError):
+        store.create_session(owner_id="local", source_path=source, title="Jacket", model="openrouter/auto", initial_question="Describe it.")
+
+    assert list(store.sessions_dir.iterdir()) == []
+    assert store.list_sessions("local") == []
+
+
 def test_recorded_usage_is_kept_locally_but_not_sent_to_the_provider(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")

@@ -9,7 +9,11 @@ SceneAccess is a native accessibility tool for continuing conversations about lo
 1. Open **Settings** and enter a model, base URL, and optionally an API key.
 2. Choose **New video chat** and select a local `.mp4`, `.webm`, or `.mov` file.
 3. Enter the first question.
-4. Ask follow-up questions in the question field.
+4. Ask follow-up questions in the question field. **Enter** sends the question, **Shift+Enter** inserts a line break.
+
+The **Chat history** list contains one item per message. Below every answer, a usage line shows the model that actually answered (useful with `openrouter/auto`) and the prompt tokens read from the cache (hit), not served from the cache (miss), and written to the cache. **Enter** on a list item opens it in a read-only text field for reading line by line.
+
+When a running screen reader such as NVDA is detected, SceneAccess announces that an answer is being generated, and moves the focus to the new answer when it arrives.
 
 The sidebar lists recent chats. A chat remains usable if the original file is moved or deleted because the private local video context is retained.
 

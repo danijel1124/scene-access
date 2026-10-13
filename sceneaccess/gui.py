@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import os
 import threading
 from pathlib import Path
@@ -10,8 +11,20 @@ import wx
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
 from .openrouter import OpenRouterClient
 from .session_store import VideoSession, VideoSessionStore
+from .speech import announce
 
-OWNER_ID = "local:" + os.environ.get("USER", "user")
+
+def _local_user() -> str:
+    # getpass also reads USERNAME, so it works on Windows, where USER is usually not set.
+    try:
+        return getpass.getuser() or "user"
+    except Exception:
+        return "user"
+
+
+OWNER_ID = "local:" + _local_user()
+# Earlier versions read only USER, so on Windows every chat was stored under this owner.
+LEGACY_OWNER_ID = "local:" + os.environ.get("USER", "user")
 
 
 def usage_text(usage: dict[str, Any] | None) -> str:
@@ -71,13 +84,34 @@ class SettingsDialog(wx.Dialog):
         return AppConfig(self.model.GetValue().strip(), self.base_url.GetValue().strip(), self.api_key.GetValue().strip())
 
 
+class MessageReaderDialog(wx.Dialog):
+    """Shows one chat message in a read-only text field, so it can be read line by line."""
+
+    def __init__(self, parent: wx.Window, text: str):
+        super().__init__(parent, title="Message", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        label = wx.StaticText(self, label="Message text")
+        self.text = wx.TextCtrl(self, value=text, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        buttons = self.CreateStdDialogButtonSizer(wx.CLOSE)
+        self.SetEscapeId(wx.ID_CLOSE)
+        layout = wx.BoxSizer(wx.VERTICAL)
+        layout.Add(label, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(self.text, 1, wx.EXPAND | wx.ALL, 12)
+        layout.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        self.SetSizer(layout)
+        self.SetSize((800, 600))
+        self.text.SetFocus()
+
+
 class MainFrame(wx.Frame):
     def __init__(self):
         super().__init__(None, title="SceneAccess", size=(1100, 760))
         self.config_path = config_path_from_standard_paths(wx.StandardPaths.Get())
         self.config = load_config(self.config_path)
         self.store = VideoSessionStore(self.config_path.parent / "chats")
+        if LEGACY_OWNER_ID != OWNER_ID:
+            self.store.reassign_owner(LEGACY_OWNER_ID, OWNER_ID)
         self.current: VideoSession | None = None
+        self.history_items: list[str] = []
         self.session_ids: list[str] = []
         self._build()
         self.refresh_sessions()
@@ -119,6 +153,34 @@ class MainFrame(wx.Frame):
         self.delete_button.Bind(wx.EVT_BUTTON, self.on_delete)
         self.sessions.Bind(wx.EVT_LISTBOX, self.on_open)
         self.send_button.Bind(wx.EVT_BUTTON, self.on_send)
+        self.transcript.Bind(wx.EVT_LISTBOX_DCLICK, lambda _event: self.open_selected_message())
+        # Enter is handled before the panel's keyboard navigation can consume it.
+        self.Bind(wx.EVT_CHAR_HOOK, self.on_char_hook)
+
+    def on_char_hook(self, event: wx.KeyEvent) -> None:
+        if not self.handle_enter(wx.Window.FindFocus(), event.GetKeyCode(), event.ShiftDown()):
+            event.Skip()
+
+    def handle_enter(self, focused: wx.Window | None, key_code: int, shift: bool) -> bool:
+        """Enter sends a question or opens a chat message; Shift+Enter keeps inserting a line break."""
+        if key_code not in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) or shift:
+            return False
+        if focused is self.question:
+            if self.send_button.IsEnabled():
+                self.on_send(None)
+            return True
+        if focused is self.transcript:
+            self.open_selected_message()
+            return True
+        return False
+
+    def open_selected_message(self) -> None:
+        index = self.transcript.GetSelection()
+        if index == wx.NOT_FOUND or index >= len(self.history_items):
+            return
+        with MessageReaderDialog(self, self.history_items[index]) as dialog:
+            dialog.ShowModal()
+        self.transcript.SetFocus()
 
     def refresh_sessions(self) -> None:
         sessions = self.store.list_sessions(OWNER_ID)
@@ -147,7 +209,13 @@ class MainFrame(wx.Frame):
         question = prompt_dialog.GetValue().strip()
         if not question:
             return
-        self.current = self.store.create_session(owner_id=OWNER_ID, source_path=source, title=source.name, model=self.config.model, initial_question=question)
+        try:
+            # Reading a large video can take a while, and one that does not fit into memory fails here.
+            with wx.BusyCursor():
+                self.current = self.store.create_session(owner_id=OWNER_ID, source_path=source, title=source.name, model=self.config.model, initial_question=question)
+        except (OSError, MemoryError) as error:
+            wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded", wx.OK | wx.ICON_ERROR)
+            return
         self.refresh_sessions()
         self.render_current()
         self._send(question, initial=True)
@@ -165,7 +233,11 @@ class MainFrame(wx.Frame):
         with wx.FileDialog(self, "Choose the original video at its new location", wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
-            self.store.update_source_path(self.current.id, OWNER_ID, Path(dialog.GetPath()))
+            try:
+                self.store.update_source_path(self.current.id, OWNER_ID, Path(dialog.GetPath()))
+            except OSError as error:
+                wx.MessageBox(f"The file path could not be updated: {error}", "Path not updated", wx.OK | wx.ICON_ERROR)
+                return
         self.current = self.store.get_session(self.current.id, OWNER_ID)
         self.render_current()
 
@@ -176,6 +248,7 @@ class MainFrame(wx.Frame):
             return
         self.store.delete_session(self.current.id, OWNER_ID)
         self.current = None
+        self.history_items = []
         self.transcript.Clear()
         self.status.SetLabel("Chat deleted.")
         self.refresh_sessions()
@@ -188,12 +261,13 @@ class MainFrame(wx.Frame):
         source = "The original file is no longer available." if session.source_missing else "The original file is still available."
         self.status.SetLabel(f"{session.title} | {session.model}\n{context} {source}")
         items = chat_history_items(session.initial_question, session.history)
+        self.history_items = items
         self.transcript.Set(items)
         # Select the newest answer rather than its usage line, so it is what gets read first.
         answers = [index for index, item in enumerate(items) if item.startswith("Model: ")]
         self.transcript.SetSelection(answers[-1] if answers else len(items) - 1)
 
-    def on_send(self, _event: wx.CommandEvent) -> None:
+    def on_send(self, _event: wx.CommandEvent | None) -> None:
         question = self.question.GetValue().strip()
         if not self.current or not question:
             return
@@ -210,6 +284,7 @@ class MainFrame(wx.Frame):
         session_id = self.current.id
         self.send_button.Disable()
         self.status.SetLabel("Request in progress. The video is being sent from the private local context.")
+        announce("Generating answer…")
 
         def worker() -> None:
             try:
@@ -232,6 +307,8 @@ class MainFrame(wx.Frame):
         self.status.SetLabel(self.status.GetLabel() + f"\nAnswer received from {answered_by}.")
         self.refresh_sessions()
         self.send_button.Enable()
+        # render_current selected the new answer; focusing the list makes the screen reader read it.
+        self.transcript.SetFocus()
 
     def _failed(self, error: str) -> None:
         self.send_button.Enable()

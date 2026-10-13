@@ -68,13 +68,13 @@ class VideoSessionStore:
         mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mov"}.get(source_path.suffix.lower())
         if not source_path.is_file() or not mime:
             raise FileNotFoundError(source_path)
+        # Read the video before creating anything, so a failed read leaves no empty session behind.
+        data_url = f"data:{mime};base64," + base64.b64encode(source_path.read_bytes()).decode("ascii")
         session_id = "vid_" + uuid.uuid4().hex
         directory = self.sessions_dir / session_id
         directory.mkdir(mode=0o700)
         data_url_path = directory / "context.data-url"
-        data_url_path.write_text(
-            f"data:{mime};base64," + base64.b64encode(source_path.read_bytes()).decode("ascii"), encoding="ascii"
-        )
+        data_url_path.write_text(data_url, encoding="ascii")
         os.chmod(data_url_path, 0o600)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -117,6 +117,10 @@ class VideoSessionStore:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE sessions SET source_path = ? WHERE id = ? AND owner_id = ?",
                          (str(source_path), session_id, owner_id))
+
+    def reassign_owner(self, old_owner_id: str, new_owner_id: str) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET owner_id = ? WHERE owner_id = ?", (new_owner_id, old_owner_id))
 
     def delete_session(self, session_id: str, owner_id: str) -> None:
         self.get_session(session_id, owner_id)

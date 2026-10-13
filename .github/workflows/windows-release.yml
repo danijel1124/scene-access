@@ -30,6 +30,7 @@ jobs:
       - name: Build SceneAccess.exe
         run: >-
           pyinstaller --noconfirm --clean --windowed --onedir
+          --collect-all accessible_output2
           --name SceneAccess --paths . SceneAccess.py
 
       - name: Assemble source and Windows application

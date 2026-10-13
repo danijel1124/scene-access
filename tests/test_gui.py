@@ -1,7 +1,43 @@
 import wx
 
 from sceneaccess.config import AppConfig
+from sceneaccess import gui
 from sceneaccess.gui import SettingsDialog, chat_history_items, usage_text
+
+
+def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    app = wx.App(False)
+    frame = gui.MainFrame()
+    sent, opened = [], []
+    monkeypatch.setattr(frame, "on_send", lambda _event: sent.append(True))
+    monkeypatch.setattr(frame, "open_selected_message", lambda: opened.append(True))
+    try:
+        assert frame.handle_enter(frame.question, wx.WXK_RETURN, shift=True) is False
+        assert sent == []
+        assert frame.handle_enter(frame.question, wx.WXK_RETURN, shift=False) is True
+        assert frame.handle_enter(frame.question, wx.WXK_NUMPAD_ENTER, shift=False) is True
+        assert sent == [True, True]
+        assert frame.handle_enter(frame.transcript, wx.WXK_RETURN, shift=False) is True
+        assert opened == [True]
+        assert frame.handle_enter(frame.sessions, wx.WXK_RETURN, shift=False) is False
+        assert frame.handle_enter(frame.question, ord("A"), shift=False) is False
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_message_reader_dialog_shows_the_full_message_read_only():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = gui.MessageReaderDialog(frame, "Model: first line\nsecond line")
+        assert dialog.text.GetValue() == "Model: first line\nsecond line"
+        assert not dialog.text.IsEditable()
+        dialog.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
 
 
 def test_settings_dialog_can_be_constructed_and_returns_its_values():

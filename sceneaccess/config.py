@@ -37,6 +37,8 @@ def save_config(path: Path, config: AppConfig) -> None:
         "base_url": config.base_url,
         "api_key": config.api_key,
     }, indent=2), encoding="utf-8")
+    # Restricts access on POSIX. On Windows chmod only toggles the read-only flag; there the
+    # per-user application-data directory's access control list keeps the file private.
     os.chmod(temporary, 0o600)
     temporary.replace(path)
     os.chmod(path, 0o600)
