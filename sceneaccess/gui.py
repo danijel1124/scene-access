@@ -26,24 +26,25 @@ def resolve_openrouter_key(config: AppConfig) -> str | None:
 class SettingsDialog(wx.Dialog):
     def __init__(self, parent: wx.Window, config: AppConfig):
         super().__init__(parent, title="OpenRouter settings")
-        panel = wx.Panel(self)
+        # All controls are children of the dialog itself: CreateStdDialogButtonSizer parents its
+        # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
         form = wx.FlexGridSizer(3, 2, 8, 8)
         form.AddGrowableCol(1, 1)
-        self.model = wx.TextCtrl(panel, value=config.model)
-        self.base_url = wx.TextCtrl(panel, value=config.base_url)
-        self.api_key = wx.TextCtrl(panel, value=config.api_key, style=wx.TE_PASSWORD)
+        self.model = wx.TextCtrl(self, value=config.model)
+        self.base_url = wx.TextCtrl(self, value=config.base_url)
+        self.api_key = wx.TextCtrl(self, value=config.api_key, style=wx.TE_PASSWORD)
         for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key)):
-            form.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             form.Add(control, 1, wx.EXPAND)
-        help_text = wx.StaticText(panel, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
+        help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
         layout.Add(form, 1, wx.EXPAND | wx.ALL, 12)
         layout.Add(help_text, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
-        panel.SetSizer(layout)
-        layout.Fit(self)
+        self.SetSizer(layout)
         self.SetMinSize((620, -1))
+        layout.Fit(self)
 
     def value(self) -> AppConfig:
         return AppConfig(self.model.GetValue().strip(), self.base_url.GetValue().strip(), self.api_key.GetValue().strip())
