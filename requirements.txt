@@ -1,2 +1,4 @@
 wxPython>=4.2.3
 accessible_output2>=0.17
+yt-dlp[default]>=2026.8.19
+imageio-ffmpeg>=0.6.0

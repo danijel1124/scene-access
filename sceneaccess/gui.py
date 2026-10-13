@@ -3,6 +3,7 @@ from __future__ import annotations
 import getpass
 import os
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,8 @@ from .config import AppConfig, config_path_from_standard_paths, load_config, sav
 from .openrouter import OpenRouterClient
 from .session_store import VideoSession, VideoSessionStore
 from .speech import announce
+from .youtube import (DEFAULT_FILENAME_FIELDS, DEFAULT_MAX_HEIGHT, FILENAME_FIELD_NAMES, FILENAME_FIELDS,
+                      MAX_HEIGHT_CHOICES, download_video, output_template)
 
 
 def _local_user() -> str:
@@ -53,21 +56,95 @@ def chat_history_items(initial_question: str, history: list[dict[str, Any]]) -> 
     return items
 
 
+class DownloadCancelled(Exception):
+    """Raised from the progress hook to stop a download the user cancelled."""
+
+
+def default_download_dir() -> Path:
+    return Path(wx.StandardPaths.Get().GetUserDir(wx.StandardPaths.Dir_Videos)) / "scene-access"
+
+
+def _url_from_clipboard() -> str:
+    """Suggests a copied link as the default, so it does not have to be pasted."""
+    text = ""
+    if wx.TheClipboard.Open():
+        try:
+            data = wx.TextDataObject()
+            if wx.TheClipboard.GetData(data):
+                text = data.GetText().strip()
+        finally:
+            wx.TheClipboard.Close()
+    return text if text.startswith(("https://", "http://")) and len(text.split()) == 1 else ""
+
+
 def resolve_openrouter_key(config: AppConfig) -> str | None:
     return os.environ.get("OPENROUTER_API_KEY") or config.api_key or None
 
 
+class FilenameDialog(wx.Dialog):
+    """Chooses the yt-dlp fields a downloaded video's file name is built from."""
+
+    def __init__(self, parent: wx.Window, fields: tuple[str, ...]):
+        super().__init__(parent, title="File name of downloaded videos", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        label = wx.StaticText(self, label="File name parts (Space toggles a part)")
+        self.parts = wx.CheckListBox(self, choices=[f"{name}: {description}" for name, description in FILENAME_FIELDS])
+        self.parts.SetCheckedItems([index for index, name in enumerate(FILENAME_FIELD_NAMES) if name in fields])
+        self.template = wx.StaticText(self)
+        reset = wx.Button(self, label="Reset to yt-dlp default")
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        layout = wx.BoxSizer(wx.VERTICAL)
+        layout.Add(label, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(self.parts, 1, wx.EXPAND | wx.ALL, 12)
+        layout.Add(self.template, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        layout.Add(reset, 0, wx.ALL, 12)
+        layout.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        self.SetSizer(layout)
+        self.SetSize((700, 600))
+        self.parts.Bind(wx.EVT_CHECKLISTBOX, lambda _event: self._show_template())
+        reset.Bind(wx.EVT_BUTTON, self._on_reset)
+        self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
+        self._show_template()
+
+    def value(self) -> tuple[str, ...]:
+        return tuple(FILENAME_FIELD_NAMES[index] for index in self.parts.GetCheckedItems())
+
+    def _show_template(self) -> None:
+        self.template.SetLabel("Template: " + output_template(self.value()) if self.value() else "Template: choose at least one part")
+
+    def _on_reset(self, _event: wx.CommandEvent) -> None:
+        self.parts.SetCheckedItems([FILENAME_FIELD_NAMES.index(name) for name in DEFAULT_FILENAME_FIELDS])
+        self._show_template()
+
+    def _on_ok(self, event: wx.CommandEvent) -> None:
+        if not self.value():
+            wx.MessageBox("Choose at least one file name part.", "No file name part", wx.OK | wx.ICON_ERROR)
+            return
+        event.Skip()
+
+
 class SettingsDialog(wx.Dialog):
     def __init__(self, parent: wx.Window, config: AppConfig):
-        super().__init__(parent, title="OpenRouter settings")
+        super().__init__(parent, title="Settings")
         # All controls are children of the dialog itself: CreateStdDialogButtonSizer parents its
         # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
-        form = wx.FlexGridSizer(3, 2, 8, 8)
+        form = wx.FlexGridSizer(6, 2, 8, 8)
         form.AddGrowableCol(1, 1)
         self.model = wx.TextCtrl(self, value=config.model)
         self.base_url = wx.TextCtrl(self, value=config.base_url)
         self.api_key = wx.TextCtrl(self, value=config.api_key, style=wx.TE_PASSWORD)
-        for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key)):
+        self.heights = sorted({*MAX_HEIGHT_CHOICES, config.youtube_max_height})
+        self.youtube_quality = wx.Choice(self, choices=[
+            f"Up to {height}p" + (" (recommended)" if height == DEFAULT_MAX_HEIGHT else "") for height in self.heights
+        ])
+        self.youtube_quality.SetSelection(self.heights.index(config.youtube_max_height))
+        self.download_dir = wx.DirPickerCtrl(self, path=config.download_dir or str(default_download_dir()),
+                                             style=wx.DIRP_USE_TEXTCTRL | wx.DIRP_DIR_MUST_EXIST)
+        self.filename_fields = config.filename_fields
+        self.filename_button = wx.Button(self, label="File name…")
+        self.filename_button.Bind(wx.EVT_BUTTON, self._on_filename)
+        for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key),
+                               ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
+                               ("Downloaded file name", self.filename_button)):
             form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             form.Add(control, 1, wx.EXPAND)
         help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
@@ -81,7 +158,17 @@ class SettingsDialog(wx.Dialog):
         layout.Fit(self)
 
     def value(self) -> AppConfig:
-        return AppConfig(self.model.GetValue().strip(), self.base_url.GetValue().strip(), self.api_key.GetValue().strip())
+        download_dir = self.download_dir.GetPath().strip()
+        return AppConfig(self.model.GetValue().strip(), self.base_url.GetValue().strip(), self.api_key.GetValue().strip(),
+                         youtube_max_height=self.heights[self.youtube_quality.GetSelection()],
+                         # Keep "default" as empty, so it keeps following the Videos folder.
+                         download_dir="" if download_dir == str(default_download_dir()) else download_dir,
+                         filename_fields=self.filename_fields)
+
+    def _on_filename(self, _event: wx.CommandEvent) -> None:
+        with FilenameDialog(self, self.filename_fields) as dialog:
+            if dialog.ShowModal() == wx.ID_OK:
+                self.filename_fields = dialog.value()
 
 
 class MessageReaderDialog(wx.Dialog):
@@ -199,20 +286,130 @@ class MainFrame(wx.Frame):
         dialog.Destroy()
 
     def on_new(self, _event: wx.CommandEvent) -> None:
+        menu = wx.Menu()
+        local = menu.Append(wx.ID_ANY, "Start chat from local file")
+        youtube = menu.Append(wx.ID_ANY, "Start chat from YouTube")
+        chosen: list[int] = []
+        menu.Bind(wx.EVT_MENU, lambda event: chosen.append(event.GetId()))
+        self.new_button.PopupMenu(menu, (0, self.new_button.GetSize().height))
+        menu.Destroy()
+        # Act only after the menu has closed, so the next dialog does not open from inside it.
+        if chosen == [local.GetId()]:
+            self.new_from_local_file()
+        elif chosen == [youtube.GetId()]:
+            self.new_from_youtube()
+
+    def new_from_local_file(self) -> None:
         with wx.FileDialog(self, "Choose a local video", wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
             source = Path(dialog.GetPath())
-        prompt_dialog = wx.TextEntryDialog(self, "First question about the video:", "Start a video chat", "Describe this video.")
-        if prompt_dialog.ShowModal() != wx.ID_OK:
+        question = self._ask_first_question()
+        if question:
+            self._start_chat(source, source.name, question)
+
+    def new_from_youtube(self) -> None:
+        with wx.TextEntryDialog(self, "YouTube link:", "Start chat from YouTube", _url_from_clipboard()) as dialog:
+            if dialog.ShowModal() != wx.ID_OK:
+                return
+            url = dialog.GetValue().strip()
+        if not url:
             return
-        question = prompt_dialog.GetValue().strip()
+        question = self._ask_first_question()
         if not question:
             return
+        target_dir = self._download_dir()
+        if target_dir is None:
+            return
+        downloaded = self._download_with_progress(url, target_dir)
+        if downloaded:
+            self._start_chat(*downloaded, question)
+
+    def _download_dir(self) -> Path | None:
+        """Returns a usable download folder, asking for a new default when it is not available."""
+        if self.config.download_dir:
+            folder, available = Path(self.config.download_dir), Path(self.config.download_dir).is_dir()
+            reason = f"The download folder {folder} does not exist."
+        else:
+            # Only the Videos folder has to exist; the scene-access subfolder is created.
+            folder = default_download_dir()
+            available = folder.parent.is_dir()
+            reason = f"The Videos folder {folder.parent} does not exist."
+        if available:
+            try:
+                folder.mkdir(exist_ok=True)
+                return folder
+            except OSError as error:
+                reason = f"The download folder {folder} could not be created: {error}"
+        with wx.DirDialog(self, f"{reason} Choose the default download folder:", style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST) as dialog:
+            if dialog.ShowModal() != wx.ID_OK:
+                return None
+            folder = Path(dialog.GetPath())
+        self.config = replace(self.config, download_dir=str(folder))
+        save_config(self.config_path, self.config)
+        return folder
+
+    def _download_with_progress(self, url: str, target_dir: Path) -> tuple[Path, str] | None:
+        max_height = self.config.youtube_max_height
+        filename_fields = self.config.filename_fields
+        state: dict[str, Any] = {"percent": 0, "done": False, "cancel": False, "result": None, "error": None}
+
+        def progress(update: dict[str, Any]) -> None:
+            if state["cancel"]:
+                raise DownloadCancelled()
+            total = update.get("total_bytes") or update.get("total_bytes_estimate")
+            if update.get("status") == "downloading" and total:
+                state["percent"] = int(update.get("downloaded_bytes", 0) * 100 / total)
+
+        def worker() -> None:
+            try:
+                state["result"] = download_video(url, target_dir, max_height, progress, filename_fields)
+            except Exception as error:
+                state["error"] = error
+            finally:
+                state["done"] = True
+
+        existing = set(target_dir.iterdir())
+        announce("Downloading video…")
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        message = f"Downloading the video (up to {max_height}p) to {target_dir}"
+        with wx.ProgressDialog("Downloading from YouTube", message, maximum=100, parent=self,
+                               style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_ELAPSED_TIME) as dialog:
+            while not state["done"]:
+                # Video and audio are separate downloads, so the percentage restarts once.
+                keep_going, _skip = dialog.Update(min(state["percent"], 99))
+                if not keep_going:
+                    state["cancel"] = True
+                wx.MilliSleep(100)
+        thread.join()
+        if state["cancel"] or state["error"] is not None:
+            # Remove only the partial files this download created, never anything that was there before.
+            for leftover in set(target_dir.iterdir()) - existing:
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+        if state["cancel"]:
+            self.status.SetLabel("The download was cancelled.")
+            return None
+        if state["error"] is not None:
+            self.status.SetLabel("The video could not be downloaded.")
+            wx.MessageBox(str(state["error"]), "Download failed", wx.OK | wx.ICON_ERROR)
+            return None
+        return state["result"]
+
+    def _ask_first_question(self) -> str:
+        with wx.TextEntryDialog(self, "First question about the video:", "Start a video chat", "Describe this video.") as dialog:
+            if dialog.ShowModal() != wx.ID_OK:
+                return ""
+            return dialog.GetValue().strip()
+
+    def _start_chat(self, source: Path, title: str, question: str) -> None:
         try:
             # Reading a large video can take a while, and one that does not fit into memory fails here.
             with wx.BusyCursor():
-                self.current = self.store.create_session(owner_id=OWNER_ID, source_path=source, title=source.name, model=self.config.model, initial_question=question)
+                self.current = self.store.create_session(owner_id=OWNER_ID, source_path=source, title=title, model=self.config.model, initial_question=question)
         except (OSError, MemoryError) as error:
             wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded", wx.OK | wx.ICON_ERROR)
             return

@@ -27,6 +27,39 @@ def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path,
         app.Destroy()
 
 
+def test_default_download_folder_is_created_inside_an_existing_videos_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(gui, "default_download_dir", lambda: tmp_path / "Videos" / "scene-access")
+    (tmp_path / "Videos").mkdir()
+    app = wx.App(False)
+    frame = gui.MainFrame()
+    try:
+        assert frame._download_dir() == tmp_path / "Videos" / "scene-access"
+        assert (tmp_path / "Videos" / "scene-access").is_dir()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_filename_dialog_toggles_parts_and_resets_to_the_yt_dlp_default():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = gui.FilenameDialog(frame, ("title", "id"))
+        assert dialog.value() == ("title", "id")
+        assert dialog.template.GetLabel() == "Template: %(title)s [%(id)s].%(ext)s"
+        dialog.parts.Check(gui.FILENAME_FIELD_NAMES.index("uploader"))
+        dialog._show_template()
+        assert dialog.value() == ("title", "id", "uploader")
+        assert dialog.template.GetLabel() == "Template: %(title)s [%(id)s] [%(uploader)s].%(ext)s"
+        dialog._on_reset(None)
+        assert dialog.value() == ("title", "id")
+        dialog.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
 def test_message_reader_dialog_shows_the_full_message_read_only():
     app = wx.App(False)
     frame = wx.Frame(None)
@@ -47,6 +80,8 @@ def test_settings_dialog_can_be_constructed_and_returns_its_values():
     try:
         dialog = SettingsDialog(frame, expected)
         assert dialog.value() == expected
+        dialog.youtube_quality.SetSelection(dialog.heights.index(720))
+        assert dialog.value().youtube_max_height == 720
         dialog.Destroy()
     finally:
         frame.Destroy()

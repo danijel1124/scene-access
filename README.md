@@ -7,13 +7,15 @@ SceneAccess is a native accessibility tool for continuing conversations about lo
 ## Usage
 
 1. Open **Settings** and enter a model, base URL, and optionally an API key.
-2. Choose **New video chat** and select a local `.mp4`, `.webm`, or `.mov` file.
+2. Choose **New video chat**, then **Start chat from local file** to select a local `.mp4`, `.webm`, or `.mov` file, or **Start chat from YouTube** to enter a link. A copied link is suggested automatically.
 3. Enter the first question.
 4. Ask follow-up questions in the question field. **Enter** sends the question, **Shift+Enter** inserts a line break.
 
 The **Chat history** list contains one item per message. Below every answer, a usage line shows the model that actually answered (useful with `openrouter/auto`) and the prompt tokens read from the cache (hit), not served from the cache (miss), and written to the cache. **Enter** on a list item opens it in a read-only text field for reading line by line.
 
 When a running screen reader such as NVDA is detected, SceneAccess announces that an answer is being generated, and moves the focus to the new answer when it arrives.
+
+YouTube videos are downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) in a progress dialog that can be cancelled. By default SceneAccess downloads the best quality up to 480p, which keeps details recognizable without HD file sizes, with video and audio merged into an MP4. **Settings** lets you choose between 240p and 1080p. Videos are saved to `scene-access` in your Videos folder; if that folder does not exist, SceneAccess asks for a default download folder, which can also be changed in **Settings**. Files are named like yt-dlp's default, `Title [ID].mp4`; **Settings → File name…** lets you check any yt-dlp output template field to include, with further parts added in brackets. A bundled ffmpeg merges video and audio; if Deno or Node.js is installed, yt-dlp uses it for full YouTube support.
 
 The sidebar lists recent chats. A chat remains usable if the original file is moved or deleted because the private local video context is retained.
 
