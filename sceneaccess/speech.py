@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 _auto: Any = None
 _loaded = False
+
+
+def _point_frozen_lookup_at_bundled_files() -> None:
+    # In a frozen app, accessible_output2 looks for its screen reader client DLLs next to the
+    # executable, but PyInstaller 6 places bundled files in the _internal contents directory.
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if getattr(sys, "frozen", False) and bundle_dir:
+        from platform_utils import paths
+        paths.embedded_data_path = lambda: bundle_dir
 
 
 def _screen_reader() -> Any:
@@ -13,6 +23,7 @@ def _screen_reader() -> Any:
     if not _loaded:
         _loaded = True
         try:
+            _point_frozen_lookup_at_bundled_files()
             from accessible_output2.outputs.auto import Auto
             _auto = Auto()
         except Exception:

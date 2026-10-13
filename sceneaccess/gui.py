@@ -302,13 +302,18 @@ class MainFrame(wx.Frame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _completed(self, session_id: str, answered_by: str) -> None:
+        list_had_focus = wx.Window.FindFocus() is self.transcript
         self.current = self.store.get_session(session_id, OWNER_ID)
         self.render_current()
         self.status.SetLabel(self.status.GetLabel() + f"\nAnswer received from {answered_by}.")
         self.refresh_sessions()
         self.send_button.Enable()
-        # render_current selected the new answer; focusing the list makes the screen reader read it.
-        self.transcript.SetFocus()
+        # render_current selected the new answer. Moving focus to the list makes the screen reader
+        # read it; if the list already had focus, nothing would be read, so announce it instead.
+        if list_had_focus:
+            announce(self.history_items[self.transcript.GetSelection()])
+        else:
+            self.transcript.SetFocus()
 
     def _failed(self, error: str) -> None:
         self.send_button.Enable()
