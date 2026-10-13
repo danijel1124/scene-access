@@ -11,8 +11,19 @@ from .session_store import VideoSession
 @dataclass(frozen=True)
 class Completion:
     answer: str
+    model: str
     prompt_tokens: int
-    cached_tokens: int
+    # None means the provider did not report cache details, which is different from zero.
+    cached_tokens: int | None
+    cache_write_tokens: int | None
+
+    def usage_record(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "prompt_tokens": self.prompt_tokens,
+            "cached_tokens": self.cached_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+        }
 
 
 class OpenRouterClient:
@@ -39,5 +50,17 @@ class OpenRouterClient:
         if "error" in data:
             raise RuntimeError(data["error"].get("message", "OpenRouter request failed"))
         answer = data["choices"][0]["message"]["content"]
-        usage = data.get("usage", {})
-        return Completion(answer, int(usage.get("prompt_tokens", 0)), int(usage.get("cached_tokens", 0)))
+        usage = data.get("usage") or {}
+        details = usage.get("prompt_tokens_details") or {}
+        return Completion(
+            answer,
+            # The response model is the one that actually answered, e.g. the pick of openrouter/auto.
+            model=str(data.get("model") or session.model),
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            cached_tokens=_optional_int(details.get("cached_tokens")),
+            cache_write_tokens=_optional_int(details.get("cache_write_tokens")),
+        )
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)

@@ -22,7 +22,7 @@ class VideoSession:
     source_path: str
     model: str
     initial_question: str
-    history: list[dict[str, str]]
+    history: list[dict[str, Any]]
     data_url_path: Path
 
     @property
@@ -35,14 +35,15 @@ class VideoSession:
 
     @property
     def messages(self) -> list[dict[str, Any]]:
+        # OpenRouter reads explicit cache breakpoints from content parts, not from the message.
+        # History entries may carry local usage data, which must not be sent to the provider.
         return [{
             "role": "user",
-            "cache_control": {"type": "ephemeral"},
             "content": [
                 {"type": "text", "text": self.initial_question},
-                {"type": "video_url", "video_url": {"url": self.video_data_url}},
+                {"type": "video_url", "video_url": {"url": self.video_data_url}, "cache_control": {"type": "ephemeral"}},
             ],
-        }, *self.history]
+        }, *({"role": message["role"], "content": message["content"]} for message in self.history)]
 
 
 class VideoSessionStore:
@@ -94,16 +95,16 @@ class VideoSessionStore:
             )]
         return [self.get_session(session_id, owner_id) for session_id in ids]
 
-    def record_answer(self, session_id: str, owner_id: str, answer: str) -> None:
+    def record_answer(self, session_id: str, owner_id: str, answer: str, usage: dict[str, Any] | None = None) -> None:
         session = self.get_session(session_id, owner_id)
-        history = [*session.history, {"role": "assistant", "content": answer}]
+        history = [*session.history, _assistant_entry(answer, usage)]
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
                          (json.dumps(history), session_id, owner_id))
 
-    def record_follow_up(self, session_id: str, owner_id: str, question: str, answer: str) -> None:
+    def record_follow_up(self, session_id: str, owner_id: str, question: str, answer: str, usage: dict[str, Any] | None = None) -> None:
         session = self.get_session(session_id, owner_id)
-        history = [*session.history, {"role": "user", "content": question}, {"role": "assistant", "content": answer}]
+        history = [*session.history, {"role": "user", "content": question}, _assistant_entry(answer, usage)]
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
                          (json.dumps(history), session_id, owner_id))
@@ -129,3 +130,10 @@ class VideoSessionStore:
     def build_follow_up_messages(self, session_id: str, owner_id: str, question: str) -> list[dict[str, Any]]:
         session = self.get_session(session_id, owner_id)
         return [*session.messages, {"role": "user", "content": question}]
+
+
+def _assistant_entry(answer: str, usage: dict[str, Any] | None) -> dict[str, Any]:
+    entry: dict[str, Any] = {"role": "assistant", "content": answer}
+    if usage is not None:
+        entry["usage"] = usage
+    return entry

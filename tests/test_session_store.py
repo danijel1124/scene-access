@@ -24,8 +24,9 @@ def test_create_session_keeps_private_data_url_after_source_is_deleted(tmp_path:
 
     assert restored.source_missing is True
     assert restored.video_data_url == "data:video/mp4;base64," + base64.b64encode(b"fake-mp4-payload").decode("ascii")
-    assert restored.messages[0]["cache_control"] == {"type": "ephemeral"}
     assert restored.messages[0]["content"][1]["type"] == "video_url"
+    assert restored.messages[0]["content"][1]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in restored.messages[0]
 
 
 def test_follow_up_appends_only_new_question_to_cacheable_history(tmp_path: Path):
@@ -95,6 +96,20 @@ def test_record_follow_up_persists_question_and_answer(tmp_path: Path):
     store.record_follow_up(session.id, "matrix:room-a", "Is it glossy?", "No, it is matte.")
 
     assert [message["content"] for message in store.get_session(session.id, "matrix:room-a").history] == ["Is it glossy?", "No, it is matte."]
+
+
+def test_recorded_usage_is_kept_locally_but_not_sent_to_the_provider(tmp_path: Path):
+    source = tmp_path / "jacket.mp4"
+    source.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="matrix:room-a", source_path=source, title="Jacket", model="openrouter/auto", initial_question="Describe it.")
+    usage = {"model": "z-ai/glm-4.5v", "prompt_tokens": 42, "cached_tokens": 40, "cache_write_tokens": 0}
+
+    store.record_answer(session.id, "matrix:room-a", "A jacket.", usage)
+
+    assert store.get_session(session.id, "matrix:room-a").history[0]["usage"] == usage
+    messages = store.build_follow_up_messages(session.id, "matrix:room-a", "Is it glossy?")
+    assert messages[1] == {"role": "assistant", "content": "A jacket."}
 
 
 def test_update_source_path_keeps_the_existing_video_context(tmp_path: Path):

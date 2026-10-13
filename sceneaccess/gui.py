@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
+from typing import Any
 
 import wx
 
@@ -13,10 +14,30 @@ from .session_store import VideoSession, VideoSessionStore
 OWNER_ID = "local:" + os.environ.get("USER", "user")
 
 
-def cache_status_text(cached_tokens: int, prompt_tokens: int) -> str:
-    if cached_tokens:
-        return f"Cache hit confirmed: {cached_tokens:,} of {prompt_tokens:,} prompt tokens"
-    return "No cache hit was confirmed. Processing the video again may incur costs."
+def usage_text(usage: dict[str, Any] | None) -> str:
+    if not usage:
+        return "Usage: no data was recorded for this answer."
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    cached_tokens = usage.get("cached_tokens")
+    cache_write_tokens = usage.get("cache_write_tokens")
+    if cached_tokens is None:
+        cache = "cache details were not reported by the provider"
+    else:
+        write = "not reported" if cache_write_tokens is None else f"{cache_write_tokens:,}"
+        cache = (f"cache read (hit): {cached_tokens:,} | not from cache (miss): {max(prompt_tokens - cached_tokens, 0):,}"
+                 f" | cache write: {write}")
+    return f"Usage: model {usage.get('model') or 'unknown'} | prompt tokens: {prompt_tokens:,} | {cache}"
+
+
+def chat_history_items(initial_question: str, history: list[dict[str, Any]]) -> list[str]:
+    items = [f"You: {initial_question}"]
+    for message in history:
+        if message["role"] == "user":
+            items.append(f"You: {message['content']}")
+        else:
+            items.append(f"Model: {message['content']}")
+            items.append(usage_text(message.get("usage")))
+    return items
 
 
 def resolve_openrouter_key(config: AppConfig) -> str | None:
@@ -78,10 +99,13 @@ class MainFrame(wx.Frame):
         left.Add(self.sessions, 1, wx.EXPAND | wx.ALL, 6)
         right = wx.BoxSizer(wx.VERTICAL)
         self.status = wx.StaticText(panel, label="Start a new chat with a local video file.")
-        self.transcript = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
+        # The label directly before the list gives it its accessible name for screen readers.
+        history_label = wx.StaticText(panel, label="Chat history")
+        self.transcript = wx.ListBox(panel)
         self.question = wx.TextCtrl(panel, style=wx.TE_MULTILINE)
         self.send_button = wx.Button(panel, label="Send question")
         right.Add(self.status, 0, wx.EXPAND | wx.ALL, 8)
+        right.Add(history_label, 0, wx.LEFT | wx.RIGHT, 8)
         right.Add(self.transcript, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         right.Add(wx.StaticText(panel, label="Question"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
         right.Add(self.question, 0, wx.EXPAND | wx.ALL, 8)
@@ -162,12 +186,12 @@ class MainFrame(wx.Frame):
         session = self.current
         context = "The local video context is stored; the original file is not required."
         source = "The original file is no longer available." if session.source_missing else "The original file is still available."
-        self.status.SetLabel(f"{session.title} | {session.model}\n{context} {source}\nCache status: unknown until the next provider response.")
-        transcript = [f"You: {session.initial_question}"]
-        for message in session.history:
-            label = "You" if message["role"] == "user" else "Model"
-            transcript.append(f"{label}: {message['content']}")
-        self.transcript.SetValue("\n\n".join(transcript))
+        self.status.SetLabel(f"{session.title} | {session.model}\n{context} {source}")
+        items = chat_history_items(session.initial_question, session.history)
+        self.transcript.Set(items)
+        # Select the newest answer rather than its usage line, so it is what gets read first.
+        answers = [index for index, item in enumerate(items) if item.startswith("Model: ")]
+        self.transcript.SetSelection(answers[-1] if answers else len(items) - 1)
 
     def on_send(self, _event: wx.CommandEvent) -> None:
         question = self.question.GetValue().strip()
@@ -193,19 +217,19 @@ class MainFrame(wx.Frame):
                 messages = session.messages if initial else self.store.build_follow_up_messages(session_id, OWNER_ID, question)
                 result = OpenRouterClient(api_key, base_url=self.config.base_url).complete(session, messages)
                 if initial:
-                    self.store.record_answer(session_id, OWNER_ID, result.answer)
+                    self.store.record_answer(session_id, OWNER_ID, result.answer, result.usage_record())
                 else:
-                    self.store.record_follow_up(session_id, OWNER_ID, question, result.answer)
-                wx.CallAfter(self._completed, session_id, result.answer, result.cached_tokens, result.prompt_tokens)
+                    self.store.record_follow_up(session_id, OWNER_ID, question, result.answer, result.usage_record())
+                wx.CallAfter(self._completed, session_id, result.model)
             except Exception as error:
                 wx.CallAfter(self._failed, str(error))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _completed(self, session_id: str, _answer: str, cached_tokens: int, prompt_tokens: int) -> None:
+    def _completed(self, session_id: str, answered_by: str) -> None:
         self.current = self.store.get_session(session_id, OWNER_ID)
         self.render_current()
-        self.status.SetLabel(self.status.GetLabel() + "\n" + cache_status_text(cached_tokens, prompt_tokens))
+        self.status.SetLabel(self.status.GetLabel() + f"\nAnswer received from {answered_by}.")
         self.refresh_sessions()
         self.send_button.Enable()
 
