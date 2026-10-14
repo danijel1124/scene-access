@@ -3,6 +3,7 @@ from __future__ import annotations
 import getpass
 import os
 import re
+import shutil
 import sys
 import threading
 import traceback
@@ -13,15 +14,17 @@ import wx
 
 from .chat_history import chat_history_entries, transcript_entry
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
-from .dialogs import NO_PROFILE, MessageReaderDialog, SettingsDialog
-from .models import ModelCatalog, routing
+from .dialogs import (NO_PROFILE, SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
+                      SettingsDialog, StoredSizeDialog)
+from .models import AUTO_ROUTER, ModelCatalog, routing
 from .new_chat import NewChatMixin, url_from_clipboard
 from .openrouter import OpenRouterClient
 from .prompts import system_prompt
 from .session_store import TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession, VideoSessionStore
 from .speech import announce
-from .tools import ToolRunner, format_time, tool_definitions
+from .tools import ToolRunner, format_time, local_video, tool_definitions
 from .transcript import make_transcript, needs_transcript
+from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
 
 # yt-dlp's default file name ends with the video ID in brackets: "Title [jNQXAC9IVRw].mp4".
@@ -73,6 +76,8 @@ class MainFrame(NewChatMixin, wx.Frame):
         # "Don't show this dialog again" for a model: chosen in the size dialog, kept once the answer arrives.
         self.pending_size_skip = ""
         self.size_skip_after_answer: tuple[str, str] | None = None
+        # A chat whose too large stored video was sent as it is; it stops asking once the answer arrives.
+        self.size_confirm_after_answer = ""
         self._build()
         self.refresh_sessions()
 
@@ -84,12 +89,14 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.settings_button = wx.Button(panel, label="Settings")
         self.update_path_button = wx.Button(panel, label="Update original file path")
         self.setup_button = wx.Button(panel, label="Change prompt profile and tools")
+        self.chat_settings_button = wx.Button(panel, label="Chat settings")
         self.delete_button = wx.Button(panel, label="Delete current chat")
         self.sessions = wx.ListBox(panel)
         left.Add(self.new_button, 0, wx.EXPAND | wx.ALL, 6)
         left.Add(self.settings_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left.Add(self.update_path_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left.Add(self.setup_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        left.Add(self.chat_settings_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left.Add(self.delete_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left.Add(wx.StaticText(panel, label="Recent video chats"), 0, wx.LEFT | wx.TOP, 6)
         left.Add(self.sessions, 1, wx.EXPAND | wx.ALL, 6)
@@ -113,6 +120,7 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.settings_button.Bind(wx.EVT_BUTTON, self.on_settings)
         self.update_path_button.Bind(wx.EVT_BUTTON, self.on_update_path)
         self.setup_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_setup())
+        self.chat_settings_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_chat_settings())
         self.delete_button.Bind(wx.EVT_BUTTON, self.on_delete)
         self.sessions.Bind(wx.EVT_LISTBOX, self.on_open)
         self.send_button.Bind(wx.EVT_BUTTON, self.on_send)
@@ -208,10 +216,71 @@ class MainFrame(NewChatMixin, wx.Frame):
             return
         self.store.update_setup(self.current.id, OWNER_ID, system_prompt(self.config.profile_text(profile)),
                                 tool_definitions(online_video=bool(self.current.source_url)),
-                                audio_only=self.config.audio_only_auto)
+                                # The chat keeps its own choice from Chat settings.
+                                audio_only=self.current.audio_only)
         self.current = self.store.get_session(self.current.id, OWNER_ID)
         self.render_current()
         self.status.SetLabel(self.status.GetLabel() + f"\nPrompt profile set to {profile or NO_PROFILE}; tools enabled.")
+
+    def chat_model(self, session: VideoSession) -> str:
+        """The model a chat uses: its own, or the one in Settings if it has none ("default")."""
+        return session.model or self.config.model
+
+    def change_chat_settings(self) -> None:
+        if not self.current:
+            return
+        session = self.current
+        with wx.BusyCursor():
+            models = self.catalog.model_ids()
+        with ChatSettingsDialog(self, session.model, self.config.model, session.audio_only, session.sent_video_size,
+                                self.config.shrink_target_mb, models) as dialog:
+            if dialog.ShowModal() != wx.ID_OK:
+                return
+            model, audio_only, shrink = dialog.value()
+        if (model, audio_only) != (session.model, session.audio_only):
+            self.store.update_chat_settings(session.id, OWNER_ID, model, audio_only)
+        if shrink:
+            self.shrink_stored_video()
+        self.current = self.store.get_session(session.id, OWNER_ID)
+        self.render_current()
+
+    def shrink_stored_video(self) -> bool:
+        """Replaces the open chat's stored video by a shrunk copy, made from the original file if it is still
+        there. Returns False if cancelled or failed."""
+        with local_video(self.current) as source:
+            shrunk = self._shrink_with_progress(source)
+        if not shrunk:
+            return False
+        try:
+            self.store.replace_video(self.current.id, OWNER_ID, shrunk)
+        finally:
+            shutil.rmtree(shrunk.parent, ignore_errors=True)
+        self.current = self.store.get_session(self.current.id, OWNER_ID)
+        self.status.SetLabel(self.status.GetLabel() + f"\nThe stored video was shrunk to "
+                                                      f"{megabytes(self.current.sent_video_size)} once sent.")
+        return True
+
+    def _ask_about_stored_size(self) -> bool:
+        """Before a question in a chat whose stored video is too large: asks what to do. True to send now."""
+        session = self.current
+        model = self.chat_model(session)
+        if (not self.config.check_video_size or session.size_confirmed or session.sent_video_size <= SIZE_LIMIT
+                or (model != AUTO_ROUTER and model in self.config.size_check_skipped_models)):
+            return True
+        with StoredSizeDialog(self, session.sent_video_size, model) as dialog:
+            choice = dialog.ShowModal()
+            dont_ask = dialog.dont_ask.IsShown() and dialog.dont_ask.GetValue()
+        if choice == SIZE_SHRINK:
+            return self.shrink_stored_video()
+        if choice == SIZE_CHAT_SETTINGS:
+            self.change_chat_settings()
+            return False
+        if choice == SIZE_SEND:
+            # Kept once the answer arrives, like for a new chat; then this chat stops asking too.
+            self.size_skip_after_answer = (session.id, model) if dont_ask else None
+            self.size_confirm_after_answer = session.id
+            return True
+        return False
 
     def _find_online_source(self) -> bool:
         """Asks which YouTube video an older chat came from, as chats did not store the link at first.
@@ -276,7 +345,8 @@ class MainFrame(NewChatMixin, wx.Frame):
         session = self.current
         context = "The local video context is stored; the original file is not required."
         source = "The original file is no longer available." if session.source_missing else "The original file is still available."
-        self.status.SetLabel(f"{session.title} | {session.model}\n{context} {source}")
+        model = session.model or f"{self.config.model} (from Settings)"
+        self.status.SetLabel(f"{session.title} | {model}\n{context} {source}")
         entries = chat_history_entries(session.initial_question, session.history, session.transcript_state, session.transcript)
         items = [shown for shown, _full in entries]
         self.history_items = items
@@ -289,6 +359,9 @@ class MainFrame(NewChatMixin, wx.Frame):
     def on_send(self, _event: wx.CommandEvent | None) -> None:
         question = self.question.GetValue().strip()
         if not self.current or not question:
+            return
+        # The question stays in the field if the user cancels or first changes the chat settings.
+        if not self._ask_about_stored_size():
             return
         self.question.Clear()
         self._send(question, initial=not self.current.history)
@@ -315,10 +388,17 @@ class MainFrame(NewChatMixin, wx.Frame):
         def worker() -> None:
             try:
                 client = OpenRouterClient(api_key, base_url=self.config.base_url)
+                # A chat on "default" asks the model that is in Settings now.
                 session = self.store.get_session(session_id, OWNER_ID)
+                follows_settings = not session.model
+                session = replace(session, model=self.chat_model(session))
+                if follows_settings and session.transcript_state == TRANSCRIPT_NONE and needs_transcript(session, self.catalog):
+                    # Settings now name a model that cannot hear, so this chat needs a transcript after all.
+                    session = replace(session, transcript_state=TRANSCRIPT_PENDING)
                 if session.transcript_state == TRANSCRIPT_PENDING:
                     self._prepare_transcript(session, client)
                     session = self.store.get_session(session_id, OWNER_ID)
+                    session = replace(session, model=self.chat_model(session))
                 messages = session.messages if initial else self.store.build_follow_up_messages(session_id, OWNER_ID, question)
                 # Raises if this chat may only go to hearing models but the model list is unavailable.
                 options = routing(session.model, session.audio_only, self.catalog, self.config.ignored_providers,
@@ -369,6 +449,9 @@ class MainFrame(NewChatMixin, wx.Frame):
             if model not in self.config.size_check_skipped_models:
                 self.config = replace(self.config, size_check_skipped_models=(*self.config.size_check_skipped_models, model))
                 save_config(self.config_path, self.config)
+        if self.size_confirm_after_answer == session_id:
+            self.size_confirm_after_answer = ""
+            self.store.confirm_size(session_id, OWNER_ID)
         list_had_focus = wx.Window.FindFocus() is self.chat_list
         self.current = self.store.get_session(session_id, OWNER_ID)
         self.render_current()
@@ -385,6 +468,7 @@ class MainFrame(NewChatMixin, wx.Frame):
 
     def _failed(self, error: str) -> None:
         self.size_skip_after_answer = None
+        self.size_confirm_after_answer = ""
         self.send_button.Enable()
         # Nothing of the failed turn was stored; remove its progress items from the list.
         self.render_current()

@@ -313,7 +313,8 @@ class NewChatMixin:
             # Reading a large video can take a while, and one that does not fit into memory fails here.
             with wx.BusyCursor():
                 self.current = self.store.create_session(
-                    owner_id=self.owner_id, source_path=source, title=title, model=self.config.model, initial_question=question,
+                    # No model of its own: the chat follows Settings until Chat settings gives it one.
+                    owner_id=self.owner_id, source_path=source, title=title, model="", initial_question=question,
                     # Frozen for this chat: they precede the video in every request (see VideoSession).
                     system_prompt=system_prompt(self.config.profile_text(profile)),
                     tools=tool_definitions(online_video=bool(source_url)), source_url=source_url, video_info=video_info,

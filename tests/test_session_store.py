@@ -252,3 +252,43 @@ def test_update_source_path_keeps_the_existing_video_context(tmp_path: Path):
     restored = store.get_session(session.id, "matrix:room-a")
     assert restored.source_path == str(replacement.resolve())
     assert restored.video_data_url.endswith(base64.b64encode(b"fake-mp4-payload").decode("ascii"))
+
+
+def test_a_smaller_copy_is_sent_while_the_original_stays_the_source(tmp_path: Path):
+    original, small = tmp_path / "big.mp4", tmp_path / "small.mp4"
+    original.write_bytes(b"x" * 300)
+    small.write_bytes(b"y" * 30)
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="local", source_path=original, title="T", model="", initial_question="?",
+                                   sent_video=small)
+    assert session.source_path == str(original.resolve()) and session.model == ""
+    assert session.video_data_url.endswith(base64.b64encode(b"y" * 30).decode("ascii"))
+    assert session.sent_video_size == len("data:video/mp4;base64,") + 40
+
+    assert session.size_confirmed is False
+    store.confirm_size(session.id, "local")
+    assert store.get_session(session.id, "local").size_confirmed is True
+    smaller = tmp_path / "smaller.mp4"
+    smaller.write_bytes(b"z" * 3)
+    store.replace_video(session.id, "local", smaller)
+    replaced = store.get_session(session.id, "local")
+    # Another video: its size has not been confirmed yet.
+    assert replaced.video_data_url == "data:video/mp4;base64,enp6" and replaced.size_confirmed is False
+    store.confirm_size(session.id, "local")
+    store.update_chat_settings(session.id, "local", "a/one", False)
+    assert store.get_session(session.id, "local").size_confirmed is False
+
+
+def test_chat_settings_change_the_model_and_decide_about_the_transcript_again(tmp_path: Path):
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="local", source_path=video, title="T", model="", initial_question="?")
+    store.update_chat_settings(session.id, "local", "z-ai/glm-flash", False)
+    changed = store.get_session(session.id, "local")
+    # The new model may not hear the video, so the next question checks whether it needs a transcript.
+    assert (changed.model, changed.audio_only, changed.transcript_state) == ("z-ai/glm-flash", False, "pending")
+    store.update_transcript(session.id, "local", "done", "[00:01] Hello")
+    store.update_chat_settings(session.id, "local", "", True)
+    kept = store.get_session(session.id, "local")
+    assert (kept.model, kept.audio_only, kept.transcript_state, kept.transcript) == ("", True, "done", "[00:01] Hello")

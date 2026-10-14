@@ -194,13 +194,15 @@ class ProfilesDialog(wx.Dialog):
 
 
 class AddModelDialog(wx.Dialog):
-    """Finds a model to exclude by typing part of its ID; a pattern with * such as "google/*" can be added too."""
+    """Finds a model by typing part of its ID; with allow_patterns, a pattern such as "google/*" too."""
 
-    def __init__(self, parent: wx.Window, models: list[str]):
-        super().__init__(parent, title="Exclude a model", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+    def __init__(self, parent: wx.Window, models: list[str], title: str = "Exclude a model", allow_patterns: bool = True):
+        super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.models = models
+        self.allow_patterns = allow_patterns
         self.entries: list[str] = []
-        filter_label = wx.StaticText(self, label="Part of the model ID, or a pattern such as google/* (Enter adds the selected model)")
+        filter_label = wx.StaticText(self, label="Part of the model ID, or a pattern such as google/* (Enter adds the selected model)"
+                                     if allow_patterns else "Part of the model ID (Enter chooses the selected model)")
         self.filter = wx.TextCtrl(self)
         self.list_label = wx.StaticText(self)
         self.matches = wx.ListBox(self)
@@ -223,7 +225,7 @@ class AddModelDialog(wx.Dialog):
     def _show_matches(self) -> None:
         text = self.filter.GetValue().strip()
         found = [model for model in self.models if text.lower() in model.lower()] if text else []
-        self.entries = ([text] if "*" in text else []) + found
+        self.entries = ([text] if "*" in text and self.allow_patterns else []) + found
         self.matches.Set([f"Pattern: {entry}" if "*" in entry else entry for entry in self.entries])
         if self.entries:
             self.matches.SetSelection(0)
@@ -392,6 +394,104 @@ class SizeDialog(wx.Dialog):
         self.SetSizer(layout)
         self.SetSize((760, 520))
         self.message.SetFocus()
+
+
+SIZE_CHAT_SETTINGS = wx.ID_HIGHEST + 105
+
+
+def stored_size_message(sent_size: int, model: str) -> str:
+    skip = (f"If you send it and it works, check \"Don't show this dialog again\" to skip this question for {model}.\n\n"
+            if model != AUTO_ROUTER else "")
+    return (f"This chat's stored video is {megabytes(sent_size)} once sent, but some models accept videos only up "
+            f"to about {megabytes(SIZE_LIMIT)}, so this question may fail with \"Invalid content\".\n\n"
+            "Shrink the stored video: SceneAccess makes a smaller copy for this chat with ffmpeg. The next question "
+            "then sends the video uncached once, so it costs more.\n\n"
+            "Chat settings: choose another model for this chat, for example turn off \"only models that hear\", so "
+            "that openrouter/auto may pick a model that only sees the picture and gets a transcript of the speech "
+            "(about $0.11 per hour of sound, made once).\n\n"
+            f"Send as it is: it may not work.\n\n{skip}"
+            "Settings can turn this size check off completely.")
+
+
+class StoredSizeDialog(wx.Dialog):
+    """Asks what to do before a question in a chat whose stored video is too large for some providers."""
+
+    def __init__(self, parent: wx.Window, sent_size: int, model: str):
+        super().__init__(parent, title="The chat's video is large", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        label = wx.StaticText(self, label="Message")
+        self.message = wx.TextCtrl(self, value=stored_size_message(sent_size, model),
+                                   style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 260))
+        self.dont_ask = wx.CheckBox(self, label="Don't show this dialog again")
+        self.dont_ask.Show(model != AUTO_ROUTER)
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        for action, text in ((SIZE_SHRINK, "Shrink the stored video"), (SIZE_CHAT_SETTINGS, "Chat settings…"),
+                             (SIZE_SEND, "Send as it is"), (wx.ID_CANCEL, "Cancel")):
+            button = wx.Button(self, action, text)
+            button.Bind(wx.EVT_BUTTON, lambda _event, chosen=action: self.EndModal(chosen))
+            row.Add(button, 0, wx.RIGHT, 8)
+        layout = wx.BoxSizer(wx.VERTICAL)
+        layout.Add(label, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(self.message, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(self.dont_ask, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(row, 0, wx.ALL, 12)
+        self.SetSizer(layout)
+        self.SetSize((760, 520))
+        self.message.SetFocus()
+
+
+class ChatSettingsDialog(wx.Dialog):
+    """The open chat's own model, whether openrouter/auto may pick only hearing models, and shrinking its video."""
+
+    def __init__(self, parent: wx.Window, model: str, settings_model: str, audio_only: bool, sent_size: int,
+                 shrink_target_mb: int, models: list[str] | None = None):
+        super().__init__(parent, title="Chat settings")
+        self.models = models or []
+        self.use_default = wx.CheckBox(self, label=f"Use the model from Settings ({settings_model})")
+        self.use_default.SetValue(not model)
+        model_label = wx.StaticText(self, label="Model for this chat")
+        self.model = wx.TextCtrl(self, value=model or settings_model)
+        self.find = wx.Button(self, label="Find model…")
+        self.audio_only = wx.CheckBox(self, label="With openrouter/auto, use only models that hear the video's sound")
+        self.audio_only.SetValue(audio_only)
+        self.shrink = wx.CheckBox(self, label=f"Shrink the stored video ({megabytes(sent_size)} once sent) to at most "
+                                              f"{shrink_target_mb} MB")
+        note = wx.StaticText(self, label="A new model or a shrunk video makes the next question send the video "
+                                         "uncached once, so it costs more. If the model may then be one that cannot "
+                                         "hear, that question first transcribes the speech (about $0.11 per hour of sound).")
+        note.Wrap(580)
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        layout = wx.BoxSizer(wx.VERTICAL)
+        for control in (self.use_default, model_label, self.model, self.find, self.audio_only, self.shrink, note):
+            layout.Add(control, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
+        self.SetSizer(layout)
+        self.SetMinSize((620, -1))
+        layout.Fit(self)
+        self.use_default.Bind(wx.EVT_CHECKBOX, lambda _event: self._update())
+        self.find.Bind(wx.EVT_BUTTON, self._on_find)
+        self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
+        self._update()
+
+    def value(self) -> tuple[str, bool, bool]:
+        """The chat's model ("" for the one in Settings), only hearing models, and whether to shrink the video."""
+        model = "" if self.use_default.GetValue() else self.model.GetValue().strip()
+        return model, self.audio_only.GetValue(), self.shrink.GetValue()
+
+    def _update(self) -> None:
+        for control in (self.model, self.find):
+            control.Enable(not self.use_default.GetValue())
+
+    def _on_find(self, _event: wx.CommandEvent) -> None:
+        with AddModelDialog(self, self.models, title="Choose a model for this chat", allow_patterns=False) as dialog:
+            if dialog.ShowModal() == wx.ID_OK:
+                self.model.SetValue(dialog.value())
+        self.model.SetFocus()
+
+    def _on_ok(self, event: wx.CommandEvent) -> None:
+        if not self.use_default.GetValue() and not self.model.GetValue().strip():
+            wx.MessageBox("Enter a model or use the model from Settings.", "No model", wx.OK | wx.ICON_ERROR, self)
+            return
+        event.Skip()
 
 
 class StartChatDialog(wx.Dialog):

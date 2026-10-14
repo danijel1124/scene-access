@@ -54,6 +54,12 @@ Bevor ein Chat mit einem Video startet, das gesendet größer als 19 MB wäre, e
 
 Bei einem anderen Modell als `openrouter/auto` überspringt **Don't show this dialog again** die Frage für dieses Modell, sobald ein großes Video beantwortet wurde. **Settings → Video size** schaltet die Frage ganz ab (zu große Videos scheitern dann) oder fragt für übersprungene Modelle wieder. **Advanced…** im Dialog Start a video chat stellt die YouTube-Qualität ein und kann zu große Videos ohne Nachfrage automatisch auf eine gewählte Größe verkleinern.
 
+Chats, die vor dieser Prüfung begonnen wurden, können ein größeres Video gespeichert haben. Vor einer Frage in so einem Chat bietet SceneAccess an: **Shrink the stored video** (die nächste Frage sendet es dann einmal ungecacht und kostet mehr), **Chat settings…** öffnen, etwa damit `openrouter/auto` ein Modell wählen darf, das nur das Bild sieht und ein Transkript bekommt, oder **Send as it is**. Wurde eine so gesendete Frage beantwortet, fragt der Chat nicht mehr, bis sich sein Video oder seine Chat-Einstellungen ändern.
+
+## Chat-Einstellungen
+
+**Chat settings** legt das Modell des offenen Chats fest. Ein neuer Chat nutzt das Modell aus den Settings und folgt ihm, wenn es dort geändert wird (kann das neue Modell nicht hören, macht die nächste Frage des Chats zuerst ein Transkript, etwa 0,11 Dollar pro Stunde Ton, und sendet das Video einmal ungecacht); ohne Haken bei **Use the model from Settings** bekommt der Chat ein eigenes Modell, eingetippt oder über **Find model…** gefunden. Das chat-eigene Kontrollkästchen **With openrouter/auto, use only models that hear the video's sound** startet mit dem Wert aus den Settings. **Shrink the stored video** erzeugt eine kleinere Kopie für diesen Chat. Ein neues Modell oder ein verkleinertes Video lässt die nächste Frage das Video einmal ungecacht senden; ein Chat ohne Transkript prüft erneut, ob sein neues Modell eines braucht.
+
 ## YouTube
 
 YouTube-Videos werden mit [yt-dlp](https://github.com/yt-dlp/yt-dlp) in einem Fortschrittsdialog heruntergeladen, der sich abbrechen lässt. Standardmäßig lädt SceneAccess die beste Qualität bis 480p – Details bleiben erkennbar, ohne HD-Dateigrößen – und fügt Bild und Ton zu einer MP4 zusammen, bevorzugt in H.264. In den **Settings** lässt sich zwischen 240p und 1080p wählen. Videos werden unter `scene-access` im Videos-Ordner gespeichert; gibt es diesen Ordner nicht, fragt SceneAccess nach einem Standard-Downloadordner, der sich auch in den **Settings** ändern lässt. Dateien heißen wie beim yt-dlp-Standard `Titel [ID].mp4`; unter **Settings → File name…** lässt sich per Kontrollkästchen jedes yt-dlp-Vorlagenfeld hinzunehmen, weitere Teile stehen in eckigen Klammern. Ein mitgeliefertes ffmpeg fügt Bild und Ton zusammen und schneidet Standbilder aus; ist Deno oder Node.js installiert, nutzt yt-dlp es für vollen YouTube-Support.
@@ -80,7 +86,7 @@ Der gesamte Code liegt im Paket `sceneaccess`:
 
 - `gui.py`: Hauptfenster und App-Start
 - `new_chat.py`: einen Chat aus einer lokalen Datei oder von YouTube starten: Chatstart-Dialog, Frage zur Videogröße, Verkleinern und Download
-- `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models, der Chatstart-Dialog mit Advanced…, die Frage zur Videogröße und der Nachrichtenleser
+- `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models, der Chatstart-Dialog mit Advanced…, die Fragen zur Videogröße, Chat settings und der Nachrichtenleser
 - `chat_history.py`: die Einträge der Chat history und die Nutzungszeile
 - `openrouter.py`: Anfragen an OpenRouter und die Schleife der Tool-Aufrufe
 - `tools.py`: die Tools für das Modell und der Code, der sie ausführt (ffmpeg-Standbilder, Ausschnitte in hoher Auflösung)

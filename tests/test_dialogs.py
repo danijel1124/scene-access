@@ -130,12 +130,12 @@ def test_size_dialog_offers_lower_resolution_and_dont_ask_only_where_they_apply(
     frame = wx.Frame(None)
     try:
         dialog = dialogs.SizeDialog(frame, 46_000_000, "openrouter/auto", online=False)
-        assert dialog.FindWindowById(dialogs.SIZE_LOWER) is None
+        assert dialog.FindWindow(dialogs.SIZE_LOWER) is None
         assert not dialog.dont_ask.IsShown()
         dialog.Destroy()
         dialog = dialogs.SizeDialog(frame, 46_000_000, "google/gemini-flash", online=True, can_lower=False)
-        assert not dialog.FindWindowById(dialogs.SIZE_LOWER).IsEnabled()
-        assert dialog.FindWindowById(dialogs.SIZE_SHRINK).IsEnabled()
+        assert not dialog.FindWindow(dialogs.SIZE_LOWER).IsEnabled()
+        assert dialog.FindWindow(dialogs.SIZE_SHRINK).IsEnabled()
         assert dialog.dont_ask.IsShown()
         dialog.Destroy()
     finally:
@@ -158,6 +158,51 @@ def test_start_chat_dialog_keeps_the_advanced_settings_and_a_previous_question()
         advanced.shrink_target.SetValue(25)
         assert advanced.value() == (480, True, 25)
         advanced.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_chat_settings_follow_settings_by_default_or_keep_an_own_model():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = dialogs.ChatSettingsDialog(frame, "", "openrouter/auto", True, 61_000_000, 16, ["z-ai/glm-flash"])
+        assert dialog.use_default.GetLabel() == "Use the model from Settings (openrouter/auto)"
+        assert dialog.value() == ("", True, False) and not dialog.model.IsEnabled()
+        assert "61.0 MB once sent" in dialog.shrink.GetLabel()
+        dialog.use_default.SetValue(False)
+        dialog._update()
+        dialog.model.SetValue("z-ai/glm-flash")
+        dialog.audio_only.SetValue(False)
+        dialog.shrink.SetValue(True)
+        assert dialog.model.IsEnabled() and dialog.value() == ("z-ai/glm-flash", False, True)
+        dialog.Destroy()
+        own = dialogs.ChatSettingsDialog(frame, "a/one", "openrouter/auto", False, 1_000, 16)
+        assert own.value() == ("a/one", False, False) and own.model.IsEnabled()
+        own.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_stored_size_dialog_offers_shrinking_and_chat_settings():
+    message = dialogs.stored_size_message(70_100_000, "openrouter/auto")
+    assert message.startswith("This chat's stored video is 70.1 MB once sent")
+    assert "costs more" in message and "Don't show this dialog again" not in message
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = dialogs.StoredSizeDialog(frame, 70_100_000, "a/one")
+        assert dialog.FindWindow(dialogs.SIZE_CHAT_SETTINGS).GetLabel() == "Chat settings…"
+        assert dialog.FindWindow(dialogs.SIZE_SHRINK).GetLabel() == "Shrink the stored video"
+        assert dialog.dont_ask.IsShown()
+        dialog.Destroy()
+        finder = dialogs.AddModelDialog(frame, ["google/gemini-flash"], title="Choose a model for this chat",
+                                        allow_patterns=False)
+        finder.filter.SetValue("google/*")
+        assert finder.matches.GetStrings() == [] and finder.GetTitle() == "Choose a model for this chat"
+        finder.Destroy()
     finally:
         frame.Destroy()
         app.Destroy()

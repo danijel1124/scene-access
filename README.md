@@ -54,6 +54,12 @@ Before a chat starts with a video that would be more than 19 MB once sent, Scene
 
 With a model other than `openrouter/auto`, **Don't show this dialog again** skips the question for that model once a large video was answered. **Settings → Video size** turns the question off completely (too large videos then fail) or asks again for skipped models. **Advanced…** in the Start a video chat dialog sets the YouTube quality and can shrink too large videos automatically, without asking, to a size of your choice.
 
+Chats started before this check may store a larger video. Before a question in such a chat, SceneAccess offers to **Shrink the stored video** (the next question then sends it uncached once, so it costs more), to open **Chat settings…**, for example to let `openrouter/auto` pick a model that only sees the picture and gets a transcript, or to **Send as it is**. Once a question sent as it is was answered, the chat stops asking until its video or its Chat settings change.
+
+## Chat settings
+
+**Chat settings** sets the open chat's model. A new chat uses the model from Settings, and follows it when Settings changes (if the new model cannot hear, the chat's next question first makes a transcript, about $0.11 per hour of sound, and sends the video uncached once); unchecking **Use the model from Settings** gives the chat its own model, typed or found with **Find model…**. The chat's own **With openrouter/auto, use only models that hear the video's sound** checkbox starts with the value from Settings. **Shrink the stored video** makes a smaller copy for this chat. A new model or a shrunk video makes the next question send the video uncached once; a chat without a transcript checks again whether its new model needs one.
+
 ## YouTube
 
 YouTube videos are downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) in a progress dialog that can be cancelled. By default SceneAccess downloads the best quality up to 480p, which keeps details recognizable without HD file sizes, with video and audio merged into an MP4 (preferring H.264). **Settings** lets you choose between 240p and 1080p. Videos are saved to `scene-access` in your Videos folder; if that folder does not exist, SceneAccess asks for a default download folder, which can also be changed in **Settings**. Files are named like yt-dlp's default, `Title [ID].mp4`; **Settings → File name…** lets you check any yt-dlp output template field to include, with further parts added in brackets. A bundled ffmpeg merges video and audio and extracts frames; if Deno or Node.js is installed, yt-dlp uses it for full YouTube support.
@@ -80,7 +86,7 @@ All code is in the `sceneaccess` package:
 
 - `gui.py`: the main window and the app start
 - `new_chat.py`: starting a chat from a local file or YouTube: the start dialog, the video size question, shrinking and the download
-- `dialogs.py`: Settings with its File name, Prompt profiles and Providers and models sub-dialogs, the start-chat dialog with Advanced…, the video size question, and the message reader
+- `dialogs.py`: Settings with its File name, Prompt profiles and Providers and models sub-dialogs, the start-chat dialog with Advanced…, the video size questions, Chat settings, and the message reader
 - `chat_history.py`: the lines of the Chat history list and the usage line
 - `openrouter.py`: requests to OpenRouter and the tool-call loop
 - `tools.py`: the tools offered to the model and the code that runs them (ffmpeg frames, high-resolution sections)

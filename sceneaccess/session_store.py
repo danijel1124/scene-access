@@ -20,11 +20,12 @@ WIRE_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name", "reasoning
 SESSION_FILE_PREFIX = "session-file:"
 
 COLUMNS = ("id", "owner_id", "title", "source_path", "model", "initial_question", "history_json",
-           "system_prompt", "tools_json", "source_url", "video_info_json", "transcript", "transcript_state", "audio_only")
+           "system_prompt", "tools_json", "source_url", "video_info_json", "transcript", "transcript_state", "audio_only",
+           "size_confirmed")
 # Columns added after the first release, with the value older chats get. Older chats get no transcript,
 # so opening them does not change what is sent and their cache stays valid.
 ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url", "''"), ("video_info_json", "''"),
-                 ("transcript", "''"), ("transcript_state", "'none'"), ("audio_only", "'0'"))
+                 ("transcript", "''"), ("transcript_state", "'none'"), ("audio_only", "'0'"), ("size_confirmed", "'0'"))
 
 # transcript_state: "pending" until the first request decides whether the model needs a transcript,
 # "none" if it hears the video itself, "done" (text may be empty: no speech), or "failed".
@@ -39,6 +40,7 @@ class VideoSession:
     owner_id: str
     title: str
     source_path: str
+    # "" follows the model in Settings ("default"); a model ID is the chat's own choice.
     model: str
     initial_question: str
     history: list[dict[str, Any]]
@@ -54,6 +56,9 @@ class VideoSession:
     transcript_state: str = TRANSCRIPT_NONE
     # With openrouter/auto, route only to models that hear the video's sound.
     audio_only: bool = False
+    # A question with the too large stored video was answered, so the chat stops asking about its size
+    # until its video or its Chat settings change.
+    size_confirmed: bool = False
 
     @property
     def directory(self) -> Path:
@@ -66,6 +71,11 @@ class VideoSession:
     @property
     def video_data_url(self) -> str:
         return self.data_url_path.read_text(encoding="ascii")
+
+    @property
+    def sent_video_size(self) -> int:
+        """Bytes the stored video takes in every request: its Base64 data URL."""
+        return self.data_url_path.stat().st_size
 
     @property
     def messages(self) -> list[dict[str, Any]]:
@@ -138,7 +148,7 @@ class VideoSessionStore:
         os.chmod(data_url_path, 0o600)
         values = (session_id, owner_id, title, str(source_path), model, initial_question, "[]", system_prompt,
                   json.dumps(tools or []), source_url, json.dumps(video_info) if video_info else "",
-                  "", transcript_state, "1" if audio_only else "0")
+                  "", transcript_state, "1" if audio_only else "0", "0")
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(f"INSERT INTO sessions ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})", values)
         return self.get_session(session_id, owner_id)
@@ -158,7 +168,7 @@ class VideoSessionStore:
             source_url=values["source_url"],
             video_info=json.loads(values["video_info_json"]) if values["video_info_json"] else None,
             transcript=values["transcript"], transcript_state=values["transcript_state"],
-            audio_only=values["audio_only"] == "1",
+            audio_only=values["audio_only"] == "1", size_confirmed=values["size_confirmed"] == "1",
         )
 
     def list_sessions(self, owner_id: str) -> list[VideoSession]:
@@ -194,6 +204,33 @@ class VideoSessionStore:
                          "transcript_state = ? WHERE id = ? AND owner_id = ?",
                          (system_prompt, json.dumps(tools), "1" if audio_only else "0", TRANSCRIPT_PENDING,
                           session_id, owner_id))
+
+    def update_chat_settings(self, session_id: str, owner_id: str, model: str, audio_only: bool) -> None:
+        """Sets the chat's own model ("" follows Settings) and whether openrouter/auto may pick only hearing
+        models. A chat without a transcript decides again on its next question whether it needs one."""
+        session = self.get_session(session_id, owner_id)
+        state = TRANSCRIPT_PENDING if session.transcript_state == TRANSCRIPT_NONE else session.transcript_state
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET model = ?, audio_only = ?, transcript_state = ?, size_confirmed = '0' "
+                         "WHERE id = ? AND owner_id = ?", (model, "1" if audio_only else "0", state, session_id, owner_id))
+
+    def confirm_size(self, session_id: str, owner_id: str) -> None:
+        """Remembers that a question with the stored video was answered, so its size is not asked about again."""
+        self.get_session(session_id, owner_id)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET size_confirmed = '1' WHERE id = ? AND owner_id = ?", (session_id, owner_id))
+
+    def replace_video(self, session_id: str, owner_id: str, video: Path) -> None:
+        """Stores another copy of the chat's video to send, e.g. one shrunk for a provider's size limit."""
+        session = self.get_session(session_id, owner_id)
+        mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mov"}.get(Path(video).suffix.lower(), "video/mp4")
+        data_url = f"data:{mime};base64," + base64.b64encode(Path(video).read_bytes()).decode("ascii")
+        temporary = session.data_url_path.with_suffix(".tmp")
+        temporary.write_text(data_url, encoding="ascii")
+        os.chmod(temporary, 0o600)
+        temporary.replace(session.data_url_path)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET size_confirmed = '0' WHERE id = ? AND owner_id = ?", (session_id, owner_id))
 
     def update_transcript(self, session_id: str, owner_id: str, state: str, transcript: str = "") -> None:
         self.get_session(session_id, owner_id)
