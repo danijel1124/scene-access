@@ -47,14 +47,19 @@ def test_download_video_returns_the_downloaded_file_and_title(tmp_path: Path, mo
 
         def extract_info(self, url, download):
             seen["url"], seen["download"] = url, download
-            return {"title": "Me at the zoo", "requested_downloads": [{"filepath": str(tmp_path / "jNQXAC9IVRw-240p.mp4")}]}
+            return {"title": "Me at the zoo", "description": "The first video.", "tags": [], "formats": [{"url": "x"}],
+                    "chapters": [{"start_time": 0, "end_time": 5, "title": "Intro", "extra": 1}],
+                    "requested_downloads": [{"filepath": str(tmp_path / "jNQXAC9IVRw-240p.mp4")}]}
 
     monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYoutubeDL))
 
-    path, title = youtube.download_video("https://www.youtube.com/watch?v=jNQXAC9IVRw", tmp_path / "downloads", 480)
+    path, title, info = youtube.download_video("https://www.youtube.com/watch?v=jNQXAC9IVRw", tmp_path / "downloads", 480)
 
     assert path == tmp_path / "jNQXAC9IVRw-240p.mp4"
     assert title == "Me at the zoo"
+    # Only what the model may read: no format details, no empty fields, chapters trimmed.
+    assert info == {"title": "Me at the zoo", "description": "The first video.",
+                    "chapters": [{"start_time": 0, "end_time": 5, "title": "Intro"}]}
     assert seen["download"] is True
     assert seen["options"]["format_sort"][0] == "res:480"
     assert (tmp_path / "downloads").is_dir()

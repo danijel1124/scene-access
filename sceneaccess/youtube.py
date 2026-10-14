@@ -185,11 +185,46 @@ def download_options(target_dir: Path, max_height: int, progress: Callable[[dict
 
 def download_video(url: str, target_dir: Path, max_height: int = DEFAULT_MAX_HEIGHT,
                    progress: Callable[[dict[str, Any]], None] | None = None,
-                   filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS) -> tuple[Path, str]:
+                   filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS) -> tuple[Path, str, dict[str, Any]]:
+    """Returns the downloaded file, the title and the video information the model may read later."""
     import yt_dlp
 
     target_dir.mkdir(parents=True, exist_ok=True)
     with yt_dlp.YoutubeDL(download_options(target_dir, max_height, progress, filename_fields)) as downloader:
         info = downloader.extract_info(url, download=True)
     path = Path(info["requested_downloads"][0]["filepath"])
-    return path, str(info.get("title") or path.name)
+    return path, str(info.get("title") or path.name), video_info_summary(info)
+
+
+# Information about a video the model can ask for; everything else in yt-dlp's info is format detail.
+VIDEO_INFO_FIELDS = ("title", "channel", "uploader", "upload_date", "duration_string", "webpage_url", "description",
+                     "categories", "tags", "chapters", "view_count", "like_count", "language")
+
+
+def video_info_summary(info: dict[str, Any]) -> dict[str, Any]:
+    summary = {name: info[name] for name in VIDEO_INFO_FIELDS if info.get(name) not in (None, "", [])}
+    if "chapters" in summary:
+        summary["chapters"] = [{key: chapter.get(key) for key in ("start_time", "end_time", "title")}
+                               for chapter in summary["chapters"]]
+    return summary
+
+
+def download_section(url: str, start: float, end: float, target_dir: Path, max_height: int = 2160) -> Path:
+    """Downloads only the video picture between start and end seconds, in high resolution."""
+    import yt_dlp
+    from yt_dlp.utils import download_range_func
+
+    options = download_options(target_dir, max_height)
+    options.update({
+        # Picture only: the clip is for still frames. Plain https formats let ffmpeg seek to the range; with
+        # HLS (m3u8) it reads the whole playlist and wrote an empty file in testing.
+        "format": "bv*[protocol=https]/b[protocol=https]/bv*/b",
+        "outtmpl": str(target_dir / "section.%(ext)s"),
+        "download_ranges": download_range_func(None, [(max(start, 0.0), end)]),
+        # Cut exactly at start, so a time inside the clip matches the same time in the video.
+        "force_keyframes_at_cuts": True,
+    })
+    options.pop("merge_output_format", None)
+    with yt_dlp.YoutubeDL(options) as downloader:
+        info = downloader.extract_info(url, download=True)
+    return Path(info["requested_downloads"][0]["filepath"])

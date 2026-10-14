@@ -5,13 +5,24 @@ import json
 import os
 import sqlite3
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 
 class SessionNotFound(KeyError):
     """The requested private session does not exist for this owner."""
+
+
+# Fields of a stored message that belong to the chat protocol. Everything else (usage, sources) is local.
+WIRE_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name", "reasoning_details")
+# Images the model asked for are stored as files in the session folder and referenced like this.
+SESSION_FILE_PREFIX = "session-file:"
+
+COLUMNS = ("id", "owner_id", "title", "source_path", "model", "initial_question", "history_json",
+           "system_prompt", "tools_json", "source_url", "video_info_json")
+# Columns added after the first release, with the value older chats get.
+ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url", "''"), ("video_info_json", "''"))
 
 
 @dataclass
@@ -24,6 +35,16 @@ class VideoSession:
     initial_question: str
     history: list[dict[str, Any]]
     data_url_path: Path
+    # Frozen when the chat starts: they precede the video in every request, so changing them would
+    # rewrite the video's cache entry, and later edits in Settings must not change an existing chat.
+    system_prompt: str = ""
+    tools: list[dict[str, Any]] = field(default_factory=list)
+    source_url: str = ""
+    video_info: dict[str, Any] | None = None
+
+    @property
+    def directory(self) -> Path:
+        return self.data_url_path.parent
 
     @property
     def source_missing(self) -> bool:
@@ -36,14 +57,28 @@ class VideoSession:
     @property
     def messages(self) -> list[dict[str, Any]]:
         # OpenRouter reads explicit cache breakpoints from content parts, not from the message.
-        # History entries may carry local usage data, which must not be sent to the provider.
-        return [{
+        system = [{"role": "system", "content": self.system_prompt}] if self.system_prompt else []
+        return [*system, {
             "role": "user",
             "content": [
                 {"type": "text", "text": self.initial_question},
                 {"type": "video_url", "video_url": {"url": self.video_data_url}, "cache_control": {"type": "ephemeral"}},
             ],
-        }, *({"role": message["role"], "content": message["content"]} for message in self.history)]
+        }, *(self.wire_message(message) for message in self.history)]
+
+    def wire_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        """Returns a stored message as sent to the provider: protocol fields only, images inlined."""
+        wire = {key: message[key] for key in WIRE_KEYS if key in message}
+        if isinstance(wire.get("content"), list):
+            wire["content"] = [self._inline_image(part) for part in wire["content"]]
+        return wire
+
+    def _inline_image(self, part: dict[str, Any]) -> dict[str, Any]:
+        url = (part.get("image_url") or {}).get("url", "") if part.get("type") == "image_url" else ""
+        if not url.startswith(SESSION_FILE_PREFIX):
+            return part
+        data = (self.directory / Path(url[len(SESSION_FILE_PREFIX):]).name).read_bytes()
+        return {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")}}
 
 
 class VideoSessionStore:
@@ -58,12 +93,18 @@ class VideoSessionStore:
             conn.execute("""CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY, owner_id TEXT, title TEXT, source_path TEXT,
                 model TEXT, initial_question TEXT, history_json TEXT)""")
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+            for column, default in ADDED_COLUMNS:
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE sessions ADD COLUMN {column} TEXT NOT NULL DEFAULT {default}")
         os.chmod(self.db_path, 0o600)
 
     def data_url_path(self, session_id: str) -> Path:
         return self.sessions_dir / session_id / "context.data-url"
 
-    def create_session(self, *, owner_id: str, source_path: Path, title: str, model: str, initial_question: str) -> VideoSession:
+    def create_session(self, *, owner_id: str, source_path: Path, title: str, model: str, initial_question: str,
+                       system_prompt: str = "", tools: list[dict[str, Any]] | None = None, source_url: str = "",
+                       video_info: dict[str, Any] | None = None) -> VideoSession:
         source_path = Path(source_path).resolve()
         mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mov"}.get(source_path.suffix.lower())
         if not source_path.is_file() or not mime:
@@ -76,17 +117,27 @@ class VideoSessionStore:
         data_url_path = directory / "context.data-url"
         data_url_path.write_text(data_url, encoding="ascii")
         os.chmod(data_url_path, 0o600)
+        values = (session_id, owner_id, title, str(source_path), model, initial_question, "[]", system_prompt,
+                  json.dumps(tools or []), source_url, json.dumps(video_info) if video_info else "")
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (session_id, owner_id, title, str(source_path), model, initial_question, "[]"))
+            conn.execute(f"INSERT INTO sessions ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})", values)
         return self.get_session(session_id, owner_id)
 
     def get_session(self, session_id: str, owner_id: str) -> VideoSession:
         with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute("SELECT * FROM sessions WHERE id = ? AND owner_id = ?", (session_id, owner_id)).fetchone()
+            row = conn.execute(f"SELECT {', '.join(COLUMNS)} FROM sessions WHERE id = ? AND owner_id = ?",
+                               (session_id, owner_id)).fetchone()
         if not row:
             raise SessionNotFound(session_id)
-        return VideoSession(*row[:6], json.loads(row[6]), data_url_path=self.sessions_dir / session_id / "context.data-url")
+        values = dict(zip(COLUMNS, row))
+        return VideoSession(
+            values["id"], values["owner_id"], values["title"], values["source_path"], values["model"],
+            values["initial_question"], json.loads(values["history_json"]),
+            data_url_path=self.data_url_path(session_id),
+            system_prompt=values["system_prompt"], tools=json.loads(values["tools_json"]),
+            source_url=values["source_url"],
+            video_info=json.loads(values["video_info_json"]) if values["video_info_json"] else None,
+        )
 
     def list_sessions(self, owner_id: str) -> list[VideoSession]:
         with sqlite3.connect(self.db_path) as conn:
@@ -95,19 +146,12 @@ class VideoSessionStore:
             )]
         return [self.get_session(session_id, owner_id) for session_id in ids]
 
-    def record_answer(self, session_id: str, owner_id: str, answer: str, usage: dict[str, Any] | None = None) -> None:
+    def record_turn(self, session_id: str, owner_id: str, entries: list[dict[str, Any]]) -> None:
+        """Appends one turn: the question (if any), tool calls, tool results, images and the answer."""
         session = self.get_session(session_id, owner_id)
-        history = [*session.history, _assistant_entry(answer, usage)]
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
-                         (json.dumps(history), session_id, owner_id))
-
-    def record_follow_up(self, session_id: str, owner_id: str, question: str, answer: str, usage: dict[str, Any] | None = None) -> None:
-        session = self.get_session(session_id, owner_id)
-        history = [*session.history, {"role": "user", "content": question}, _assistant_entry(answer, usage)]
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
-                         (json.dumps(history), session_id, owner_id))
+                         (json.dumps([*session.history, *entries]), session_id, owner_id))
 
     def update_source_path(self, session_id: str, owner_id: str, source_path: Path) -> None:
         source_path = Path(source_path).resolve()
@@ -117,6 +161,13 @@ class VideoSessionStore:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE sessions SET source_path = ? WHERE id = ? AND owner_id = ?",
                          (str(source_path), session_id, owner_id))
+
+    def update_setup(self, session_id: str, owner_id: str, system_prompt: str, tools: list[dict[str, Any]]) -> None:
+        """Replaces a chat's prompt and tools. The next request then caches the video again."""
+        self.get_session(session_id, owner_id)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET system_prompt = ?, tools_json = ? WHERE id = ? AND owner_id = ?",
+                         (system_prompt, json.dumps(tools), session_id, owner_id))
 
     def reassign_owner(self, old_owner_id: str, new_owner_id: str) -> None:
         with sqlite3.connect(self.db_path) as conn:
@@ -134,10 +185,3 @@ class VideoSessionStore:
     def build_follow_up_messages(self, session_id: str, owner_id: str, question: str) -> list[dict[str, Any]]:
         session = self.get_session(session_id, owner_id)
         return [*session.messages, {"role": "user", "content": question}]
-
-
-def _assistant_entry(answer: str, usage: dict[str, Any] | None) -> dict[str, Any]:
-    entry: dict[str, Any] = {"role": "assistant", "content": answer}
-    if usage is not None:
-        entry["usage"] = usage
-    return entry

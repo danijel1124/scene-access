@@ -51,3 +51,22 @@ def test_file_name_parts_round_trip_and_drop_unknown_fields(tmp_path: Path):
 
     path.write_text('{"filename_fields": ["not_a_field"]}', encoding="utf-8")
     assert load_config(path).filename_fields == ("title", "id")
+
+
+def test_prompt_profiles_round_trip_and_older_configs_get_the_defaults(tmp_path: Path):
+    from sceneaccess.prompts import DEFAULT_PROFILES
+
+    path = tmp_path / "config.json"
+    save_config(path, AppConfig(profiles=(("Mine", "My text"),), profile="Mine"))
+    loaded = load_config(path)
+    assert loaded.profiles == (("Mine", "My text"),)
+    assert loaded.profile_text("Mine") == "My text"
+
+    path.write_text('{"model": "m"}', encoding="utf-8")
+    assert load_config(path).profiles == DEFAULT_PROFILES
+
+    # Deleting every profile is kept; duplicate and nameless entries are dropped.
+    path.write_text('{"profiles": [{"name": "A", "text": "1"}, {"name": "A", "text": "2"}, {"name": " "}]}', encoding="utf-8")
+    assert load_config(path).profiles == (("A", "1"),)
+    path.write_text('{"profiles": []}', encoding="utf-8")
+    assert load_config(path).profiles == ()

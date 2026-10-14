@@ -11,12 +11,15 @@ from typing import Any
 
 import wx
 
+from .chat_history import chat_history_items
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
+from .dialogs import NO_PROFILE, MessageReaderDialog, SettingsDialog, StartChatDialog, default_download_dir
 from .openrouter import OpenRouterClient
+from .prompts import system_prompt
 from .session_store import VideoSession, VideoSessionStore
 from .speech import announce
-from .youtube import (DEFAULT_FILENAME_FIELDS, DEFAULT_MAX_HEIGHT, FILENAME_FIELD_NAMES, FILENAME_FIELDS,
-                      MAX_HEIGHT_CHOICES, download_video, output_template)
+from .tools import ToolRunner, tool_definitions
+from .youtube import download_video
 
 
 def _local_user() -> str:
@@ -32,38 +35,8 @@ OWNER_ID = "local:" + _local_user()
 LEGACY_OWNER_ID = "local:" + os.environ.get("USER", "user")
 
 
-def usage_text(usage: dict[str, Any] | None) -> str:
-    if not usage:
-        return "Usage: no data was recorded for this answer."
-    prompt_tokens = int(usage.get("prompt_tokens") or 0)
-    cached_tokens = usage.get("cached_tokens")
-    cache_write_tokens = usage.get("cache_write_tokens")
-    if cached_tokens is None:
-        cache = "cache details were not reported by the provider"
-    else:
-        write = "not reported" if cache_write_tokens is None else f"{cache_write_tokens:,}"
-        cache = (f"cache read (hit): {cached_tokens:,} | not from cache (miss): {max(prompt_tokens - cached_tokens, 0):,}"
-                 f" | cache write: {write}")
-    return f"Usage: model {usage.get('model') or 'unknown'} | prompt tokens: {prompt_tokens:,} | {cache}"
-
-
-def chat_history_items(initial_question: str, history: list[dict[str, Any]]) -> list[str]:
-    items = [f"You: {initial_question}"]
-    for message in history:
-        if message["role"] == "user":
-            items.append(f"You: {message['content']}")
-        else:
-            items.append(f"Model: {message['content']}")
-            items.append(usage_text(message.get("usage")))
-    return items
-
-
 class DownloadCancelled(Exception):
     """Raised from the progress hook to stop a download the user cancelled."""
-
-
-def default_download_dir() -> Path:
-    return Path(wx.StandardPaths.Get().GetUserDir(wx.StandardPaths.Dir_Videos)) / "scene-access"
 
 
 def _url_from_clipboard() -> str:
@@ -81,114 +54,6 @@ def _url_from_clipboard() -> str:
 
 def resolve_openrouter_key(config: AppConfig) -> str | None:
     return os.environ.get("OPENROUTER_API_KEY") or config.api_key or None
-
-
-class FilenameDialog(wx.Dialog):
-    """Chooses the yt-dlp fields a downloaded video's file name is built from."""
-
-    def __init__(self, parent: wx.Window, fields: tuple[str, ...]):
-        super().__init__(parent, title="File name of downloaded videos", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-        label = wx.StaticText(self, label="File name parts (Space toggles a part)")
-        self.parts = wx.CheckListBox(self, choices=[f"{name}: {description}" for name, description in FILENAME_FIELDS])
-        self.parts.SetCheckedItems([index for index, name in enumerate(FILENAME_FIELD_NAMES) if name in fields])
-        self.template = wx.StaticText(self)
-        reset = wx.Button(self, label="Reset to yt-dlp default")
-        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
-        layout = wx.BoxSizer(wx.VERTICAL)
-        layout.Add(label, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
-        layout.Add(self.parts, 1, wx.EXPAND | wx.ALL, 12)
-        layout.Add(self.template, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
-        layout.Add(reset, 0, wx.ALL, 12)
-        layout.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
-        self.SetSizer(layout)
-        self.SetSize((700, 600))
-        self.parts.Bind(wx.EVT_CHECKLISTBOX, lambda _event: self._show_template())
-        reset.Bind(wx.EVT_BUTTON, self._on_reset)
-        self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
-        self._show_template()
-
-    def value(self) -> tuple[str, ...]:
-        return tuple(FILENAME_FIELD_NAMES[index] for index in self.parts.GetCheckedItems())
-
-    def _show_template(self) -> None:
-        self.template.SetLabel("Template: " + output_template(self.value()) if self.value() else "Template: choose at least one part")
-
-    def _on_reset(self, _event: wx.CommandEvent) -> None:
-        self.parts.SetCheckedItems([FILENAME_FIELD_NAMES.index(name) for name in DEFAULT_FILENAME_FIELDS])
-        self._show_template()
-
-    def _on_ok(self, event: wx.CommandEvent) -> None:
-        if not self.value():
-            wx.MessageBox("Choose at least one file name part.", "No file name part", wx.OK | wx.ICON_ERROR)
-            return
-        event.Skip()
-
-
-class SettingsDialog(wx.Dialog):
-    def __init__(self, parent: wx.Window, config: AppConfig):
-        super().__init__(parent, title="Settings")
-        # All controls are children of the dialog itself: CreateStdDialogButtonSizer parents its
-        # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
-        form = wx.FlexGridSizer(6, 2, 8, 8)
-        form.AddGrowableCol(1, 1)
-        self.model = wx.TextCtrl(self, value=config.model)
-        self.base_url = wx.TextCtrl(self, value=config.base_url)
-        self.api_key = wx.TextCtrl(self, value=config.api_key, style=wx.TE_PASSWORD)
-        self.heights = sorted({*MAX_HEIGHT_CHOICES, config.youtube_max_height})
-        self.youtube_quality = wx.Choice(self, choices=[
-            f"Up to {height}p" + (" (recommended)" if height == DEFAULT_MAX_HEIGHT else "") for height in self.heights
-        ])
-        self.youtube_quality.SetSelection(self.heights.index(config.youtube_max_height))
-        self.download_dir = wx.DirPickerCtrl(self, path=config.download_dir or str(default_download_dir()),
-                                             style=wx.DIRP_USE_TEXTCTRL | wx.DIRP_DIR_MUST_EXIST)
-        self.filename_fields = config.filename_fields
-        self.filename_button = wx.Button(self, label="File name…")
-        self.filename_button.Bind(wx.EVT_BUTTON, self._on_filename)
-        for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key),
-                               ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
-                               ("Downloaded file name", self.filename_button)):
-            form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
-            form.Add(control, 1, wx.EXPAND)
-        help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
-        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
-        layout = wx.BoxSizer(wx.VERTICAL)
-        layout.Add(form, 1, wx.EXPAND | wx.ALL, 12)
-        layout.Add(help_text, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
-        layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
-        self.SetSizer(layout)
-        self.SetMinSize((620, -1))
-        layout.Fit(self)
-
-    def value(self) -> AppConfig:
-        download_dir = self.download_dir.GetPath().strip()
-        return AppConfig(self.model.GetValue().strip(), self.base_url.GetValue().strip(), self.api_key.GetValue().strip(),
-                         youtube_max_height=self.heights[self.youtube_quality.GetSelection()],
-                         # Keep "default" as empty, so it keeps following the Videos folder.
-                         download_dir="" if download_dir == str(default_download_dir()) else download_dir,
-                         filename_fields=self.filename_fields)
-
-    def _on_filename(self, _event: wx.CommandEvent) -> None:
-        with FilenameDialog(self, self.filename_fields) as dialog:
-            if dialog.ShowModal() == wx.ID_OK:
-                self.filename_fields = dialog.value()
-
-
-class MessageReaderDialog(wx.Dialog):
-    """Shows one chat message in a read-only text field, so it can be read line by line."""
-
-    def __init__(self, parent: wx.Window, text: str):
-        super().__init__(parent, title="Message", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
-        label = wx.StaticText(self, label="Message text")
-        self.text = wx.TextCtrl(self, value=text, style=wx.TE_MULTILINE | wx.TE_READONLY)
-        buttons = self.CreateStdDialogButtonSizer(wx.CLOSE)
-        self.SetEscapeId(wx.ID_CLOSE)
-        layout = wx.BoxSizer(wx.VERTICAL)
-        layout.Add(label, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
-        layout.Add(self.text, 1, wx.EXPAND | wx.ALL, 12)
-        layout.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
-        self.SetSizer(layout)
-        self.SetSize((800, 600))
-        self.text.SetFocus()
 
 
 class MainFrame(wx.Frame):
@@ -212,11 +77,13 @@ class MainFrame(wx.Frame):
         self.new_button = wx.Button(panel, label="New video chat")
         self.settings_button = wx.Button(panel, label="Settings")
         self.update_path_button = wx.Button(panel, label="Update original file path")
+        self.setup_button = wx.Button(panel, label="Change prompt profile and tools")
         self.delete_button = wx.Button(panel, label="Delete current chat")
         self.sessions = wx.ListBox(panel)
         left.Add(self.new_button, 0, wx.EXPAND | wx.ALL, 6)
         left.Add(self.settings_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left.Add(self.update_path_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        left.Add(self.setup_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left.Add(self.delete_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left.Add(wx.StaticText(panel, label="Recent video chats"), 0, wx.LEFT | wx.TOP, 6)
         left.Add(self.sessions, 1, wx.EXPAND | wx.ALL, 6)
@@ -239,6 +106,7 @@ class MainFrame(wx.Frame):
         self.new_button.Bind(wx.EVT_BUTTON, self.on_new)
         self.settings_button.Bind(wx.EVT_BUTTON, self.on_settings)
         self.update_path_button.Bind(wx.EVT_BUTTON, self.on_update_path)
+        self.setup_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_setup())
         self.delete_button.Bind(wx.EVT_BUTTON, self.on_delete)
         self.sessions.Bind(wx.EVT_LISTBOX, self.on_open)
         self.send_button.Bind(wx.EVT_BUTTON, self.on_send)
@@ -305,9 +173,9 @@ class MainFrame(wx.Frame):
             if dialog.ShowModal() != wx.ID_OK:
                 return
             source = Path(dialog.GetPath())
-        question = self._ask_first_question()
-        if question:
-            self._start_chat(source, source.name, question)
+        start = self._ask_first_question()
+        if start:
+            self._start_chat(source, source.name, *start)
 
     def new_from_youtube(self) -> None:
         with wx.TextEntryDialog(self, "YouTube link:", "Start chat from YouTube", _url_from_clipboard()) as dialog:
@@ -316,15 +184,16 @@ class MainFrame(wx.Frame):
             url = dialog.GetValue().strip()
         if not url:
             return
-        question = self._ask_first_question()
-        if not question:
+        start = self._ask_first_question()
+        if not start:
             return
         target_dir = self._download_dir()
         if target_dir is None:
             return
         downloaded = self._download_with_progress(url, target_dir)
         if downloaded:
-            self._start_chat(*downloaded, question)
+            path, title, info = downloaded
+            self._start_chat(path, title, *start, source_url=url, video_info=info)
 
     def _download_dir(self) -> Path | None:
         """Returns a usable download folder, asking for a new default when it is not available."""
@@ -350,7 +219,7 @@ class MainFrame(wx.Frame):
         save_config(self.config_path, self.config)
         return folder
 
-    def _download_with_progress(self, url: str, target_dir: Path) -> tuple[Path, str] | None:
+    def _download_with_progress(self, url: str, target_dir: Path) -> tuple[Path, str, dict[str, Any]] | None:
         max_height = self.config.youtube_max_height
         filename_fields = self.config.filename_fields
         state: dict[str, Any] = {"percent": 0, "done": False, "cancel": False, "result": None, "error": None}
@@ -402,17 +271,30 @@ class MainFrame(wx.Frame):
             return None
         return state["result"]
 
-    def _ask_first_question(self) -> str:
-        with wx.TextEntryDialog(self, "First question about the video:", "Start a video chat", "Describe this video.") as dialog:
+    def _ask_first_question(self) -> tuple[str, str] | None:
+        """Returns the first question and the chosen profile's name, or None if cancelled."""
+        with StartChatDialog(self, self.config.profiles, self.config.profile) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
-                return ""
-            return dialog.GetValue().strip()
+                return None
+            question, profile = dialog.value()
+        if not question:
+            return None
+        if (profile or NO_PROFILE) != self.config.profile:
+            # Preselect the same profile next time.
+            self.config = replace(self.config, profile=profile or NO_PROFILE)
+            save_config(self.config_path, self.config)
+        return question, profile
 
-    def _start_chat(self, source: Path, title: str, question: str) -> None:
+    def _start_chat(self, source: Path, title: str, question: str, profile: str, *, source_url: str = "",
+                    video_info: dict[str, Any] | None = None) -> None:
         try:
             # Reading a large video can take a while, and one that does not fit into memory fails here.
             with wx.BusyCursor():
-                self.current = self.store.create_session(owner_id=OWNER_ID, source_path=source, title=title, model=self.config.model, initial_question=question)
+                self.current = self.store.create_session(
+                    owner_id=OWNER_ID, source_path=source, title=title, model=self.config.model, initial_question=question,
+                    # Frozen for this chat: they precede the video in every request (see VideoSession).
+                    system_prompt=system_prompt(self.config.profile_text(profile)),
+                    tools=tool_definitions(online_video=bool(source_url)), source_url=source_url, video_info=video_info)
         except (OSError, MemoryError) as error:
             wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded", wx.OK | wx.ICON_ERROR)
             return
@@ -440,6 +322,31 @@ class MainFrame(wx.Frame):
                 return
         self.current = self.store.get_session(self.current.id, OWNER_ID)
         self.render_current()
+
+    def change_setup(self) -> None:
+        """Gives the open chat the current base prompt, a profile and the tools, e.g. for chats from before tools."""
+        if not self.current:
+            return
+        names = [NO_PROFILE, *(name for name, _text in self.config.profiles)]
+        tools = "zoom and web search" + (", high resolution and video information" if self.current.source_url else "")
+        message = (f"Choose the prompt profile for this chat. It also gets the current base prompt and the tools "
+                   f"({tools}). The next question sends the video uncached once, so it costs more.")
+        with wx.SingleChoiceDialog(self, message, "Change prompt profile and tools", names) as dialog:
+            if self.config.profile in names:
+                dialog.SetSelection(names.index(self.config.profile))
+            if dialog.ShowModal() != wx.ID_OK:
+                return
+            choice = dialog.GetStringSelection()
+        self.apply_setup("" if choice == NO_PROFILE else choice)
+
+    def apply_setup(self, profile: str) -> None:
+        if not self.current:
+            return
+        self.store.update_setup(self.current.id, OWNER_ID, system_prompt(self.config.profile_text(profile)),
+                                tool_definitions(online_video=bool(self.current.source_url)))
+        self.current = self.store.get_session(self.current.id, OWNER_ID)
+        self.render_current()
+        self.status.SetLabel(self.status.GetLabel() + f"\nPrompt profile set to {profile or NO_PROFILE}; tools enabled.")
 
     def on_delete(self, _event: wx.CommandEvent) -> None:
         if not self.current:
@@ -486,26 +393,43 @@ class MainFrame(wx.Frame):
         self.status.SetLabel("Request in progress. The video is being sent from the private local context.")
         announce("Generating answer…")
 
+        if not initial:
+            self._show_progress_item(session_id, f"You: {question}", announce_it=False)
+
+        def on_event(kind: str, text: str) -> None:
+            item = f"Tool call: {text}" if kind == "tool_call" else f"Tool result: {text}"
+            wx.CallAfter(self._show_progress_item, session_id, item)
+
         def worker() -> None:
             try:
                 session = self.store.get_session(session_id, OWNER_ID)
                 messages = session.messages if initial else self.store.build_follow_up_messages(session_id, OWNER_ID, question)
-                result = OpenRouterClient(api_key, base_url=self.config.base_url).complete(session, messages)
-                if initial:
-                    self.store.record_answer(session_id, OWNER_ID, result.answer, result.usage_record())
-                else:
-                    self.store.record_follow_up(session_id, OWNER_ID, question, result.answer, result.usage_record())
-                wx.CallAfter(self._completed, session_id, result.model)
+                client = OpenRouterClient(api_key, base_url=self.config.base_url)
+                turn = client.run_turn(session, messages, ToolRunner(session).run, on_event)
+                question_entry = [] if initial else [{"role": "user", "content": question}]
+                self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)
+                completion = turn.completion
+                wx.CallAfter(self._completed, session_id, completion.model, completion.tools_unavailable)
             except Exception as error:
                 wx.CallAfter(self._failed, str(error))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _completed(self, session_id: str, answered_by: str) -> None:
+    def _show_progress_item(self, session_id: str, item: str, *, announce_it: bool = True) -> None:
+        """Shows a step of the running request in the chat history while the model works."""
+        if not self.current or self.current.id != session_id:
+            return
+        self.history_items.append(item)
+        self.transcript.Append(item)
+        if announce_it:
+            announce(item, interrupt=False)
+
+    def _completed(self, session_id: str, answered_by: str, tools_unavailable: bool = False) -> None:
         list_had_focus = wx.Window.FindFocus() is self.transcript
         self.current = self.store.get_session(session_id, OWNER_ID)
         self.render_current()
-        self.status.SetLabel(self.status.GetLabel() + f"\nAnswer received from {answered_by}.")
+        note = " This model does not support tools, so it answered without them." if tools_unavailable else ""
+        self.status.SetLabel(self.status.GetLabel() + f"\nAnswer received from {answered_by}.{note}")
         self.refresh_sessions()
         self.send_button.Enable()
         # render_current selected the new answer. Moving focus to the list makes the screen reader
@@ -517,6 +441,8 @@ class MainFrame(wx.Frame):
 
     def _failed(self, error: str) -> None:
         self.send_button.Enable()
+        # Nothing of the failed turn was stored; remove its progress items from the list.
+        self.render_current()
         self.status.SetLabel("The request failed. The chat and local video context are preserved.")
         wx.MessageBox(error, "OpenRouter error", wx.OK | wx.ICON_ERROR)
 

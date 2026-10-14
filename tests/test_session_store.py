@@ -1,9 +1,57 @@
 from pathlib import Path
 import base64
+import json
+import sqlite3
 
 import pytest
 
 from sceneaccess.session_store import SessionNotFound, VideoSessionStore
+
+
+def test_chats_from_the_first_release_still_open_after_the_new_columns_are_added(tmp_path: Path):
+    root = tmp_path / "chats"
+    (root / "sessions" / "vid_old").mkdir(parents=True)
+    (root / "sessions" / "vid_old" / "context.data-url").write_text("data:video/mp4;base64,AA==", encoding="ascii")
+    with sqlite3.connect(root / "sceneaccess.db") as conn:
+        conn.execute("""CREATE TABLE sessions (id TEXT PRIMARY KEY, owner_id TEXT, title TEXT, source_path TEXT,
+            model TEXT, initial_question TEXT, history_json TEXT)""")
+        conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     ("vid_old", "local", "Old", "C:/gone.mp4", "m", "Describe.", json.dumps([{"role": "assistant", "content": "Old answer."}])))
+
+    session = VideoSessionStore(root).get_session("vid_old", "local")
+
+    assert session.history == [{"role": "assistant", "content": "Old answer."}]
+    assert session.system_prompt == "" and session.tools == [] and session.source_url == "" and session.video_info is None
+    # Without a system prompt the request starts with the video, exactly as before, so its cache still matches.
+    assert session.messages[0]["role"] == "user"
+
+
+def test_messages_keep_the_tool_protocol_and_drop_local_fields(tmp_path: Path):
+    source = tmp_path / "jacket.mp4"
+    source.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="o", source_path=source, title="J", model="m", initial_question="Brand?",
+                                   system_prompt="Base.", tools=[{"type": "openrouter:web_search"}],
+                                   source_url="https://youtu.be/x", video_info={"title": "J"})
+    (session.directory / "frame_a.jpg").write_bytes(b"img")
+    store.record_turn(session.id, "o", [
+        {"role": "assistant", "content": None, "reasoning_details": [{"type": "x"}],
+         "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "zoom_frame", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "Image follows.", "caption": "Image of 00:00"},
+        {"role": "user", "content": [{"type": "text", "text": "Image follows."},
+                                     {"type": "image_url", "image_url": {"url": "session-file:frame_a.jpg"}}]},
+        {"role": "assistant", "content": "Done.", "usage": {"prompt_tokens": 1}, "sources": [{"title": "t", "url": "u"}]},
+    ])
+
+    session = store.get_session(session.id, "o")
+    messages = session.messages
+
+    assert session.tools == [{"type": "openrouter:web_search"}] and session.video_info == {"title": "J"}
+    assert messages[0] == {"role": "system", "content": "Base."}
+    assert messages[2]["reasoning_details"] == [{"type": "x"}] and messages[2]["tool_calls"][0]["id"] == "c1"
+    assert messages[3] == {"role": "tool", "tool_call_id": "c1", "content": "Image follows."}
+    assert messages[4]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64," + base64.b64encode(b"img").decode()
+    assert messages[5] == {"role": "assistant", "content": "Done."}
 
 
 def test_create_session_keeps_private_data_url_after_source_is_deleted(tmp_path: Path):
@@ -37,7 +85,7 @@ def test_follow_up_appends_only_new_question_to_cacheable_history(tmp_path: Path
         owner_id="matrix:room-a", source_path=source, title="Jacket test",
         model="google/gemini-2.5-flash", initial_question="Describe the jacket.",
     )
-    store.record_answer(session.id, "matrix:room-a", "It is a black puffer jacket.")
+    store.record_turn(session.id, "matrix:room-a", [{"role": "assistant", "content": "It is a black puffer jacket."}])
 
     messages = store.build_follow_up_messages(session.id, "matrix:room-a", "Is it glossy?")
 
@@ -87,15 +135,16 @@ def test_list_sessions_returns_most_recent_first(tmp_path: Path):
     assert [item.id for item in store.list_sessions("matrix:room-a")] == [second.id, first.id]
 
 
-def test_record_follow_up_persists_question_and_answer(tmp_path: Path):
+def test_record_turn_appends_every_entry_of_a_turn(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")
     store = VideoSessionStore(tmp_path / "app-data")
     session = store.create_session(owner_id="matrix:room-a", source_path=source, title="Jacket", model="google/gemini-2.5-flash", initial_question="Describe it.")
 
-    store.record_follow_up(session.id, "matrix:room-a", "Is it glossy?", "No, it is matte.")
+    store.record_turn(session.id, "matrix:room-a", [{"role": "assistant", "content": "A jacket."}])
+    store.record_turn(session.id, "matrix:room-a", [{"role": "user", "content": "Is it glossy?"}, {"role": "assistant", "content": "No, it is matte."}])
 
-    assert [message["content"] for message in store.get_session(session.id, "matrix:room-a").history] == ["Is it glossy?", "No, it is matte."]
+    assert [message["content"] for message in store.get_session(session.id, "matrix:room-a").history] == ["A jacket.", "Is it glossy?", "No, it is matte."]
 
 
 def test_reassign_owner_moves_legacy_chats_to_the_new_owner(tmp_path: Path):
@@ -133,7 +182,7 @@ def test_recorded_usage_is_kept_locally_but_not_sent_to_the_provider(tmp_path: P
     session = store.create_session(owner_id="matrix:room-a", source_path=source, title="Jacket", model="openrouter/auto", initial_question="Describe it.")
     usage = {"model": "z-ai/glm-4.5v", "prompt_tokens": 42, "cached_tokens": 40, "cache_write_tokens": 0}
 
-    store.record_answer(session.id, "matrix:room-a", "A jacket.", usage)
+    store.record_turn(session.id, "matrix:room-a", [{"role": "assistant", "content": "A jacket.", "usage": usage}])
 
     assert store.get_session(session.id, "matrix:room-a").history[0]["usage"] == usage
     messages = store.build_follow_up_messages(session.id, "matrix:room-a", "Is it glossy?")

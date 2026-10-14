@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .prompts import DEFAULT_PROFILE, DEFAULT_PROFILES
 from .youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
 
 
@@ -19,6 +20,13 @@ class AppConfig:
     download_dir: str = ""
     # yt-dlp fields that make up a downloaded file's name; title and ID match yt-dlp's default.
     filename_fields: tuple[str, ...] = DEFAULT_FILENAME_FIELDS
+    # Prompt profiles as (name, text); a new chat stores the text of the one it starts with.
+    profiles: tuple[tuple[str, str], ...] = DEFAULT_PROFILES
+    # The profile chosen last, preselected for the next chat.
+    profile: str = DEFAULT_PROFILE
+
+    def profile_text(self, name: str) -> str:
+        return dict(self.profiles).get(name, "")
 
 
 def config_path_from_standard_paths(standard_paths: object) -> Path:
@@ -37,7 +45,21 @@ def load_config(path: Path) -> AppConfig:
         youtube_max_height=_positive_int(values.get("youtube_max_height"), AppConfig.youtube_max_height),
         download_dir=str(values.get("download_dir", "")),
         filename_fields=_filename_fields(values.get("filename_fields")),
+        profiles=_profiles(values.get("profiles")),
+        profile=str(values.get("profile", DEFAULT_PROFILE)),
     )
+
+
+def _profiles(value: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, list):
+        return DEFAULT_PROFILES
+    profiles, names = [], set()
+    for entry in value:
+        if isinstance(entry, dict) and str(entry.get("name", "")).strip() and str(entry["name"]).strip() not in names:
+            names.add(str(entry["name"]).strip())
+            profiles.append((str(entry["name"]).strip(), str(entry.get("text", ""))))
+    # An empty list is a valid choice: chats then use only the base prompt.
+    return tuple(profiles)
 
 
 def _filename_fields(value: object) -> tuple[str, ...]:
@@ -65,6 +87,8 @@ def save_config(path: Path, config: AppConfig) -> None:
         "youtube_max_height": config.youtube_max_height,
         "download_dir": config.download_dir,
         "filename_fields": list(config.filename_fields),
+        "profiles": [{"name": name, "text": text} for name, text in config.profiles],
+        "profile": config.profile,
     }, indent=2), encoding="utf-8")
     # Restricts access on POSIX. On Windows chmod only toggles the read-only flag; there the
     # per-user application-data directory's access control list keeps the file private.
