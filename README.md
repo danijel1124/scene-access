@@ -79,6 +79,7 @@ Alternatively, set `OPENROUTER_API_KEY`; the environment variable takes preceden
 All code is in the `sceneaccess` package:
 
 - `gui.py`: the main window and the app start
+- `new_chat.py`: starting a chat from a local file or YouTube: the start dialog, the video size question, shrinking and the download
 - `dialogs.py`: Settings with its File name, Prompt profiles and Providers and models sub-dialogs, the start-chat dialog with Advanced…, the video size question, and the message reader
 - `chat_history.py`: the lines of the Chat history list and the usage line
 - `openrouter.py`: requests to OpenRouter and the tool-call loop
@@ -92,7 +93,7 @@ All code is in the `sceneaccess` package:
 - `config.py`: settings in `config.json`
 - `speech.py`: announcements through the running screen reader
 
-`SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`, one file per module, plus checks of the documentation language, the default model and the release files.
+`SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`, one file per module (`prompts.py` is covered by the main window and dialog tests), plus checks of the documentation language, the default model and the release files.
 
 ## Run from source
 

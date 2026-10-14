@@ -79,6 +79,7 @@ Der API-Key kann alternativ über `OPENROUTER_API_KEY` gesetzt werden, diese Umg
 Der gesamte Code liegt im Paket `sceneaccess`:
 
 - `gui.py`: Hauptfenster und App-Start
+- `new_chat.py`: einen Chat aus einer lokalen Datei oder von YouTube starten: Chatstart-Dialog, Frage zur Videogröße, Verkleinern und Download
 - `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models, der Chatstart-Dialog mit Advanced…, die Frage zur Videogröße und der Nachrichtenleser
 - `chat_history.py`: die Einträge der Chat history und die Nutzungszeile
 - `openrouter.py`: Anfragen an OpenRouter und die Schleife der Tool-Aufrufe
@@ -92,7 +93,7 @@ Der gesamte Code liegt im Paket `sceneaccess`:
 - `config.py`: Einstellungen in `config.json`
 - `speech.py`: Ansagen über den laufenden Screenreader
 
-`SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`, eine Datei pro Modul, dazu Prüfungen der Doku-Sprache, des Standardmodells und der Release-Dateien.
+`SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`, eine Datei pro Modul (`prompts.py` wird in den Tests von Hauptfenster und Dialogen mitgeprüft), dazu Prüfungen der Doku-Sprache, des Standardmodells und der Release-Dateien.
 
 ## Start aus dem Quellcode
 
