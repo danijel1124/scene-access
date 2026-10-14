@@ -80,3 +80,14 @@ def test_sound_and_youtube_sign_in_settings_round_trip(tmp_path: Path):
 
     path.write_text('{"model": "m"}', encoding="utf-8")
     assert load_config(path).audio_only_auto is False and load_config(path).youtube_cookies == ""
+
+
+def test_excluded_providers_and_models_round_trip_without_blanks_or_duplicates(tmp_path: Path):
+    path = tmp_path / "config.json"
+    save_config(path, AppConfig(ignored_providers=("google-ai-studio",), excluded_models=("google/*", "z-ai/glm-flash")))
+    loaded = load_config(path)
+    assert loaded.ignored_providers == ("google-ai-studio",)
+    assert loaded.excluded_models == ("google/*", "z-ai/glm-flash")
+
+    path.write_text('{"ignored_providers": [" novita ", "", "novita"], "excluded_models": "google/*"}', encoding="utf-8")
+    assert load_config(path).ignored_providers == ("novita",) and load_config(path).excluded_models == ()

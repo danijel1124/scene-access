@@ -8,6 +8,7 @@ from pathlib import Path
 import wx
 
 from .config import AppConfig
+from .models import ModelCatalog, api_url
 from .prompts import BASE_SYSTEM_PROMPT, DEFAULT_PROFILES
 from .youtube import (DEFAULT_FILENAME_FIELDS, DEFAULT_MAX_HEIGHT, FILENAME_FIELD_NAMES, FILENAME_FIELDS,
                       MAX_HEIGHT_CHOICES, output_template)
@@ -191,6 +192,118 @@ class ProfilesDialog(wx.Dialog):
         event.Skip()
 
 
+class AddModelDialog(wx.Dialog):
+    """Finds a model to exclude by typing part of its ID; a pattern with * such as "google/*" can be added too."""
+
+    def __init__(self, parent: wx.Window, models: list[str]):
+        super().__init__(parent, title="Exclude a model", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self.models = models
+        self.entries: list[str] = []
+        filter_label = wx.StaticText(self, label="Part of the model ID, or a pattern such as google/* (Enter adds the selected model)")
+        self.filter = wx.TextCtrl(self)
+        self.list_label = wx.StaticText(self)
+        self.matches = wx.ListBox(self)
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        layout = wx.BoxSizer(wx.VERTICAL)
+        for control, proportion in ((filter_label, 0), (self.filter, 0), (self.list_label, 0), (self.matches, 1)):
+            layout.Add(control, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
+        self.SetSizer(layout)
+        self.SetSize((640, 560))
+        self.filter.Bind(wx.EVT_TEXT, lambda _event: self._show_matches())
+        self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
+        self._show_matches()
+        self.filter.SetFocus()
+
+    def value(self) -> str:
+        index = self.matches.GetSelection()
+        return self.entries[index] if index != wx.NOT_FOUND else ""
+
+    def _show_matches(self) -> None:
+        text = self.filter.GetValue().strip()
+        found = [model for model in self.models if text.lower() in model.lower()] if text else []
+        self.entries = ([text] if "*" in text else []) + found
+        self.matches.Set([f"Pattern: {entry}" if "*" in entry else entry for entry in self.entries])
+        if self.entries:
+            self.matches.SetSelection(0)
+        self.list_label.SetLabel(f"Matching models ({len(found)})" if text else "Matching models (type to search)")
+
+    def _on_ok(self, event: wx.CommandEvent) -> None:
+        if not self.value():
+            wx.MessageBox("Type part of a model ID and choose a model from the list.", "No model chosen", wx.OK | wx.ICON_ERROR, self)
+            return
+        event.Skip()
+
+
+class ExclusionsDialog(wx.Dialog):
+    """Chooses providers that never answer and models that openrouter/auto never picks."""
+
+    def __init__(self, parent: wx.Window, providers: list[tuple[str, str]], ignored: tuple[str, ...],
+                 models: list[str], excluded: tuple[str, ...]):
+        super().__init__(parent, title="Excluded providers and models", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        known = {slug for _name, slug in providers}
+        # Excluded providers that OpenRouter no longer lists, or all of them if the list did not load.
+        self.providers = [*providers, *((slug, slug) for slug in ignored if slug not in known)]
+        self.models = models
+        self.excluded = list(excluded)
+        provider_label = wx.StaticText(self, label="Excluded providers, for every model (Space toggles a provider)")
+        self.provider_list = wx.CheckListBox(self, choices=[name if name == slug else f"{name} ({slug})"
+                                                            for name, slug in self.providers])
+        self.provider_list.SetCheckedItems([index for index, (_name, slug) in enumerate(self.providers) if slug in ignored])
+        model_label = wx.StaticText(self, label="Excluded models, used with openrouter/auto")
+        self.model_list = wx.ListBox(self, choices=self.excluded)
+        add = wx.Button(self, label="Add model…")
+        self.remove = wx.Button(self, label="Remove model")
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        row.Add(add, 0, wx.RIGHT, 8)
+        row.Add(self.remove, 0)
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        layout = wx.BoxSizer(wx.VERTICAL)
+        controls = [(provider_label, 0), (self.provider_list, 2), (model_label, 0), (self.model_list, 1), (row, 0)]
+        if not providers:
+            controls.insert(0, (wx.StaticText(self, label="OpenRouter's provider list could not be loaded, so only "
+                                                           "the providers excluded so far are shown."), 0))
+        for control, proportion in controls:
+            layout.Add(control, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
+        self.SetSizer(layout)
+        self.SetSize((700, 720))
+        add.Bind(wx.EVT_BUTTON, self._on_add)
+        self.remove.Bind(wx.EVT_BUTTON, self._on_remove)
+        self._update_remove()
+
+    def value(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """The excluded provider slugs and the excluded models."""
+        return tuple(self.providers[index][1] for index in self.provider_list.GetCheckedItems()), tuple(self.excluded)
+
+    def add_model(self, model: str) -> None:
+        if model not in self.excluded:
+            self.excluded.append(model)
+            self.model_list.Append(model)
+        self.model_list.SetSelection(self.excluded.index(model))
+        self._update_remove()
+
+    def _update_remove(self) -> None:
+        self.remove.Enable(bool(self.excluded))
+
+    def _on_add(self, _event: wx.CommandEvent) -> None:
+        with AddModelDialog(self, self.models) as dialog:
+            if dialog.ShowModal() == wx.ID_OK:
+                self.add_model(dialog.value())
+        self.model_list.SetFocus()
+
+    def _on_remove(self, _event: wx.CommandEvent) -> None:
+        index = self.model_list.GetSelection()
+        if index == wx.NOT_FOUND:
+            return
+        del self.excluded[index]
+        self.model_list.Delete(index)
+        if self.excluded:
+            self.model_list.SetSelection(min(index, len(self.excluded) - 1))
+        self._update_remove()
+        self.model_list.SetFocus()
+
+
 class StartChatDialog(wx.Dialog):
     """Asks for the first question and the prompt profile of a new chat."""
 
@@ -237,13 +350,21 @@ class StartChatDialog(wx.Dialog):
         event.Skip()
 
 
+def exclusions_description(providers: tuple[str, ...], models: tuple[str, ...]) -> str:
+    def count(number: int, word: str) -> str:
+        return f"{number or 'no'} {word}{'' if number == 1 else 's'}"
+    text = f"{count(len(providers), 'provider')} and {count(len(models), 'model')} excluded"
+    return text[0].upper() + text[1:]
+
+
 class SettingsDialog(wx.Dialog):
-    def __init__(self, parent: wx.Window, config: AppConfig):
+    def __init__(self, parent: wx.Window, config: AppConfig, catalog: ModelCatalog | None = None):
         super().__init__(parent, title="Settings")
         # All controls are children of the dialog itself: CreateStdDialogButtonSizer parents its
         # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
         self.config = config
-        form = wx.FlexGridSizer(9, 2, 8, 8)
+        self.catalog = catalog
+        form = wx.FlexGridSizer(10, 2, 8, 8)
         form.AddGrowableCol(1, 1)
         self.model = wx.TextCtrl(self, value=config.model)
         self.base_url = wx.TextCtrl(self, value=config.base_url)
@@ -268,10 +389,15 @@ class SettingsDialog(wx.Dialog):
         self.cookies_button = wx.Button(self)
         self._show_cookies()
         self.cookies_button.Bind(wx.EVT_BUTTON, self._on_cookies)
+        self.ignored_providers, self.excluded_models = config.ignored_providers, config.excluded_models
+        self.exclusions_button = wx.Button(self)
+        self._show_exclusions()
+        self.exclusions_button.Bind(wx.EVT_BUTTON, self._on_exclusions)
         for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key),
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
                                ("Downloaded file name", self.filename_button), ("YouTube sign-in", self.cookies_button),
-                               ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only)):
+                               ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only),
+                               ("Providers and models", self.exclusions_button)):
             form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             form.Add(control, 1, wx.EXPAND)
         help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
@@ -293,7 +419,24 @@ class SettingsDialog(wx.Dialog):
                        # Keep "default" as empty, so it keeps following the Videos folder.
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,
                        filename_fields=self.filename_fields, profiles=self.profiles,
-                       audio_only_auto=self.audio_only.GetValue(), youtube_cookies=self.youtube_cookies)
+                       audio_only_auto=self.audio_only.GetValue(), youtube_cookies=self.youtube_cookies,
+                       ignored_providers=self.ignored_providers, excluded_models=self.excluded_models)
+
+    def _show_exclusions(self) -> None:
+        self.exclusions_button.SetLabel(f"{exclusions_description(self.ignored_providers, self.excluded_models)} (change…)")
+        self.Layout()
+
+    def _on_exclusions(self, _event: wx.CommandEvent) -> None:
+        # The base URL may have been changed in this dialog, so ask the API it now names.
+        base_url, catalog = self.base_url.GetValue().strip(), self.catalog
+        if catalog is None or catalog.url != api_url(base_url, "models"):
+            catalog = ModelCatalog(base_url)
+        with wx.BusyCursor():
+            providers, models = catalog.providers(), catalog.model_ids()
+        with ExclusionsDialog(self, providers, self.ignored_providers, models, self.excluded_models) as dialog:
+            if dialog.ShowModal() == wx.ID_OK:
+                self.ignored_providers, self.excluded_models = dialog.value()
+                self._show_exclusions()
 
     def _show_cookies(self) -> None:
         self.cookies_button.SetLabel(f"{cookies_description(self.youtube_cookies)} (change…)")

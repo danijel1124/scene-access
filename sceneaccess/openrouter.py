@@ -90,8 +90,9 @@ class OpenRouterClient:
         return self._post(payload, api_url(self.endpoint, "audio/transcriptions"))
 
     def run_turn(self, session: VideoSession, messages: list[dict[str, Any]], run_tool: Callable[[str, str], Any],
-                 on_event: EventHandler | None = None, plugins: list[dict[str, Any]] | None = None) -> Turn:
-        """Asks the model and runs its tool calls until it answers. run_tool returns a tools.ToolResult."""
+                 on_event: EventHandler | None = None, routing: dict[str, Any] | None = None) -> Turn:
+        """Asks the model and runs its tool calls until it answers. run_tool returns a tools.ToolResult.
+        routing holds extra request fields such as plugins and provider, see models.routing."""
         from .tools import describe_call, image_message
 
         notify = on_event or (lambda _kind, _text: None)
@@ -102,9 +103,8 @@ class OpenRouterClient:
         tools_unavailable = False
         rounds = 0
         while True:
-            payload: dict[str, Any] = {"model": session.model, "session_id": session.id, "messages": messages}
-            if plugins:
-                payload["plugins"] = plugins
+            payload: dict[str, Any] = {"model": session.model, "session_id": session.id, "messages": messages,
+                                       **(routing or {})}
             if tools:
                 payload["tools"] = tools
                 if rounds >= MAX_TOOL_ROUNDS:

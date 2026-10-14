@@ -28,6 +28,10 @@ class AppConfig:
     audio_only_auto: bool = False
     # Where YouTube cookies come from: "" for none, a browser such as "firefox", or a cookies.txt path.
     youtube_cookies: str = ""
+    # Provider slugs such as "google-ai-studio" that never answer, whatever the model.
+    ignored_providers: tuple[str, ...] = ()
+    # Model IDs or patterns such as "google/*" that openrouter/auto never picks.
+    excluded_models: tuple[str, ...] = ()
 
     def profile_text(self, name: str) -> str:
         return dict(self.profiles).get(name, "")
@@ -53,7 +57,16 @@ def load_config(path: Path) -> AppConfig:
         profile=str(values.get("profile", DEFAULT_PROFILE)),
         audio_only_auto=values.get("audio_only_auto") is True,
         youtube_cookies=str(values.get("youtube_cookies", "")),
+        ignored_providers=_names(values.get("ignored_providers")),
+        excluded_models=_names(values.get("excluded_models")),
     )
+
+
+def _names(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    names = [str(name).strip() for name in value if str(name).strip()]
+    return tuple(dict.fromkeys(names))
 
 
 def _profiles(value: object) -> tuple[tuple[str, str], ...]:
@@ -97,6 +110,8 @@ def save_config(path: Path, config: AppConfig) -> None:
         "profile": config.profile,
         "audio_only_auto": config.audio_only_auto,
         "youtube_cookies": config.youtube_cookies,
+        "ignored_providers": list(config.ignored_providers),
+        "excluded_models": list(config.excluded_models),
     }, indent=2), encoding="utf-8")
     # Restricts access on POSIX. On Windows chmod only toggles the read-only flag; there the
     # per-user application-data directory's access control list keeps the file private.

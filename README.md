@@ -42,6 +42,12 @@ Not every model hears a video's sound: Gemini models do, many others such as GLM
 
 **Settings → Sound: With openrouter/auto, use only models that hear the video's sound** (off by default) limits `openrouter/auto` to models that take video with sound and support tools. New chats then need no transcript.
 
+## Providers and models
+
+**Settings → Providers and models** opens a dialog with two lists. Providers checked in the first list (**Space** toggles one) never answer, whatever the model; the list comes from OpenRouter. The second list holds models that `openrouter/auto` never picks: **Add model…** finds one by typing part of its ID, and a pattern with `*` such as `google/*` excludes a whole family. A model chosen in **Settings → Model** is always used, but its excluded providers still don't answer.
+
+Providers limit how large a request may be, and SceneAccess sends the whole video in every request. Tested in October 2026 through OpenRouter: Google AI Studio rejects requests of more than 20,000,000 bytes, so a video of more than about 19 MB once Base64-encoded (a file of about 14 MB), often with nothing more than "HTTP 400: Invalid content". Google Vertex rejected 29.8 MB Base64 and more; nothing between that and 0.1 MB was tested. Qwen allows 20 MiB Base64, Xiaomi MiMo took 30 MB Base64, and Meta's Muse Wonder takes files of up to 50 MiB (before Base64).
+
 ## YouTube
 
 YouTube videos are downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) in a progress dialog that can be cancelled. By default SceneAccess downloads the best quality up to 480p, which keeps details recognizable without HD file sizes, with video and audio merged into an MP4 (preferring H.264). **Settings** lets you choose between 240p and 1080p. Videos are saved to `scene-access` in your Videos folder; if that folder does not exist, SceneAccess asks for a default download folder, which can also be changed in **Settings**. Files are named like yt-dlp's default, `Title [ID].mp4`; **Settings → File name…** lets you check any yt-dlp output template field to include, with further parts added in brackets. A bundled ffmpeg merges video and audio and extracts frames; if Deno or Node.js is installed, yt-dlp uses it for full YouTube support.
@@ -67,12 +73,12 @@ Alternatively, set `OPENROUTER_API_KEY`; the environment variable takes preceden
 All code is in the `sceneaccess` package:
 
 - `gui.py`: the main window and the app start
-- `dialogs.py`: Settings with its File name and Prompt profiles sub-dialogs, the start-chat dialog, and the message reader
+- `dialogs.py`: Settings with its File name, Prompt profiles and Providers and models sub-dialogs, the start-chat dialog, and the message reader
 - `chat_history.py`: the lines of the Chat history list and the usage line
 - `openrouter.py`: requests to OpenRouter and the tool-call loop
 - `tools.py`: the tools offered to the model and the code that runs them (ffmpeg frames, high-resolution sections)
 - `prompts.py`: the base prompt and the default profiles
-- `models.py`: OpenRouter's model list: which models hear sound, and the list for `openrouter/auto`
+- `models.py`: OpenRouter's model and provider lists: which models hear sound, and the routing fields that exclude providers and models
 - `transcript.py`: the timestamped transcript of a video's speech, and whether a chat needs one
 - `session_store.py`: chats in SQLite and the private video copies
 - `youtube.py`: yt-dlp downloads, file names and video information

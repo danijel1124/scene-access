@@ -57,6 +57,65 @@ def test_settings_keep_the_profiles_and_the_profile_chosen_last():
         app.Destroy()
 
 
+def test_exclusions_dialog_toggles_providers_and_adds_and_removes_models():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        providers = [("Google AI Studio", "google-ai-studio"), ("Novita", "novita")]
+        # "old-provider" is no longer in OpenRouter's list but stays excluded and visible.
+        dialog = dialogs.ExclusionsDialog(frame, providers, ("novita", "old-provider"), ["a/one"], ("google/*",))
+        assert dialog.provider_list.GetString(0) == "Google AI Studio (google-ai-studio)"
+        assert dialog.provider_list.GetString(2) == "old-provider"
+        assert dialog.value() == (("novita", "old-provider"), ("google/*",))
+        dialog.provider_list.Check(0)
+        dialog.provider_list.Check(1, False)
+        dialog.add_model("a/one")
+        dialog.add_model("a/one")
+        assert dialog.value() == (("google-ai-studio", "old-provider"), ("google/*", "a/one"))
+        dialog.model_list.SetSelection(0)
+        dialog._on_remove(None)
+        assert dialog.value()[1] == ("a/one",)
+        dialog.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_add_model_dialog_filters_models_and_offers_typed_patterns():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = dialogs.AddModelDialog(frame, ["google/gemini-flash", "google/gemini-pro", "z-ai/glm-flash"])
+        assert dialog.value() == ""
+        dialog.filter.SetValue("FLASH")
+        assert dialog.matches.GetStrings() == ["google/gemini-flash", "z-ai/glm-flash"]
+        assert dialog.value() == "google/gemini-flash"
+        assert dialog.list_label.GetLabel() == "Matching models (2)"
+        dialog.filter.SetValue("google/*")
+        assert dialog.matches.GetStrings() == ["Pattern: google/*"]
+        assert dialog.value() == "google/*"
+        dialog.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_settings_show_and_keep_the_exclusions():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        config = AppConfig(ignored_providers=("google-ai-studio",), excluded_models=("a/one", "b/two"))
+        dialog = SettingsDialog(frame, config)
+        assert dialog.exclusions_button.GetLabel() == "1 provider and 2 models excluded (change…)"
+        assert dialog.value().ignored_providers == ("google-ai-studio",)
+        assert dialog.value().excluded_models == ("a/one", "b/two")
+        dialog.Destroy()
+        assert dialogs.exclusions_description((), ()) == "No providers and no models excluded"
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
 def test_filename_dialog_toggles_parts_and_resets_to_the_yt_dlp_default():
     app = wx.App(False)
     frame = wx.Frame(None)

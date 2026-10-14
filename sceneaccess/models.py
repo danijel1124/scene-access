@@ -22,21 +22,39 @@ class ModelCatalog:
 
     def __init__(self, base_url: str, opener: Callable[..., Any] = urlopen):
         self.url = api_url(base_url, "models")
+        self.providers_url = api_url(base_url, "providers")
         self.opener = opener
         self._models: dict[str, dict[str, Any]] | None = None
+        self._providers: list[tuple[str, str]] | None = None
         self._lock = threading.Lock()
+
+    def _fetch(self, url: str) -> list[dict[str, Any]]:
+        with self.opener(Request(url), timeout=30) as response:
+            return json.loads(response.read().decode("utf-8")).get("data", [])
 
     def _load(self) -> dict[str, dict[str, Any]]:
         with self._lock:
             if self._models is None:
                 try:
-                    with self.opener(Request(self.url), timeout=30) as response:
-                        data = json.loads(response.read().decode("utf-8"))
-                    self._models = {model["id"]: model for model in data.get("data", [])}
+                    self._models = {model["id"]: model for model in self._fetch(self.url)}
                 except Exception:
                     # Without the list nothing is known; try again on the next question.
                     return {}
             return self._models
+
+    def model_ids(self) -> list[str]:
+        return sorted(self._load())
+
+    def providers(self) -> list[tuple[str, str]]:
+        """OpenRouter's providers as (name, slug), sorted by name; empty if the list is unavailable."""
+        with self._lock:
+            if self._providers is None:
+                try:
+                    found = [(str(item.get("name") or item["slug"]), str(item["slug"])) for item in self._fetch(self.providers_url)]
+                except Exception:
+                    return []
+                self._providers = sorted(found, key=lambda provider: provider[0].lower())
+            return self._providers
 
     def hears_audio(self, model: str) -> bool | None:
         """Whether the model gets the sound of a video; None if unknown, e.g. for openrouter/auto."""
@@ -61,14 +79,27 @@ class ModelCatalog:
         return sorted(chosen)
 
 
-def auto_router_plugins(session_model: str, audio_only: bool, catalog: ModelCatalog) -> list[dict[str, Any]]:
-    """The plugin that limits openrouter/auto to models that hear the video, if the chat asks for it."""
-    if not audio_only or session_model != AUTO_ROUTER:
-        return []
-    allowed = catalog.audio_video_tool_models()
-    if not allowed:
-        # Such a chat has no transcript, because only hearing models may answer it. Unlimited,
-        # openrouter/auto could pick a model that gets neither the sound nor a transcript.
-        raise RuntimeError("OpenRouter's model list could not be loaded, so openrouter/auto cannot be limited "
-                           "to models that hear the video. Please try again.")
-    return [{"id": "auto-router", "allowed_models": allowed}]
+def routing(session_model: str, audio_only: bool, catalog: ModelCatalog, ignored_providers: tuple[str, ...] = (),
+            excluded_models: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Request fields that choose who answers: the providers never to use, and for openrouter/auto the
+    models it may not pick and, if the chat asks for it, only models that hear the video."""
+    options: dict[str, Any] = {}
+    if ignored_providers:
+        options["provider"] = {"ignore": list(ignored_providers)}
+    if session_model != AUTO_ROUTER:
+        return options
+    plugin: dict[str, Any] = {"id": "auto-router"}
+    if audio_only:
+        allowed = catalog.audio_video_tool_models()
+        if not allowed:
+            # Such a chat has no transcript, because only hearing models may answer it. Unlimited,
+            # openrouter/auto could pick a model that gets neither the sound nor a transcript.
+            raise RuntimeError("OpenRouter's model list could not be loaded, so openrouter/auto cannot be limited "
+                               "to models that hear the video. Please try again.")
+        plugin["allowed_models"] = allowed
+    if excluded_models:
+        # Patterns such as "google/*" work here too; an excluded model is never picked, even if allowed.
+        plugin["excluded_models"] = list(excluded_models)
+    if len(plugin) > 1:
+        options["plugins"] = [plugin]
+    return options

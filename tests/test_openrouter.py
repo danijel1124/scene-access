@@ -42,10 +42,12 @@ def test_client_sends_stable_session_id_and_returns_cache_usage(tmp_path: Path):
             "usage": {"prompt_tokens": 42, "prompt_tokens_details": {"cached_tokens": 40, "cache_write_tokens": 2}},
         })
 
+    routing = {"provider": {"ignore": ["novita"]}, "plugins": [{"id": "auto-router", "excluded_models": ["a/b"]}]}
     result = OpenRouterClient("test-key", base_url="https://router.example/chat", opener=opener).run_turn(
-        session, session.messages, lambda *_: None).completion
+        session, session.messages, lambda *_: None, routing=routing).completion
 
     assert seen["body"]["session_id"] == session.id
+    assert seen["body"]["provider"] == routing["provider"] and seen["body"]["plugins"] == routing["plugins"]
     assert result.answer == "A puffer jacket."
     assert result.model == "z-ai/glm-4.5v"
     assert result.provider == "CoreWeave"

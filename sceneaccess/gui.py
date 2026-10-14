@@ -16,7 +16,7 @@ from .chat_history import chat_history_entries, transcript_entry
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
 from .dialogs import (NO_PROFILE, MessageReaderDialog, SettingsDialog, StartChatDialog, ask_youtube_sign_in,
                       cookies_description, default_download_dir)
-from .models import ModelCatalog, auto_router_plugins
+from .models import ModelCatalog, routing
 from .openrouter import OpenRouterClient
 from .prompts import system_prompt
 from .session_store import (TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession,
@@ -166,7 +166,7 @@ class MainFrame(wx.Frame):
         self.sessions.Set([session.title for session in sessions])
 
     def on_settings(self, _event: wx.CommandEvent) -> None:
-        dialog = SettingsDialog(self, self.config)
+        dialog = SettingsDialog(self, self.config, self.catalog)
         if dialog.ShowModal() == wx.ID_OK:
             candidate = dialog.value()
             if not candidate.model or not candidate.base_url.startswith(("https://", "http://")):
@@ -511,9 +511,10 @@ class MainFrame(wx.Frame):
                     session = self.store.get_session(session_id, OWNER_ID)
                 messages = session.messages if initial else self.store.build_follow_up_messages(session_id, OWNER_ID, question)
                 # Raises if this chat may only go to hearing models but the model list is unavailable.
-                plugins = auto_router_plugins(session.model, session.audio_only, self.catalog)
+                options = routing(session.model, session.audio_only, self.catalog, self.config.ignored_providers,
+                                  self.config.excluded_models)
                 runner = ToolRunner(session, self.config.youtube_cookies)
-                turn = client.run_turn(session, messages, runner.run, on_event, plugins)
+                turn = client.run_turn(session, messages, runner.run, on_event, options)
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)
                 completion = turn.completion
