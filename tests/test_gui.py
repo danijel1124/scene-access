@@ -27,6 +27,27 @@ def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path,
         app.Destroy()
 
 
+def test_new_video_chat_menu_runs_the_chosen_entry(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    app = wx.App(False)
+    frame = gui.MainFrame()
+    calls = []
+    monkeypatch.setattr(frame, "new_from_local_file", lambda: calls.append("local"))
+    monkeypatch.setattr(frame, "new_from_youtube", lambda: calls.append("youtube"))
+    try:
+        for position, expected in ((0, "local"), (1, "youtube")):
+            monkeypatch.setattr(frame.new_button, "GetPopupMenuSelectionFromUser",
+                                lambda menu, _pos, p=position: menu.FindItemByPosition(p).GetId())
+            frame.on_new(None)
+            assert calls[-1] == expected
+        monkeypatch.setattr(frame.new_button, "GetPopupMenuSelectionFromUser", lambda _menu, _pos: wx.ID_NONE)
+        frame.on_new(None)
+        assert calls == ["local", "youtube"]
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
 def test_default_download_folder_is_created_inside_an_existing_videos_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     monkeypatch.setattr(gui, "default_download_dir", lambda: tmp_path / "Videos" / "scene-access")

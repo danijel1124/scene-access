@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import getpass
 import os
+import sys
 import threading
+import traceback
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -287,16 +289,15 @@ class MainFrame(wx.Frame):
 
     def on_new(self, _event: wx.CommandEvent) -> None:
         menu = wx.Menu()
-        local = menu.Append(wx.ID_ANY, "Start chat from local file")
-        youtube = menu.Append(wx.ID_ANY, "Start chat from YouTube")
-        chosen: list[int] = []
-        menu.Bind(wx.EVT_MENU, lambda event: chosen.append(event.GetId()))
-        self.new_button.PopupMenu(menu, (0, self.new_button.GetSize().height))
+        # Read the IDs now: after menu.Destroy() the items are freed and GetId() returns garbage.
+        local = menu.Append(wx.ID_ANY, "Start chat from local file").GetId()
+        youtube = menu.Append(wx.ID_ANY, "Start chat from YouTube").GetId()
+        # Returns the chosen ID once the menu has closed, so the next dialog does not open from inside it.
+        chosen = self.new_button.GetPopupMenuSelectionFromUser(menu, (0, self.new_button.GetSize().height))
         menu.Destroy()
-        # Act only after the menu has closed, so the next dialog does not open from inside it.
-        if chosen == [local.GetId()]:
+        if chosen == local:
             self.new_from_local_file()
-        elif chosen == [youtube.GetId()]:
+        elif chosen == youtube:
             self.new_from_youtube()
 
     def new_from_local_file(self) -> None:
@@ -374,8 +375,10 @@ class MainFrame(wx.Frame):
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
         message = f"Downloading the video (up to {max_height}p) to {target_dir}"
-        with wx.ProgressDialog("Downloading from YouTube", message, maximum=100, parent=self,
-                               style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_ELAPSED_TIME) as dialog:
+        # The native Windows progress dialog runs in its own thread and may not get the focus, so a screen
+        # reader does not announce it until it closes. The generic one is a normal dialog on the main thread.
+        with wx.GenericProgressDialog("Downloading from YouTube", message, maximum=100, parent=self,
+                                      style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_ELAPSED_TIME) as dialog:
             while not state["done"]:
                 # Video and audio are separate downloads, so the percentage restarts once.
                 keep_going, _skip = dialog.Update(min(state["percent"], 99))
@@ -518,8 +521,23 @@ class MainFrame(wx.Frame):
         wx.MessageBox(error, "OpenRouter error", wx.OK | wx.ICON_ERROR)
 
 
+def _report_unexpected_error(error_type, error, trace) -> None:
+    """The windowed exe has no console, so an error in an event handler would otherwise vanish silently."""
+    text = "".join(traceback.format_exception(error_type, error, trace))
+    log_path = Path(wx.StandardPaths.Get().GetUserDataDir()) / "error.log"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(text + "\n")
+    except OSError:
+        pass
+    wx.MessageBox(f"An unexpected error occurred. It was also written to {log_path}.\n\n{text}",
+                  "SceneAccess error", wx.OK | wx.ICON_ERROR)
+
+
 def main() -> None:
     app = wx.App()
+    sys.excepthook = _report_unexpected_error
     frame = MainFrame()
     frame.Show()
     app.MainLoop()
