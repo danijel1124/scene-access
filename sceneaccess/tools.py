@@ -158,8 +158,9 @@ def extract_frame(source: Path, seconds: float, region: tuple[float, float, floa
 class ToolRunner:
     """Runs the model's tool calls for one chat. Errors become text, so the model can react to them."""
 
-    def __init__(self, session: VideoSession):
+    def __init__(self, session: VideoSession, youtube_cookies: str = ""):
         self.session = session
+        self.youtube_cookies = youtube_cookies
 
     def run(self, name: str, arguments_json: str) -> ToolResult:
         try:
@@ -191,7 +192,8 @@ class ToolRunner:
         seconds, region = parse_time(arguments.get("time", 0)), _region(arguments)
         with tempfile.TemporaryDirectory() as folder:
             # One second is enough for a still frame; the clip starts exactly at the requested time.
-            clip = download_section(self.session.source_url, seconds, seconds + 1, Path(folder))
+            clip = download_section(self.session.source_url, seconds, seconds + 1, Path(folder),
+                                    cookies=self.youtube_cookies)
             result = self._frame_from(clip, 0.0, region, "the online source", reported_seconds=seconds)
         return result
 

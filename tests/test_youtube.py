@@ -32,6 +32,20 @@ def test_download_options_use_the_chosen_file_name_parts(tmp_path: Path):
     assert options["trim_file_name"] > 0
 
 
+def test_youtube_cookies_come_from_firefox_or_a_cookies_file(tmp_path: Path):
+    assert youtube.cookie_options("") == {}
+    assert youtube.cookie_options("firefox") == {"cookiesfrombrowser": ("firefox",)}
+    assert youtube.cookie_options(r"C:\cookies.txt") == {"cookiefile": r"C:\cookies.txt"}
+    assert youtube.download_options(tmp_path, 480, cookies="firefox")["cookiesfrombrowser"] == ("firefox",)
+    assert "cookiesfrombrowser" not in youtube.download_options(tmp_path, 480)
+
+
+def test_youtubes_bot_check_is_recognized():
+    error = RuntimeError("ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you're not a bot. Use --cookies-from-browser")
+    assert youtube.needs_sign_in(error) is True
+    assert youtube.needs_sign_in(RuntimeError("HTTP Error 404: Not Found")) is False
+
+
 def test_search_lists_videos_without_downloading(monkeypatch):
     seen = {}
 

@@ -70,3 +70,13 @@ def test_prompt_profiles_round_trip_and_older_configs_get_the_defaults(tmp_path:
     assert load_config(path).profiles == (("A", "1"),)
     path.write_text('{"profiles": []}', encoding="utf-8")
     assert load_config(path).profiles == ()
+
+
+def test_sound_and_youtube_sign_in_settings_round_trip(tmp_path: Path):
+    path = tmp_path / "config.json"
+    save_config(path, AppConfig(audio_only_auto=True, youtube_cookies="firefox"))
+    loaded = load_config(path)
+    assert loaded.audio_only_auto is True and loaded.youtube_cookies == "firefox"
+
+    path.write_text('{"model": "m"}', encoding="utf-8")
+    assert load_config(path).audio_only_auto is False and load_config(path).youtube_cookies == ""

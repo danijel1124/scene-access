@@ -154,9 +154,32 @@ class _QuietLogger:
         pass
 
 
+# Browsers whose cookies yt-dlp can read on Windows. Chrome and Edge encrypt them with app-bound keys,
+# which fails with "Failed to decrypt with DPAPI" (yt-dlp issue 10927); a cookies.txt file works for them.
+COOKIE_BROWSERS = ("firefox",)
+
+
+def cookie_options(cookies: str) -> dict[str, Any]:
+    """yt-dlp options for YouTube cookies: "" for none, a browser name, or the path of a cookies.txt file.
+    Signed in, YouTube asks less often to "confirm you're not a bot"."""
+    if not cookies:
+        return {}
+    if cookies in COOKIE_BROWSERS:
+        return {"cookiesfrombrowser": (cookies,)}
+    return {"cookiefile": cookies}
+
+
+def needs_sign_in(error: BaseException) -> bool:
+    """True for YouTube's "Sign in to confirm you're not a bot", which cookies of a signed-in browser avoid."""
+    text = str(error)
+    return "Sign in to confirm" in text or "--cookies" in text
+
+
 def download_options(target_dir: Path, max_height: int, progress: Callable[[dict[str, Any]], None] | None = None,
-                     filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS) -> dict[str, Any]:
+                     filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS,
+                     cookies: str = "") -> dict[str, Any]:
     options: dict[str, Any] = {
+        **cookie_options(cookies),
         # Best resolution up to max_height, preferring H.264 in mp4 with m4a audio (most widely accepted
         # by models; YouTube otherwise often picks AV1), then the smallest file. Video and audio are
         # merged, so the model also gets the sound.
@@ -185,12 +208,13 @@ def download_options(target_dir: Path, max_height: int, progress: Callable[[dict
 
 def download_video(url: str, target_dir: Path, max_height: int = DEFAULT_MAX_HEIGHT,
                    progress: Callable[[dict[str, Any]], None] | None = None,
-                   filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS) -> tuple[Path, str, dict[str, Any]]:
+                   filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS,
+                   cookies: str = "") -> tuple[Path, str, dict[str, Any]]:
     """Returns the downloaded file, the title and the video information the model may read later."""
     import yt_dlp
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    with yt_dlp.YoutubeDL(download_options(target_dir, max_height, progress, filename_fields)) as downloader:
+    with yt_dlp.YoutubeDL(download_options(target_dir, max_height, progress, filename_fields, cookies)) as downloader:
         info = downloader.extract_info(url, download=True)
     path = Path(info["requested_downloads"][0]["filepath"])
     return path, str(info.get("title") or path.name), video_info_summary(info)
@@ -209,17 +233,17 @@ def video_info_summary(info: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _info_options() -> dict[str, Any]:
+def _info_options(cookies: str = "") -> dict[str, Any]:
     # ignore_no_formats_error: only the information is needed, so formats that cannot be resolved don't matter.
     return {"logger": _QuietLogger(), "quiet": True, "noplaylist": True, "skip_download": True,
-            "ignore_no_formats_error": True, "js_runtimes": {"deno": {}, "node": {}}}
+            "ignore_no_formats_error": True, "js_runtimes": {"deno": {}, "node": {}}, **cookie_options(cookies)}
 
 
-def search_videos(query: str, count: int = 8) -> list[dict[str, Any]]:
+def search_videos(query: str, count: int = 8, cookies: str = "") -> list[dict[str, Any]]:
     """YouTube search results with url, title, channel and duration (seconds), without downloading."""
     import yt_dlp
 
-    with yt_dlp.YoutubeDL({**_info_options(), "extract_flat": "in_playlist"}) as downloader:
+    with yt_dlp.YoutubeDL({**_info_options(cookies), "extract_flat": "in_playlist"}) as downloader:
         info = downloader.extract_info(f"ytsearch{count}:{query}", download=False)
     results = []
     for entry in info.get("entries") or []:
@@ -230,20 +254,21 @@ def search_videos(query: str, count: int = 8) -> list[dict[str, Any]]:
     return results
 
 
-def fetch_video_info(url: str) -> dict[str, Any]:
+def fetch_video_info(url: str, cookies: str = "") -> dict[str, Any]:
     """The video information the model may read, for a video that is not downloaded again."""
     import yt_dlp
 
-    with yt_dlp.YoutubeDL(_info_options()) as downloader:
+    with yt_dlp.YoutubeDL(_info_options(cookies)) as downloader:
         return video_info_summary(downloader.extract_info(url, download=False))
 
 
-def download_section(url: str, start: float, end: float, target_dir: Path, max_height: int = 2160) -> Path:
+def download_section(url: str, start: float, end: float, target_dir: Path, max_height: int = 2160,
+                     cookies: str = "") -> Path:
     """Downloads only the video picture between start and end seconds, in high resolution."""
     import yt_dlp
     from yt_dlp.utils import download_range_func
 
-    options = download_options(target_dir, max_height)
+    options = download_options(target_dir, max_height, cookies=cookies)
     options.update({
         # Picture only: the clip is for still frames. Plain https formats let ffmpeg seek to the range; with
         # HLS (m3u8) it reads the whole playlist and wrote an empty file in testing.

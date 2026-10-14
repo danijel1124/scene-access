@@ -26,6 +26,8 @@ class AppConfig:
     profile: str = DEFAULT_PROFILE
     # With openrouter/auto, let new chats choose only from models that hear the video's sound.
     audio_only_auto: bool = False
+    # Where YouTube cookies come from: "" for none, a browser such as "firefox", or a cookies.txt path.
+    youtube_cookies: str = ""
 
     def profile_text(self, name: str) -> str:
         return dict(self.profiles).get(name, "")
@@ -50,6 +52,7 @@ def load_config(path: Path) -> AppConfig:
         profiles=_profiles(values.get("profiles")),
         profile=str(values.get("profile", DEFAULT_PROFILE)),
         audio_only_auto=values.get("audio_only_auto") is True,
+        youtube_cookies=str(values.get("youtube_cookies", "")),
     )
 
 
@@ -93,6 +96,7 @@ def save_config(path: Path, config: AppConfig) -> None:
         "profiles": [{"name": name, "text": text} for name, text in config.profiles],
         "profile": config.profile,
         "audio_only_auto": config.audio_only_auto,
+        "youtube_cookies": config.youtube_cookies,
     }, indent=2), encoding="utf-8")
     # Restricts access on POSIX. On Windows chmod only toggles the read-only flag; there the
     # per-user application-data directory's access control list keeps the file private.

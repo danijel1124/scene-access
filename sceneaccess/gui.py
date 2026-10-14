@@ -8,13 +8,14 @@ import threading
 import traceback
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import wx
 
 from .chat_history import chat_history_entries, transcript_entry
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
-from .dialogs import NO_PROFILE, MessageReaderDialog, SettingsDialog, StartChatDialog, default_download_dir
+from .dialogs import (NO_PROFILE, MessageReaderDialog, SettingsDialog, StartChatDialog, ask_youtube_sign_in,
+                      cookies_description, default_download_dir)
 from .models import ModelCatalog, auto_router_plugins
 from .openrouter import OpenRouterClient
 from .prompts import system_prompt
@@ -23,7 +24,7 @@ from .session_store import (TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE,
 from .speech import announce
 from .tools import ToolRunner, format_time, tool_definitions
 from .transcript import make_transcript, needs_transcript
-from .youtube import download_video, fetch_video_info, search_videos
+from .youtube import download_video, fetch_video_info, needs_sign_in, search_videos
 
 # yt-dlp's default file name ends with the video ID in brackets: "Title [jNQXAC9IVRw].mp4".
 YOUTUBE_ID_IN_NAME = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
@@ -255,7 +256,8 @@ class MainFrame(wx.Frame):
 
         def worker() -> None:
             try:
-                state["result"] = download_video(url, target_dir, max_height, progress, filename_fields)
+                state["result"] = download_video(url, target_dir, max_height, progress, filename_fields,
+                                                 self.config.youtube_cookies)
             except Exception as error:
                 state["error"] = error
             finally:
@@ -288,10 +290,35 @@ class MainFrame(wx.Frame):
             self.status.SetLabel("The download was cancelled.")
             return None
         if state["error"] is not None:
+            if needs_sign_in(state["error"]) and self._ask_youtube_sign_in():
+                return self._download_with_progress(url, target_dir)
             self.status.SetLabel("The video could not be downloaded.")
             wx.MessageBox(str(state["error"]), "Download failed", wx.OK | wx.ICON_ERROR)
             return None
         return state["result"]
+
+    def _with_youtube_sign_in(self, call: Callable[[str], Any]) -> Any:
+        """Runs a YouTube request with the configured cookies; if YouTube asks to sign in, asks where the
+        user is signed in and tries again."""
+        while True:
+            try:
+                with wx.BusyCursor():
+                    return call(self.config.youtube_cookies)
+            except Exception as error:
+                if not (needs_sign_in(error) and self._ask_youtube_sign_in()):
+                    raise
+
+    def _ask_youtube_sign_in(self) -> bool:
+        """Asks where the user is signed in to YouTube after YouTube asked to sign in. True to try again."""
+        reason = ("YouTube asks to sign in to confirm that this is not a bot."
+                  + (f" The current choice ({cookies_description(self.config.youtube_cookies)}) was not enough."
+                     if self.config.youtube_cookies else ""))
+        choice = ask_youtube_sign_in(self, reason)
+        if choice is None:
+            return False
+        self.config = replace(self.config, youtube_cookies=choice)
+        save_config(self.config_path, self.config)
+        return True
 
     def _ask_first_question(self) -> tuple[str, str] | None:
         """Returns the first question and the chosen profile's name, or None if cancelled."""
@@ -388,8 +415,7 @@ class MainFrame(wx.Frame):
             choices.append((f"The video ID in the file name: {link}", link))
         announce("Searching YouTube…")
         try:
-            with wx.BusyCursor():
-                results = search_videos(session.title)
+            results = self._with_youtube_sign_in(lambda cookies: search_videos(session.title, cookies=cookies))
         except Exception as error:
             results = []
             wx.MessageBox(f"YouTube could not be searched: {error}", "Search failed", wx.OK | wx.ICON_WARNING)
@@ -413,8 +439,7 @@ class MainFrame(wx.Frame):
                 return True
         announce("Loading the video information…")
         try:
-            with wx.BusyCursor():
-                info = fetch_video_info(url)
+            info = self._with_youtube_sign_in(lambda cookies: fetch_video_info(url, cookies=cookies))
         except Exception as error:
             wx.MessageBox(f"The video information could not be loaded: {error}", "Link not used", wx.OK | wx.ICON_WARNING)
             return True
@@ -487,7 +512,8 @@ class MainFrame(wx.Frame):
                 messages = session.messages if initial else self.store.build_follow_up_messages(session_id, OWNER_ID, question)
                 # Raises if this chat may only go to hearing models but the model list is unavailable.
                 plugins = auto_router_plugins(session.model, session.audio_only, self.catalog)
-                turn = client.run_turn(session, messages, ToolRunner(session).run, on_event, plugins)
+                runner = ToolRunner(session, self.config.youtube_cookies)
+                turn = client.run_turn(session, messages, runner.run, on_event, plugins)
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)
                 completion = turn.completion

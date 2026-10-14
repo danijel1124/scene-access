@@ -19,6 +19,33 @@ def default_download_dir() -> Path:
     return Path(wx.StandardPaths.Get().GetUserDir(wx.StandardPaths.Dir_Videos)) / "scene-access"
 
 
+def cookies_description(cookies: str) -> str:
+    if not cookies:
+        return "Not signed in"
+    if cookies == "firefox":
+        return "Firefox"
+    return f"Cookies file {cookies}"
+
+
+def ask_youtube_sign_in(parent: wx.Window, reason: str = "") -> str | None:
+    """Asks where the user is signed in to YouTube. Returns the cookies setting, or None if cancelled."""
+    options = [("Firefox", "firefox"),
+               # Chrome and Edge encrypt their cookies so that yt-dlp cannot read them on Windows.
+               ("Chrome, Edge or another browser: choose an exported cookies.txt file…", "file"),
+               ("Not signed in: use no cookies", "")]
+    message = (f"{reason}\n\n" if reason else "") + ("Where are you signed in to YouTube? SceneAccess then uses that "
+                                                     "browser's YouTube cookies for downloads and searches.")
+    with wx.SingleChoiceDialog(parent, message, "YouTube sign-in", [label for label, _value in options]) as dialog:
+        if dialog.ShowModal() != wx.ID_OK:
+            return None
+        value = options[dialog.GetSelection()][1]
+    if value != "file":
+        return value
+    with wx.FileDialog(parent, "Choose the cookies.txt file exported from your browser",
+                       wildcard="Cookies file (*.txt)|*.txt", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
+        return dialog.GetPath() if dialog.ShowModal() == wx.ID_OK else None
+
+
 class FilenameDialog(wx.Dialog):
     """Chooses the yt-dlp fields a downloaded video's file name is built from."""
 
@@ -216,7 +243,7 @@ class SettingsDialog(wx.Dialog):
         # All controls are children of the dialog itself: CreateStdDialogButtonSizer parents its
         # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
         self.config = config
-        form = wx.FlexGridSizer(8, 2, 8, 8)
+        form = wx.FlexGridSizer(9, 2, 8, 8)
         form.AddGrowableCol(1, 1)
         self.model = wx.TextCtrl(self, value=config.model)
         self.base_url = wx.TextCtrl(self, value=config.base_url)
@@ -237,10 +264,14 @@ class SettingsDialog(wx.Dialog):
         # Off: openrouter/auto may pick a model that cannot hear, which then gets a transcript instead.
         self.audio_only = wx.CheckBox(self, label="With openrouter/auto, use only models that hear the video's sound")
         self.audio_only.SetValue(config.audio_only_auto)
+        self.youtube_cookies = config.youtube_cookies
+        self.cookies_button = wx.Button(self)
+        self._show_cookies()
+        self.cookies_button.Bind(wx.EVT_BUTTON, self._on_cookies)
         for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key),
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
-                               ("Downloaded file name", self.filename_button), ("Prompt profiles", self.profiles_button),
-                               ("Sound", self.audio_only)):
+                               ("Downloaded file name", self.filename_button), ("YouTube sign-in", self.cookies_button),
+                               ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only)):
             form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             form.Add(control, 1, wx.EXPAND)
         help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
@@ -262,7 +293,17 @@ class SettingsDialog(wx.Dialog):
                        # Keep "default" as empty, so it keeps following the Videos folder.
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,
                        filename_fields=self.filename_fields, profiles=self.profiles,
-                       audio_only_auto=self.audio_only.GetValue())
+                       audio_only_auto=self.audio_only.GetValue(), youtube_cookies=self.youtube_cookies)
+
+    def _show_cookies(self) -> None:
+        self.cookies_button.SetLabel(f"{cookies_description(self.youtube_cookies)} (change…)")
+        self.Layout()
+
+    def _on_cookies(self, _event: wx.CommandEvent) -> None:
+        choice = ask_youtube_sign_in(self)
+        if choice is not None:
+            self.youtube_cookies = choice
+            self._show_cookies()
 
     def _on_filename(self, _event: wx.CommandEvent) -> None:
         with FilenameDialog(self, self.filename_fields) as dialog:

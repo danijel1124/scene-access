@@ -46,6 +46,8 @@ Nicht jedes Modell hört den Ton eines Videos: Gemini-Modelle tun es, viele ande
 
 YouTube-Videos werden mit [yt-dlp](https://github.com/yt-dlp/yt-dlp) in einem Fortschrittsdialog heruntergeladen, der sich abbrechen lässt. Standardmäßig lädt SceneAccess die beste Qualität bis 480p – Details bleiben erkennbar, ohne HD-Dateigrößen – und fügt Bild und Ton zu einer MP4 zusammen, bevorzugt in H.264. In den **Settings** lässt sich zwischen 240p und 1080p wählen. Videos werden unter `scene-access` im Videos-Ordner gespeichert; gibt es diesen Ordner nicht, fragt SceneAccess nach einem Standard-Downloadordner, der sich auch in den **Settings** ändern lässt. Dateien heißen wie beim yt-dlp-Standard `Titel [ID].mp4`; unter **Settings → File name…** lässt sich per Kontrollkästchen jedes yt-dlp-Vorlagenfeld hinzunehmen, weitere Teile stehen in eckigen Klammern. Ein mitgeliefertes ffmpeg fügt Bild und Ton zusammen und schneidet Standbilder aus; ist Deno oder Node.js installiert, nutzt yt-dlp es für vollen YouTube-Support.
 
+Verlangt YouTube „confirm you're not a bot“, fragt SceneAccess, wo du bei YouTube angemeldet bist, und versucht es mit den YouTube-Cookies dieses Browsers erneut; angemeldet bekommt yt-dlp außerdem mehr Videoinformationen. Firefox funktioniert direkt. Chrome und Edge verschlüsseln ihre Cookies so, dass yt-dlp sie unter Windows nicht lesen kann; für sie eine `cookies.txt` mit einer Browser-Erweiterung exportieren und auswählen. **Settings → YouTube sign-in** ändert die Wahl.
+
 ## Konfiguration und Datenschutz
 
 SceneAccess verwendet `wx.StandardPaths.GetUserDataDir()` und damit den nativen Benutzer-Anwendungsdatenordner des jeweiligen Betriebssystems. Es gibt keine fest codierten Linux-, Windows- oder Hermes-Pfade.
