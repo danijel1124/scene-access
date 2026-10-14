@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .session_store import TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE
 from .tools import describe_call
 
 
@@ -28,8 +29,36 @@ def usage_text(usage: dict[str, Any] | None) -> str:
     return f"Usage: model {usage.get('model') or 'unknown'}{provider} | prompt tokens: {prompt_tokens:,} | {cache}{extras}"
 
 
-def chat_history_items(initial_question: str, history: list[dict[str, Any]]) -> list[str]:
-    items = [f"You: {initial_question}"]
+def transcript_entry(state: str, transcript: str) -> tuple[str, str] | None:
+    """The item about the transcript: a short line (a long one would be read out in full when selected),
+    and the full text for the reader."""
+    if state == TRANSCRIPT_DONE and transcript:
+        lines = transcript.count("\n") + 1
+        short = (f"Transcript: {lines} lines of automatic speech recognition, sent with the video because the "
+                 "model cannot hear it. It may contain errors; Enter shows it.")
+        return short, "Transcript (automatic speech recognition, may contain errors):\n\n" + transcript
+    if state == TRANSCRIPT_DONE:
+        text = "Transcript: no speech was detected in the video."
+        return text, text
+    if state == TRANSCRIPT_FAILED:
+        text = ("Transcript: speech recognition failed, so the model answered without it. "
+                "Change prompt profile and tools tries again.")
+        return text, text
+    return None
+
+
+def chat_history_entries(initial_question: str, history: list[dict[str, Any]], transcript_state: str = TRANSCRIPT_NONE,
+                         transcript: str = "") -> list[tuple[str, str]]:
+    """Each item as (shown text, text for the reader); they differ only for the transcript."""
+    entries = [(f"You: {initial_question}",) * 2]
+    note = transcript_entry(transcript_state, transcript)
+    if note:
+        entries.append(note)
+    return entries + [(item, item) for item in _message_items(history)]
+
+
+def _message_items(history: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
     for message in history:
         content = message.get("content")
         if message["role"] == "user":

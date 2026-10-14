@@ -21,7 +21,7 @@ The sidebar lists recent chats. A chat remains usable if the original file is mo
 
 Every chat starts with a fixed base prompt: describe for a blind person, give times as mm:ss, mark guesses as guesses, never invent brands or text, use the tools when a detail is too small, and answer in the user's language. A **prompt profile** chosen at the start of the chat adds instructions for a task. The defaults are General description, Audio description, Identify brand and model, and Read on-screen text. **Settings → Prompt profiles…** shows the base prompt and lets you edit, add and delete profiles.
 
-The prompt, the profile and the available tools are stored with each chat and do not follow later changes in Settings: they are sent before the video in every request, so changing them makes the provider cache the whole video again. **Change prompt profile and tools** changes them for the open chat on purpose, for example to give chats from before the tools existed the current prompt and tools. Older YouTube chats did not store their link, so they get zoom and web search only.
+The prompt, the profile and the available tools are stored with each chat and do not follow later changes in Settings: they are sent before the video in every request, so changing them makes the provider cache the whole video again. **Change prompt profile and tools** changes them for the open chat on purpose, for example to give chats from before the tools existed the current prompt and tools. Older YouTube chats did not store their link: SceneAccess then offers the video ID from the file name, if it is there, and searches YouTube for the chat's title, so you can choose the video, enter a link, or say it is not a YouTube video. With the link, the chat also gets the high-resolution and video-information tools.
 
 ## Tools
 
@@ -36,6 +36,12 @@ Images are sent as a user message after the tool result, because many providers 
 
 The cache is kept by each provider, not by OpenRouter. OpenRouter may send a request to a different provider of the same model, even with a fixed model, and then nothing is read from the cache; even on the same provider the cache is best-effort. The usage line therefore names the provider, for example `model z-ai/glm-5.3-flash via CoreWeave`.
 
+## Sound and transcript
+
+Not every model hears a video's sound: Gemini models do, many others such as GLM only see the picture. SceneAccess reads OpenRouter's model list to find out. If the chat's model cannot hear, or with `openrouter/auto`, where the answering model is not known in advance, the first question of a chat first sends the sound to ElevenLabs Scribe v2 through OpenRouter's transcription endpoint (about $0.11 per hour of sound). The transcript, with mm:ss times, goes with the video in every request and is cached with it. The Chat history shows a short Transcript item; **Enter** shows the full text. Automatic speech recognition can contain errors, and the model is told so. If transcription fails, the model answers without it, and **Change prompt profile and tools** tries again.
+
+**Settings → Sound: With openrouter/auto, use only models that hear the video's sound** (off by default) limits `openrouter/auto` to models that take video with sound and support tools. New chats then need no transcript.
+
 ## YouTube
 
 YouTube videos are downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) in a progress dialog that can be cancelled. By default SceneAccess downloads the best quality up to 480p, which keeps details recognizable without HD file sizes, with video and audio merged into an MP4 (preferring H.264). **Settings** lets you choose between 240p and 1080p. Videos are saved to `scene-access` in your Videos folder; if that folder does not exist, SceneAccess asks for a default download folder, which can also be changed in **Settings**. Files are named like yt-dlp's default, `Title [ID].mp4`; **Settings → File name…** lets you check any yt-dlp output template field to include, with further parts added in brackets. A bundled ffmpeg merges video and audio and extracts frames; if Deno or Node.js is installed, yt-dlp uses it for full YouTube support.
@@ -47,7 +53,7 @@ SceneAccess uses `wx.StandardPaths.GetUserDataDir()` and therefore the native pe
 That directory contains:
 
 - `config.json`: settings, prompt profiles, and optionally the API key
-- `chats/sceneaccess.db`: titles, models, paths, prompts, tools, video information, and conversation histories
+- `chats/sceneaccess.db`: titles, models, paths, prompts, tools, video information, transcripts, and conversation histories
 - `chats/sessions/<id>/context.data-url`: a complete reconstructable video copy as a Base64 data URL
 - `chats/sessions/<id>/frame_*.jpg`: the images the model asked for
 - `error.log`: unexpected errors, which are also shown in a message
@@ -64,6 +70,8 @@ All code is in the `sceneaccess` package:
 - `openrouter.py`: requests to OpenRouter and the tool-call loop
 - `tools.py`: the tools offered to the model and the code that runs them (ffmpeg frames, high-resolution sections)
 - `prompts.py`: the base prompt and the default profiles
+- `models.py`: OpenRouter's model list: which models hear sound, and the list for `openrouter/auto`
+- `transcript.py`: the timestamped transcript of a video's speech, and whether a chat needs one
 - `session_store.py`: chats in SQLite and the private video copies
 - `youtube.py`: yt-dlp downloads, file names and video information
 - `config.py`: settings in `config.json`

@@ -32,6 +32,36 @@ def test_download_options_use_the_chosen_file_name_parts(tmp_path: Path):
     assert options["trim_file_name"] > 0
 
 
+def test_search_lists_videos_without_downloading(monkeypatch):
+    seen = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            seen["options"] = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, query, download):
+            seen["query"], seen["download"] = query, download
+            return {"entries": [{"id": "jNQXAC9IVRw", "title": "Me at the zoo", "channel": "jawed", "duration": 19},
+                                {"id": "x" * 11, "title": "Other", "uploader": "someone"}, None]}
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYoutubeDL))
+
+    results = youtube.search_videos("Me at the zoo")
+
+    assert seen["query"] == "ytsearch8:Me at the zoo" and seen["download"] is False
+    assert seen["options"]["skip_download"] and seen["options"]["ignore_no_formats_error"]
+    assert results == [
+        {"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw", "title": "Me at the zoo", "channel": "jawed", "duration": 19},
+        {"url": "https://www.youtube.com/watch?v=" + "x" * 11, "title": "Other", "channel": "someone", "duration": None},
+    ]
+
+
 def test_download_video_returns_the_downloaded_file_and_title(tmp_path: Path, monkeypatch):
     seen = {}
 

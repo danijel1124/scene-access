@@ -24,6 +24,8 @@ class AppConfig:
     profiles: tuple[tuple[str, str], ...] = DEFAULT_PROFILES
     # The profile chosen last, preselected for the next chat.
     profile: str = DEFAULT_PROFILE
+    # With openrouter/auto, let new chats choose only from models that hear the video's sound.
+    audio_only_auto: bool = False
 
     def profile_text(self, name: str) -> str:
         return dict(self.profiles).get(name, "")
@@ -47,6 +49,7 @@ def load_config(path: Path) -> AppConfig:
         filename_fields=_filename_fields(values.get("filename_fields")),
         profiles=_profiles(values.get("profiles")),
         profile=str(values.get("profile", DEFAULT_PROFILE)),
+        audio_only_auto=values.get("audio_only_auto") is True,
     )
 
 
@@ -89,6 +92,7 @@ def save_config(path: Path, config: AppConfig) -> None:
         "filename_fields": list(config.filename_fields),
         "profiles": [{"name": name, "text": text} for name, text in config.profiles],
         "profile": config.profile,
+        "audio_only_auto": config.audio_only_auto,
     }, indent=2), encoding="utf-8")
     # Restricts access on POSIX. On Windows chmod only toggles the read-only flag; there the
     # per-user application-data directory's access control list keeps the file private.

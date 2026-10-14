@@ -20,9 +20,17 @@ WIRE_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name", "reasoning
 SESSION_FILE_PREFIX = "session-file:"
 
 COLUMNS = ("id", "owner_id", "title", "source_path", "model", "initial_question", "history_json",
-           "system_prompt", "tools_json", "source_url", "video_info_json")
-# Columns added after the first release, with the value older chats get.
-ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url", "''"), ("video_info_json", "''"))
+           "system_prompt", "tools_json", "source_url", "video_info_json", "transcript", "transcript_state", "audio_only")
+# Columns added after the first release, with the value older chats get. Older chats get no transcript,
+# so opening them does not change what is sent and their cache stays valid.
+ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url", "''"), ("video_info_json", "''"),
+                 ("transcript", "''"), ("transcript_state", "'none'"), ("audio_only", "'0'"))
+
+# transcript_state: "pending" until the first request decides whether the model needs a transcript,
+# "none" if it hears the video itself, "done" (text may be empty: no speech), or "failed".
+TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED = "pending", "none", "done", "failed"
+TRANSCRIPT_INTRO = ("You cannot hear this video, so here is an automatic transcript of its speech. Speech "
+                    "recognition may contain errors; times are mm:ss from the start of the video.\n\n")
 
 
 @dataclass
@@ -41,6 +49,11 @@ class VideoSession:
     tools: list[dict[str, Any]] = field(default_factory=list)
     source_url: str = ""
     video_info: dict[str, Any] | None = None
+    # Lines like "[01:23] What was said", for models that cannot hear the video's sound.
+    transcript: str = ""
+    transcript_state: str = TRANSCRIPT_NONE
+    # With openrouter/auto, route only to models that hear the video's sound.
+    audio_only: bool = False
 
     @property
     def directory(self) -> Path:
@@ -58,10 +71,13 @@ class VideoSession:
     def messages(self) -> list[dict[str, Any]]:
         # OpenRouter reads explicit cache breakpoints from content parts, not from the message.
         system = [{"role": "system", "content": self.system_prompt}] if self.system_prompt else []
+        # The transcript comes before the video's cache breakpoint, so it is cached together with the video.
+        transcript = [{"type": "text", "text": TRANSCRIPT_INTRO + self.transcript}] if self.transcript else []
         return [*system, {
             "role": "user",
             "content": [
                 {"type": "text", "text": self.initial_question},
+                *transcript,
                 {"type": "video_url", "video_url": {"url": self.video_data_url}, "cache_control": {"type": "ephemeral"}},
             ],
         }, *(self.wire_message(message) for message in self.history)]
@@ -104,7 +120,8 @@ class VideoSessionStore:
 
     def create_session(self, *, owner_id: str, source_path: Path, title: str, model: str, initial_question: str,
                        system_prompt: str = "", tools: list[dict[str, Any]] | None = None, source_url: str = "",
-                       video_info: dict[str, Any] | None = None) -> VideoSession:
+                       video_info: dict[str, Any] | None = None, transcript_state: str = TRANSCRIPT_NONE,
+                       audio_only: bool = False) -> VideoSession:
         source_path = Path(source_path).resolve()
         mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mov"}.get(source_path.suffix.lower())
         if not source_path.is_file() or not mime:
@@ -118,7 +135,8 @@ class VideoSessionStore:
         data_url_path.write_text(data_url, encoding="ascii")
         os.chmod(data_url_path, 0o600)
         values = (session_id, owner_id, title, str(source_path), model, initial_question, "[]", system_prompt,
-                  json.dumps(tools or []), source_url, json.dumps(video_info) if video_info else "")
+                  json.dumps(tools or []), source_url, json.dumps(video_info) if video_info else "",
+                  "", transcript_state, "1" if audio_only else "0")
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(f"INSERT INTO sessions ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})", values)
         return self.get_session(session_id, owner_id)
@@ -137,6 +155,8 @@ class VideoSessionStore:
             system_prompt=values["system_prompt"], tools=json.loads(values["tools_json"]),
             source_url=values["source_url"],
             video_info=json.loads(values["video_info_json"]) if values["video_info_json"] else None,
+            transcript=values["transcript"], transcript_state=values["transcript_state"],
+            audio_only=values["audio_only"] == "1",
         )
 
     def list_sessions(self, owner_id: str) -> list[VideoSession]:
@@ -162,12 +182,29 @@ class VideoSessionStore:
             conn.execute("UPDATE sessions SET source_path = ? WHERE id = ? AND owner_id = ?",
                          (str(source_path), session_id, owner_id))
 
-    def update_setup(self, session_id: str, owner_id: str, system_prompt: str, tools: list[dict[str, Any]]) -> None:
-        """Replaces a chat's prompt and tools. The next request then caches the video again."""
+    def update_setup(self, session_id: str, owner_id: str, system_prompt: str, tools: list[dict[str, Any]],
+                     audio_only: bool = False) -> None:
+        """Replaces a chat's prompt and tools. The next request decides about a transcript again and
+        caches the video again."""
         self.get_session(session_id, owner_id)
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE sessions SET system_prompt = ?, tools_json = ? WHERE id = ? AND owner_id = ?",
-                         (system_prompt, json.dumps(tools), session_id, owner_id))
+            conn.execute("UPDATE sessions SET system_prompt = ?, tools_json = ?, audio_only = ?, transcript = '', "
+                         "transcript_state = ? WHERE id = ? AND owner_id = ?",
+                         (system_prompt, json.dumps(tools), "1" if audio_only else "0", TRANSCRIPT_PENDING,
+                          session_id, owner_id))
+
+    def update_transcript(self, session_id: str, owner_id: str, state: str, transcript: str = "") -> None:
+        self.get_session(session_id, owner_id)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET transcript = ?, transcript_state = ? WHERE id = ? AND owner_id = ?",
+                         (transcript, state, session_id, owner_id))
+
+    def update_source(self, session_id: str, owner_id: str, source_url: str, video_info: dict[str, Any] | None) -> None:
+        """Records the online source of a chat that was started before links were stored."""
+        self.get_session(session_id, owner_id)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET source_url = ?, video_info_json = ? WHERE id = ? AND owner_id = ?",
+                         (source_url, json.dumps(video_info) if video_info else "", session_id, owner_id))
 
     def reassign_owner(self, old_owner_id: str, new_owner_id: str) -> None:
         with sqlite3.connect(self.db_path) as conn:

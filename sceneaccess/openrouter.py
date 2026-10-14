@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -64,9 +65,9 @@ class OpenRouterClient:
         self.endpoint = base_url or self.endpoint
         self.opener = opener
 
-    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post(self, payload: dict[str, Any], url: str | None = None) -> dict[str, Any]:
         request = Request(
-            self.endpoint, data=json.dumps(payload).encode("utf-8"),
+            url or self.endpoint, data=json.dumps(payload).encode("utf-8"),
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             method="POST",
         )
@@ -80,8 +81,16 @@ class OpenRouterClient:
             raise OpenRouterError(data["error"].get("message", "OpenRouter request failed"), data["error"].get("code"))
         return data
 
+    def transcribe(self, audio: bytes, audio_format: str = "mp3", model: str = "elevenlabs/scribe-v2") -> dict[str, Any]:
+        """Speech to text with word timestamps through OpenRouter's transcription endpoint."""
+        from .models import api_url
+
+        payload = {"model": model, "input_audio": {"data": base64.b64encode(audio).decode("ascii"), "format": audio_format},
+                   "response_format": "verbose_json", "timestamp_granularities": ["word", "segment"]}
+        return self._post(payload, api_url(self.endpoint, "audio/transcriptions"))
+
     def run_turn(self, session: VideoSession, messages: list[dict[str, Any]], run_tool: Callable[[str, str], Any],
-                 on_event: EventHandler | None = None) -> Turn:
+                 on_event: EventHandler | None = None, plugins: list[dict[str, Any]] | None = None) -> Turn:
         """Asks the model and runs its tool calls until it answers. run_tool returns a tools.ToolResult."""
         from .tools import describe_call, image_message
 
@@ -94,6 +103,8 @@ class OpenRouterClient:
         rounds = 0
         while True:
             payload: dict[str, Any] = {"model": session.model, "session_id": session.id, "messages": messages}
+            if plugins:
+                payload["plugins"] = plugins
             if tools:
                 payload["tools"] = tools
                 if rounds >= MAX_TOOL_ROUNDS:

@@ -209,6 +209,35 @@ def video_info_summary(info: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _info_options() -> dict[str, Any]:
+    # ignore_no_formats_error: only the information is needed, so formats that cannot be resolved don't matter.
+    return {"logger": _QuietLogger(), "quiet": True, "noplaylist": True, "skip_download": True,
+            "ignore_no_formats_error": True, "js_runtimes": {"deno": {}, "node": {}}}
+
+
+def search_videos(query: str, count: int = 8) -> list[dict[str, Any]]:
+    """YouTube search results with url, title, channel and duration (seconds), without downloading."""
+    import yt_dlp
+
+    with yt_dlp.YoutubeDL({**_info_options(), "extract_flat": "in_playlist"}) as downloader:
+        info = downloader.extract_info(f"ytsearch{count}:{query}", download=False)
+    results = []
+    for entry in info.get("entries") or []:
+        if entry and entry.get("id"):
+            results.append({"url": f"https://www.youtube.com/watch?v={entry['id']}", "title": entry.get("title") or "",
+                            "channel": entry.get("channel") or entry.get("uploader") or "",
+                            "duration": entry.get("duration")})
+    return results
+
+
+def fetch_video_info(url: str) -> dict[str, Any]:
+    """The video information the model may read, for a video that is not downloaded again."""
+    import yt_dlp
+
+    with yt_dlp.YoutubeDL(_info_options()) as downloader:
+        return video_info_summary(downloader.extract_info(url, download=False))
+
+
 def download_section(url: str, start: float, end: float, target_dir: Path, max_height: int = 2160) -> Path:
     """Downloads only the video picture between start and end seconds, in high resolution."""
     import yt_dlp

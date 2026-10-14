@@ -19,7 +19,7 @@ def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path,
         assert frame.handle_enter(frame.question, wx.WXK_RETURN, shift=False) is True
         assert frame.handle_enter(frame.question, wx.WXK_NUMPAD_ENTER, shift=False) is True
         assert sent == [True, True]
-        assert frame.handle_enter(frame.transcript, wx.WXK_RETURN, shift=False) is True
+        assert frame.handle_enter(frame.chat_list,wx.WXK_RETURN, shift=False) is True
         assert opened == [True]
         assert frame.handle_enter(frame.sessions, wx.WXK_RETURN, shift=False) is False
         assert frame.handle_enter(frame.question, ord("A"), shift=False) is False
@@ -67,6 +67,37 @@ def test_a_chat_from_before_tools_gets_the_prompt_and_tools(tmp_path, monkeypatc
     finally:
         frame.Destroy()
         app.Destroy()
+
+
+def test_a_failed_transcription_is_remembered_and_does_not_stop_the_answer(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(gui, "needs_transcript", lambda _session, _catalog: True)
+
+    def fail(_session, _client):
+        raise RuntimeError("HTTP 502: upstream audio operation failed")
+
+    monkeypatch.setattr(gui, "make_transcript", fail)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    app = wx.App(False)
+    frame = gui.MainFrame()
+    try:
+        session = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="T", model="m",
+                                             initial_question="?", transcript_state="pending")
+        frame._prepare_transcript(session, client=None)
+        assert frame.store.get_session(session.id, gui.OWNER_ID).transcript_state == "failed"
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_older_youtube_chats_are_recognized_by_the_id_in_the_file_name():
+    assert gui.youtube_link_in_file_name(r"C:\Videos\scene-access\Me at the zoo [jNQXAC9IVRw].mp4") == \
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    assert gui.youtube_link_in_file_name(r"C:\Videos\holiday.mp4") is None
+    assert gui.is_local_file_chat("holiday.mp4") is True
+    # A download is titled with the video title, so it is searched for even without an ID in the file name.
+    assert gui.is_local_file_chat("Me at the zoo") is False
 
 
 def test_default_download_folder_is_created_inside_an_existing_videos_folder(tmp_path, monkeypatch):

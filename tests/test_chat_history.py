@@ -1,4 +1,21 @@
-from sceneaccess.chat_history import chat_history_items, usage_text
+from sceneaccess.chat_history import chat_history_entries, usage_text
+
+
+def chat_history_items(*arguments):
+    """The shown text of each item, as the Chat history list displays it."""
+    return [shown for shown, _full in chat_history_entries(*arguments)]
+
+
+def test_the_transcript_item_is_short_and_the_reader_gets_the_full_text():
+    transcript = "\n".join(f"[00:{second:02d}] Line {second}." for second in range(40))
+    entries = chat_history_entries("Describe it.", [], "done", transcript)
+
+    shown, full = entries[1]
+    assert shown.startswith("Transcript: 40 lines of automatic speech recognition")
+    assert "[00:39] Line 39." not in shown and full.endswith("[00:39] Line 39.")
+    assert chat_history_items("?", [], "done", "")[1] == "Transcript: no speech was detected in the video."
+    assert chat_history_items("?", [], "failed")[1].startswith("Transcript: speech recognition failed")
+    assert chat_history_items("?", [], "pending") == ["You: ?"]
 
 
 def test_usage_text_reports_hit_miss_and_write_with_the_answering_model():

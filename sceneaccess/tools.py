@@ -8,9 +8,10 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .session_store import SESSION_FILE_PREFIX, VideoSession
 
@@ -107,6 +108,26 @@ def _ffmpeg() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
+def run_ffmpeg(arguments: list[str], timeout: float = 120) -> subprocess.CompletedProcess:
+    # The windowed app has no console; without this flag every call would flash a console window.
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    return subprocess.run([_ffmpeg(), "-hide_banner", "-loglevel", "error", *arguments],
+                          capture_output=True, text=True, creationflags=flags, timeout=timeout)
+
+
+@contextmanager
+def local_video(session: VideoSession) -> Iterator[Path]:
+    """The chat's video as a file: the original, or a temporary copy of the stored one if it was moved."""
+    source = Path(session.source_path)
+    if source.is_file():
+        yield source
+        return
+    with tempfile.TemporaryDirectory() as folder:
+        copy = Path(folder) / ("video" + source.suffix)
+        copy.write_bytes(base64.b64decode(session.video_data_url.split(",", 1)[1]))
+        yield copy
+
+
 def video_size_and_duration(path: Path) -> tuple[tuple[int, int], float]:
     import imageio_ffmpeg
     frames = imageio_ffmpeg.read_frames(str(path))
@@ -127,11 +148,8 @@ def extract_frame(source: Path, seconds: float, region: tuple[float, float, floa
         filters.append("scale=1024:1024:force_original_aspect_ratio=decrease:flags=lanczos")
     else:
         filters.append("scale='min(1536,iw)':'min(1536,ih)':force_original_aspect_ratio=decrease:flags=lanczos")
-    command = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-ss", f"{seconds:.3f}", "-i", str(source),
-               "-frames:v", "1", "-vf", ",".join(filters), "-q:v", "2", "-y", str(target)]
-    # The windowed app has no console; without this flag every call would flash a console window.
-    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    completed = subprocess.run(command, capture_output=True, text=True, creationflags=flags, timeout=120)
+    completed = run_ffmpeg(["-ss", f"{seconds:.3f}", "-i", str(source), "-frames:v", "1", "-vf", ",".join(filters),
+                            "-q:v", "2", "-y", str(target)])
     if completed.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
         target.unlink(missing_ok=True)
         raise RuntimeError(completed.stderr.strip() or "ffmpeg did not produce an image at this time.")
@@ -162,15 +180,8 @@ class ToolRunner:
 
     def _zoom_frame(self, arguments: dict[str, Any]) -> ToolResult:
         seconds, region = parse_time(arguments.get("time", 0)), _region(arguments)
-        source = Path(self.session.source_path)
-        if source.is_file():
+        with local_video(self.session) as source:
             return self._frame_from(source, seconds, region, "the chat video")
-        # The original may have been moved or deleted; the stored copy is the same video.
-        with tempfile.TemporaryDirectory() as folder:
-            copy = Path(folder) / ("video" + source.suffix)
-            data_url = self.session.video_data_url
-            copy.write_bytes(base64.b64decode(data_url.split(",", 1)[1]))
-            return self._frame_from(copy, seconds, region, "the chat video")
 
     def _high_resolution_frame(self, arguments: dict[str, Any]) -> ToolResult:
         from .youtube import download_section

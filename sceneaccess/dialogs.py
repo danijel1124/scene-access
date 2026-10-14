@@ -216,7 +216,7 @@ class SettingsDialog(wx.Dialog):
         # All controls are children of the dialog itself: CreateStdDialogButtonSizer parents its
         # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
         self.config = config
-        form = wx.FlexGridSizer(7, 2, 8, 8)
+        form = wx.FlexGridSizer(8, 2, 8, 8)
         form.AddGrowableCol(1, 1)
         self.model = wx.TextCtrl(self, value=config.model)
         self.base_url = wx.TextCtrl(self, value=config.base_url)
@@ -234,9 +234,13 @@ class SettingsDialog(wx.Dialog):
         self.profiles = config.profiles
         self.profiles_button = wx.Button(self, label="Prompt profiles…")
         self.profiles_button.Bind(wx.EVT_BUTTON, self._on_profiles)
+        # Off: openrouter/auto may pick a model that cannot hear, which then gets a transcript instead.
+        self.audio_only = wx.CheckBox(self, label="With openrouter/auto, use only models that hear the video's sound")
+        self.audio_only.SetValue(config.audio_only_auto)
         for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key),
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
-                               ("Downloaded file name", self.filename_button), ("Prompt profiles", self.profiles_button)):
+                               ("Downloaded file name", self.filename_button), ("Prompt profiles", self.profiles_button),
+                               ("Sound", self.audio_only)):
             form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             form.Add(control, 1, wx.EXPAND)
         help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
@@ -257,7 +261,8 @@ class SettingsDialog(wx.Dialog):
                        youtube_max_height=self.heights[self.youtube_quality.GetSelection()],
                        # Keep "default" as empty, so it keeps following the Videos folder.
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,
-                       filename_fields=self.filename_fields, profiles=self.profiles)
+                       filename_fields=self.filename_fields, profiles=self.profiles,
+                       audio_only_auto=self.audio_only.GetValue())
 
     def _on_filename(self, _event: wx.CommandEvent) -> None:
         with FilenameDialog(self, self.filename_fields) as dialog:

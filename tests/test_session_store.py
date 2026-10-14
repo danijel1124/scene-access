@@ -26,6 +26,56 @@ def test_chats_from_the_first_release_still_open_after_the_new_columns_are_added
     assert session.messages[0]["role"] == "user"
 
 
+def test_chats_from_the_tools_release_get_no_transcript_so_their_cache_stays_valid(tmp_path: Path):
+    root = tmp_path / "chats"
+    (root / "sessions" / "vid_t").mkdir(parents=True)
+    (root / "sessions" / "vid_t" / "context.data-url").write_text("data:video/mp4;base64,AA==", encoding="ascii")
+    with sqlite3.connect(root / "sceneaccess.db") as conn:
+        conn.execute("""CREATE TABLE sessions (id TEXT PRIMARY KEY, owner_id TEXT, title TEXT, source_path TEXT,
+            model TEXT, initial_question TEXT, history_json TEXT, system_prompt TEXT NOT NULL DEFAULT '',
+            tools_json TEXT NOT NULL DEFAULT '[]', source_url TEXT NOT NULL DEFAULT '',
+            video_info_json TEXT NOT NULL DEFAULT '')""")
+        conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     ("vid_t", "o", "T", "C:/gone.mp4", "m", "?", "[]", "Base.", "[]", "https://youtu.be/x", ""))
+
+    session = VideoSessionStore(root).get_session("vid_t", "o")
+
+    assert session.system_prompt == "Base." and session.source_url == "https://youtu.be/x"
+    assert session.transcript_state == "none" and session.transcript == "" and session.audio_only is False
+    assert [part["type"] for part in session.messages[1]["content"]] == ["text", "video_url"]
+
+
+def test_the_transcript_is_sent_before_the_video_so_it_is_cached_with_it(tmp_path: Path):
+    source = tmp_path / "jacket.mp4"
+    source.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="o", source_path=source, title="J", model="m", initial_question="Brand?",
+                                   transcript_state="pending", audio_only=True)
+    assert session.transcript_state == "pending" and session.audio_only is True
+
+    store.update_transcript(session.id, "o", "done", "[00:01] Hello.")
+    content = store.get_session(session.id, "o").messages[0]["content"]
+
+    assert [part["type"] for part in content] == ["text", "text", "video_url"]
+    assert content[1]["text"].endswith("[00:01] Hello.") and "may contain errors" in content[1]["text"]
+    assert "cache_control" in content[2]
+
+
+def test_changing_the_setup_decides_about_the_transcript_again_and_a_link_can_be_added(tmp_path: Path):
+    source = tmp_path / "jacket.mp4"
+    source.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="o", source_path=source, title="J", model="m", initial_question="?")
+    store.update_transcript(session.id, "o", "failed")
+
+    store.update_source(session.id, "o", "https://www.youtube.com/watch?v=jNQXAC9IVRw", {"title": "Me at the zoo"})
+    store.update_setup(session.id, "o", "Base.", [{"type": "openrouter:web_search"}], audio_only=True)
+    session = store.get_session(session.id, "o")
+
+    assert session.source_url.endswith("jNQXAC9IVRw") and session.video_info == {"title": "Me at the zoo"}
+    assert session.transcript_state == "pending" and session.transcript == "" and session.audio_only is True
+
+
 def test_messages_keep_the_tool_protocol_and_drop_local_fields(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")
