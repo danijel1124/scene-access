@@ -13,8 +13,8 @@ from typing import Any, Callable
 import wx
 
 from .config import save_config
-from .dialogs import (NO_PROFILE, SIZE_BACK, SIZE_LOWER, SIZE_SEND, SIZE_SHRINK, SizeDialog, StartChatDialog,
-                      ask_youtube_sign_in, cookies_description, default_download_dir)
+from .chat_dialogs import SIZE_BACK, SIZE_LOWER, SIZE_SEND, SIZE_SHRINK, SizeDialog, StartChatDialog
+from .dialogs import NO_PROFILE, ask_youtube_sign_in, cookies_description, default_download_dir
 from .models import AUTO_ROUTER
 from .prompts import system_prompt
 from .session_store import TRANSCRIPT_PENDING

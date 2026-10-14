@@ -14,8 +14,9 @@ import wx
 
 from .chat_history import chat_history_entries, transcript_entry
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
-from .dialogs import (NO_PROFILE, SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
-                      SettingsDialog, StoredSizeDialog)
+from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
+                           StoredSizeDialog)
+from .dialogs import NO_PROFILE, SettingsDialog
 from .models import AUTO_ROUTER, ModelCatalog, routing
 from .new_chat import NewChatMixin, url_from_clipboard
 from .openrouter import OpenRouterClient

@@ -86,7 +86,8 @@ Der gesamte Code liegt im Paket `sceneaccess`:
 
 - `gui.py`: Hauptfenster und App-Start
 - `new_chat.py`: einen Chat aus einer lokalen Datei oder von YouTube starten: Chatstart-Dialog, Frage zur Videogröße, Verkleinern und Download
-- `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models, der Chatstart-Dialog mit Advanced…, die Fragen zur Videogröße, Chat settings und der Nachrichtenleser
+- `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models
+- `chat_dialogs.py`: der Chatstart-Dialog mit Advanced…, die Fragen zur Videogröße, Chat settings und der Nachrichtenleser
 - `chat_history.py`: die Einträge der Chat history und die Nutzungszeile
 - `openrouter.py`: Anfragen an OpenRouter und die Schleife der Tool-Aufrufe
 - `tools.py`: die Tools für das Modell und der Code, der sie ausführt (ffmpeg-Standbilder, Ausschnitte in hoher Auflösung)
