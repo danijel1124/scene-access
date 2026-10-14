@@ -48,6 +48,12 @@ Nicht jedes Modell hört den Ton eines Videos: Gemini-Modelle tun es, viele ande
 
 Anbieter begrenzen, wie groß eine Anfrage sein darf, und SceneAccess schickt in jeder Anfrage das ganze Video mit. Getestet im Oktober 2026 über OpenRouter: Google AI Studio lehnt Anfragen über 20.000.000 Bytes ab, also ein Video, das Base64-kodiert größer als etwa 19 MB ist (eine Datei von etwa 14 MB), oft nur mit „HTTP 400: Invalid content“. Google Vertex lehnte 29,8 MB Base64 und mehr ab; zwischen 0,1 MB und diesem Wert wurde nichts getestet. Qwen erlaubt 20 MiB Base64, Xiaomi MiMo nahm 30 MB Base64 an, und Metas Muse Wonder nimmt Dateien bis 50 MiB (vor Base64).
 
+## Videogröße
+
+Bevor ein Chat mit einem Video startet, das gesendet größer als 19 MB wäre, erklärt SceneAccess die Größen und fragt: **Shrink the video**, **Request a lower resolution** (nur YouTube), **Send as it is** oder **Back to Start a video chat**. Verkleinern erzeugt mit ffmpeg eine Kopie, die in 16 MB passt; so bleibt Platz für die Standbilder, die das Modell anfordert, denn sie bleiben im Chat und werden mit jeder späteren Frage erneut gesendet. Bei wenig Platz behält die Kopie lieber 5 Bilder pro Sekunde und ein schärferes Bild als flüssige Bewegung, weil Gemini standardmäßig ein Bild pro Sekunde abtastet, und der Ton bleibt Stereo. Nur die Kopie wird gesendet und mit dem Chat gespeichert; die Originaldatei bleibt unverändert, und solange sie vorhanden ist, kommen Standbilder und Transkript weiter aus ihr. Eine geringere Auflösung lädt das Video eine Qualitätsstufe niedriger neu, ersetzt die größere Datei und stuft weiter ab, bis es passt.
+
+Bei einem anderen Modell als `openrouter/auto` überspringt **Don't show this dialog again** die Frage für dieses Modell, sobald ein großes Video beantwortet wurde. **Settings → Video size** schaltet die Frage ganz ab (zu große Videos scheitern dann) oder fragt für übersprungene Modelle wieder. **Advanced…** im Dialog Start a video chat stellt die YouTube-Qualität ein und kann zu große Videos ohne Nachfrage automatisch auf eine gewählte Größe verkleinern.
+
 ## YouTube
 
 YouTube-Videos werden mit [yt-dlp](https://github.com/yt-dlp/yt-dlp) in einem Fortschrittsdialog heruntergeladen, der sich abbrechen lässt. Standardmäßig lädt SceneAccess die beste Qualität bis 480p – Details bleiben erkennbar, ohne HD-Dateigrößen – und fügt Bild und Ton zu einer MP4 zusammen, bevorzugt in H.264. In den **Settings** lässt sich zwischen 240p und 1080p wählen. Videos werden unter `scene-access` im Videos-Ordner gespeichert; gibt es diesen Ordner nicht, fragt SceneAccess nach einem Standard-Downloadordner, der sich auch in den **Settings** ändern lässt. Dateien heißen wie beim yt-dlp-Standard `Titel [ID].mp4`; unter **Settings → File name…** lässt sich per Kontrollkästchen jedes yt-dlp-Vorlagenfeld hinzunehmen, weitere Teile stehen in eckigen Klammern. Ein mitgeliefertes ffmpeg fügt Bild und Ton zusammen und schneidet Standbilder aus; ist Deno oder Node.js installiert, nutzt yt-dlp es für vollen YouTube-Support.
@@ -73,13 +79,14 @@ Der API-Key kann alternativ über `OPENROUTER_API_KEY` gesetzt werden, diese Umg
 Der gesamte Code liegt im Paket `sceneaccess`:
 
 - `gui.py`: Hauptfenster und App-Start
-- `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models, der Chatstart-Dialog und der Nachrichtenleser
+- `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models, der Chatstart-Dialog mit Advanced…, die Frage zur Videogröße und der Nachrichtenleser
 - `chat_history.py`: die Einträge der Chat history und die Nutzungszeile
 - `openrouter.py`: Anfragen an OpenRouter und die Schleife der Tool-Aufrufe
 - `tools.py`: die Tools für das Modell und der Code, der sie ausführt (ffmpeg-Standbilder, Ausschnitte in hoher Auflösung)
 - `prompts.py`: der Grund-Prompt und die Standardprofile
 - `models.py`: die Modell- und Anbieterliste von OpenRouter: welche Modelle Ton hören, und die Routing-Felder, die Anbieter und Modelle ausschließen
 - `transcript.py`: das Transkript der Sprache eines Videos mit Zeitstempeln, und ob ein Chat eines braucht
+- `video_size.py`: wie groß ein Video gesendet ist, und das Verkleinern mit ffmpeg
 - `session_store.py`: Chats in SQLite und die privaten Videokopien
 - `youtube.py`: yt-dlp-Downloads, Dateinamen und Videoinformationen
 - `config.py`: Einstellungen in `config.json`

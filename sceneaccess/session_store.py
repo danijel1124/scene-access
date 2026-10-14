@@ -121,13 +121,15 @@ class VideoSessionStore:
     def create_session(self, *, owner_id: str, source_path: Path, title: str, model: str, initial_question: str,
                        system_prompt: str = "", tools: list[dict[str, Any]] | None = None, source_url: str = "",
                        video_info: dict[str, Any] | None = None, transcript_state: str = TRANSCRIPT_NONE,
-                       audio_only: bool = False) -> VideoSession:
+                       audio_only: bool = False, sent_video: Path | None = None) -> VideoSession:
+        """sent_video is a smaller copy to send instead of source_path, e.g. shrunk for a provider's size limit."""
         source_path = Path(source_path).resolve()
-        mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mov"}.get(source_path.suffix.lower())
-        if not source_path.is_file() or not mime:
-            raise FileNotFoundError(source_path)
+        sent = Path(sent_video) if sent_video else source_path
+        mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mov"}.get(sent.suffix.lower())
+        if not source_path.is_file() or not sent.is_file() or not mime:
+            raise FileNotFoundError(sent if source_path.is_file() else source_path)
         # Read the video before creating anything, so a failed read leaves no empty session behind.
-        data_url = f"data:{mime};base64," + base64.b64encode(source_path.read_bytes()).decode("ascii")
+        data_url = f"data:{mime};base64," + base64.b64encode(sent.read_bytes()).decode("ascii")
         session_id = "vid_" + uuid.uuid4().hex
         directory = self.sessions_dir / session_id
         directory.mkdir(mode=0o700)

@@ -3,7 +3,9 @@ from __future__ import annotations
 import getpass
 import os
 import re
+import shutil
 import sys
+import tempfile
 import threading
 import traceback
 from dataclasses import replace
@@ -14,9 +16,9 @@ import wx
 
 from .chat_history import chat_history_entries, transcript_entry
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
-from .dialogs import (NO_PROFILE, MessageReaderDialog, SettingsDialog, StartChatDialog, ask_youtube_sign_in,
-                      cookies_description, default_download_dir)
-from .models import ModelCatalog, routing
+from .dialogs import (NO_PROFILE, SIZE_BACK, SIZE_LOWER, SIZE_SEND, SIZE_SHRINK, MessageReaderDialog, SettingsDialog,
+                      SizeDialog, StartChatDialog, ask_youtube_sign_in, cookies_description, default_download_dir)
+from .models import AUTO_ROUTER, ModelCatalog, routing
 from .openrouter import OpenRouterClient
 from .prompts import system_prompt
 from .session_store import (TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession,
@@ -24,7 +26,9 @@ from .session_store import (TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE,
 from .speech import announce
 from .tools import ToolRunner, format_time, tool_definitions
 from .transcript import make_transcript, needs_transcript
-from .youtube import download_video, fetch_video_info, needs_sign_in, search_videos
+from .video_size import (SIZE_LIMIT, ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_video,
+                         video_height)
+from .youtube import MAX_HEIGHT_CHOICES, download_video, fetch_video_info, needs_sign_in, search_videos
 
 # yt-dlp's default file name ends with the video ID in brackets: "Title [jNQXAC9IVRw].mp4".
 YOUTUBE_ID_IN_NAME = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
@@ -70,6 +74,13 @@ def _url_from_clipboard() -> str:
     return text if text.startswith(("https://", "http://")) and len(text.split()) == 1 else ""
 
 
+def _remove_file(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def resolve_openrouter_key(config: AppConfig) -> str | None:
     return os.environ.get("OPENROUTER_API_KEY") or config.api_key or None
 
@@ -88,6 +99,9 @@ class MainFrame(wx.Frame):
         self.history_items: list[str] = []
         self.reader_texts: list[str] = []
         self.session_ids: list[str] = []
+        # "Don't show this dialog again" for a model: chosen in the size dialog, kept once the answer arrives.
+        self.pending_size_skip = ""
+        self.size_skip_after_answer: tuple[str, str] | None = None
         self._build()
         self.refresh_sessions()
 
@@ -196,9 +210,16 @@ class MainFrame(wx.Frame):
             if dialog.ShowModal() != wx.ID_OK:
                 return
             source = Path(dialog.GetPath())
-        start = self._ask_first_question()
-        if start:
-            self._start_chat(source, source.name, *start)
+        start = None
+        while True:
+            start = self._ask_first_question(online=False, previous=start)
+            if not start:
+                return
+            sent = self._video_to_send(source, online=False)
+            if sent != SIZE_BACK:
+                break
+        if isinstance(sent, Path):
+            self._start_chat(source, source.name, *start, sent_video=sent)
 
     def new_from_youtube(self) -> None:
         with wx.TextEntryDialog(self, "YouTube link:", "Start chat from YouTube", _url_from_clipboard()) as dialog:
@@ -207,16 +228,102 @@ class MainFrame(wx.Frame):
             url = dialog.GetValue().strip()
         if not url:
             return
-        start = self._ask_first_question()
-        if not start:
-            return
-        target_dir = self._download_dir()
-        if target_dir is None:
-            return
-        downloaded = self._download_with_progress(url, target_dir)
-        if downloaded:
+        start, downloaded, downloaded_height, height = None, None, 0, 0
+        while True:
+            asked_height = self.config.youtube_max_height
+            start = self._ask_first_question(online=True, previous=start)
+            if not start:
+                return
+            target_dir = self._download_dir()
+            if target_dir is None:
+                return
+            if not height or self.config.youtube_max_height != asked_height:
+                # The first round, or the quality was changed in Advanced; otherwise a file already
+                # stepped down stays, e.g. when the user only came back to turn on automatic shrinking.
+                height = self.config.youtube_max_height
+            lowering = False
+            while True:
+                if downloaded is None or downloaded_height != height:
+                    if downloaded:
+                        # The program downloaded this file itself; a new quality replaces it under the same name.
+                        _remove_file(downloaded[0])
+                    downloaded = self._download_with_progress(url, target_dir, height)
+                    if not downloaded:
+                        return
+                    downloaded_height = height
+                lower = next_lower_height(height, video_height(downloaded[0]), MAX_HEIGHT_CHOICES)
+                if lowering and lower and base64_size(downloaded[0].stat().st_size) > SIZE_LIMIT:
+                    # Still too large: the next lower quality, until the video fits.
+                    height = lower
+                    continue
+                sent = self._video_to_send(downloaded[0], online=True, lower_height=lower)
+                if sent != SIZE_LOWER:
+                    break
+                height, lowering = lower, True
+            if sent != SIZE_BACK:
+                break
+        if isinstance(sent, Path):
             path, title, info = downloaded
-            self._start_chat(path, title, *start, source_url=url, video_info=info)
+            self._start_chat(path, title, *start, source_url=url, video_info=info, sent_video=sent)
+
+    def _video_to_send(self, source: Path, online: bool, lower_height: int | None = None) -> Path | int | None:
+        """The file to send for a new chat: the video itself or a shrunk copy in a temporary folder. Returns
+        SIZE_BACK or SIZE_LOWER if the user chose that, or None if cancelled. lower_height is the next lower
+        quality of an online video, None if there is none."""
+        size = source.stat().st_size
+        if self.config.auto_shrink:
+            return self._shrink_with_progress(source) if base64_size(size) > self._shrink_target() else source
+        model = self.config.model
+        if (base64_size(size) <= SIZE_LIMIT or not self.config.check_video_size
+                or (model != AUTO_ROUTER and model in self.config.size_check_skipped_models)):
+            return source
+        with SizeDialog(self, size, model, online, lower_height is not None) as dialog:
+            choice = dialog.ShowModal()
+            dont_ask = dialog.dont_ask.IsShown() and dialog.dont_ask.GetValue()
+        if choice == SIZE_SHRINK:
+            return self._shrink_with_progress(source)
+        if choice == SIZE_SEND:
+            # Remembered only once the first answer arrives, i.e. sending this size really worked.
+            self.pending_size_skip = model if dont_ask else ""
+            return source
+        return choice if choice in (SIZE_BACK, SIZE_LOWER) else None
+
+    def _shrink_target(self) -> int:
+        return self.config.shrink_target_mb * 1_000_000
+
+    def _shrink_with_progress(self, source: Path) -> Path | None:
+        """Shrinks the video into a temporary folder; _start_chat removes it. None if cancelled or failed."""
+        folder = Path(tempfile.mkdtemp(prefix="sceneaccess-"))
+        target = folder / (source.stem + ".mp4")
+        state: dict[str, Any] = {"fraction": 0.0, "done": False, "cancel": False, "error": None}
+
+        def worker() -> None:
+            try:
+                shrink_video(source, target, self._shrink_target(), lambda fraction: state.update(fraction=fraction),
+                             lambda: state["cancel"])
+            except Exception as error:
+                state["error"] = error
+            finally:
+                state["done"] = True
+
+        announce("Shrinking the video…")
+        threading.Thread(target=worker, daemon=True).start()
+        message = f"Shrinking the video with ffmpeg to at most {megabytes(self._shrink_target())} once sent"
+        with wx.GenericProgressDialog("Shrinking the video", message, maximum=100, parent=self,
+                                      style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_ELAPSED_TIME) as dialog:
+            while not state["done"]:
+                keep_going, _skip = dialog.Update(min(int(state["fraction"] * 100), 99))
+                if not keep_going:
+                    state["cancel"] = True
+                wx.MilliSleep(100)
+        if state["cancel"] or state["error"] is not None:
+            shutil.rmtree(folder, ignore_errors=True)
+            if isinstance(state["error"], ShrinkCancelled) or state["cancel"]:
+                self.status.SetLabel("Shrinking the video was cancelled.")
+            else:
+                wx.MessageBox(str(state["error"]), "Shrinking failed", wx.OK | wx.ICON_ERROR)
+            return None
+        return target
 
     def _download_dir(self) -> Path | None:
         """Returns a usable download folder, asking for a new default when it is not available."""
@@ -242,8 +349,7 @@ class MainFrame(wx.Frame):
         save_config(self.config_path, self.config)
         return folder
 
-    def _download_with_progress(self, url: str, target_dir: Path) -> tuple[Path, str, dict[str, Any]] | None:
-        max_height = self.config.youtube_max_height
+    def _download_with_progress(self, url: str, target_dir: Path, max_height: int) -> tuple[Path, str, dict[str, Any]] | None:
         filename_fields = self.config.filename_fields
         state: dict[str, Any] = {"percent": 0, "done": False, "cancel": False, "result": None, "error": None}
 
@@ -291,7 +397,7 @@ class MainFrame(wx.Frame):
             return None
         if state["error"] is not None:
             if needs_sign_in(state["error"]) and self._ask_youtube_sign_in():
-                return self._download_with_progress(url, target_dir)
+                return self._download_with_progress(url, target_dir, max_height)
             self.status.SetLabel("The video could not be downloaded.")
             wx.MessageBox(str(state["error"]), "Download failed", wx.OK | wx.ICON_ERROR)
             return None
@@ -320,22 +426,28 @@ class MainFrame(wx.Frame):
         save_config(self.config_path, self.config)
         return True
 
-    def _ask_first_question(self) -> tuple[str, str] | None:
-        """Returns the first question and the chosen profile's name, or None if cancelled."""
-        with StartChatDialog(self, self.config.profiles, self.config.profile) as dialog:
+    def _ask_first_question(self, online: bool, previous: tuple[str, str] | None = None) -> tuple[str, str] | None:
+        """Returns the first question and the chosen profile's name, or None if cancelled. previous refills
+        the dialog when the user came back from the size question."""
+        question, profile = previous or ("Describe this video.", self.config.profile)
+        config = self.config
+        with StartChatDialog(self, config.profiles, profile or NO_PROFILE, online=online, max_height=config.youtube_max_height,
+                             auto_shrink=config.auto_shrink, shrink_target_mb=config.shrink_target_mb,
+                             question=question) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return None
             question, profile = dialog.value()
-        if not question:
-            return None
-        if (profile or NO_PROFILE) != self.config.profile:
-            # Preselect the same profile next time.
-            self.config = replace(self.config, profile=profile or NO_PROFILE)
+            # The profile and the advanced settings are preselected next time.
+            chosen = replace(config, profile=profile or NO_PROFILE, youtube_max_height=dialog.max_height,
+                             auto_shrink=dialog.auto_shrink, shrink_target_mb=dialog.shrink_target_mb)
+        if chosen != config:
+            self.config = chosen
             save_config(self.config_path, self.config)
-        return question, profile
+        return (question, profile) if question else None
 
     def _start_chat(self, source: Path, title: str, question: str, profile: str, *, source_url: str = "",
-                    video_info: dict[str, Any] | None = None) -> None:
+                    video_info: dict[str, Any] | None = None, sent_video: Path | None = None) -> None:
+        skip_model, self.pending_size_skip = self.pending_size_skip, ""
         try:
             # Reading a large video can take a while, and one that does not fit into memory fails here.
             with wx.BusyCursor():
@@ -345,10 +457,15 @@ class MainFrame(wx.Frame):
                     system_prompt=system_prompt(self.config.profile_text(profile)),
                     tools=tool_definitions(online_video=bool(source_url)), source_url=source_url, video_info=video_info,
                     # The first request decides whether this model needs a transcript of the sound.
-                    transcript_state=TRANSCRIPT_PENDING, audio_only=self.config.audio_only_auto)
+                    transcript_state=TRANSCRIPT_PENDING, audio_only=self.config.audio_only_auto, sent_video=sent_video)
         except (OSError, MemoryError) as error:
             wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded", wx.OK | wx.ICON_ERROR)
             return
+        finally:
+            if sent_video and sent_video != source:
+                # A shrunk copy; the chat now keeps it as its stored video.
+                shutil.rmtree(sent_video.parent, ignore_errors=True)
+        self.size_skip_after_answer = (self.current.id, skip_model) if skip_model else None
         self.refresh_sessions()
         self.render_current()
         self._send(question, initial=True)
@@ -552,6 +669,13 @@ class MainFrame(wx.Frame):
             announce(item, interrupt=False)
 
     def _completed(self, session_id: str, answered_by: str, tools_unavailable: bool = False) -> None:
+        if self.size_skip_after_answer and self.size_skip_after_answer[0] == session_id:
+            # Sending the large video worked, so do not ask about its size again for this model.
+            model = self.size_skip_after_answer[1]
+            self.size_skip_after_answer = None
+            if model not in self.config.size_check_skipped_models:
+                self.config = replace(self.config, size_check_skipped_models=(*self.config.size_check_skipped_models, model))
+                save_config(self.config_path, self.config)
         list_had_focus = wx.Window.FindFocus() is self.chat_list
         self.current = self.store.get_session(session_id, OWNER_ID)
         self.render_current()
@@ -567,6 +691,7 @@ class MainFrame(wx.Frame):
             self.chat_list.SetFocus()
 
     def _failed(self, error: str) -> None:
+        self.size_skip_after_answer = None
         self.send_button.Enable()
         # Nothing of the failed turn was stored; remove its progress items from the list.
         self.render_current()

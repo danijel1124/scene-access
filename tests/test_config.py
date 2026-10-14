@@ -91,3 +91,16 @@ def test_excluded_providers_and_models_round_trip_without_blanks_or_duplicates(t
 
     path.write_text('{"ignored_providers": [" novita ", "", "novita"], "excluded_models": "google/*"}', encoding="utf-8")
     assert load_config(path).ignored_providers == ("novita",) and load_config(path).excluded_models == ()
+
+
+def test_video_size_settings_round_trip_and_default_to_asking(tmp_path: Path):
+    path = tmp_path / "config.json"
+    save_config(path, AppConfig(check_video_size=False, size_check_skipped_models=("a/one",), auto_shrink=True,
+                                shrink_target_mb=40))
+    loaded = load_config(path)
+    assert loaded.check_video_size is False and loaded.size_check_skipped_models == ("a/one",)
+    assert loaded.auto_shrink is True and loaded.shrink_target_mb == 40
+
+    path.write_text('{"model": "m", "shrink_target_mb": 0}', encoding="utf-8")
+    loaded = load_config(path)
+    assert loaded.check_video_size is True and loaded.auto_shrink is False and loaded.shrink_target_mb == 16

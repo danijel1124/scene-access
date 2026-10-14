@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .prompts import DEFAULT_PROFILE, DEFAULT_PROFILES
+from .video_size import DEFAULT_SHRINK_TARGET_MB
 from .youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
 
 
@@ -32,6 +33,13 @@ class AppConfig:
     ignored_providers: tuple[str, ...] = ()
     # Model IDs or patterns such as "google/*" that openrouter/auto never picks.
     excluded_models: tuple[str, ...] = ()
+    # Ask before a chat starts with a video too large for some providers.
+    check_video_size: bool = True
+    # Models for which the user chose not to be asked again, after sending a large video worked.
+    size_check_skipped_models: tuple[str, ...] = ()
+    # Shrink too large videos with ffmpeg without asking, to at most this many MB once Base64-encoded.
+    auto_shrink: bool = False
+    shrink_target_mb: int = DEFAULT_SHRINK_TARGET_MB
 
     def profile_text(self, name: str) -> str:
         return dict(self.profiles).get(name, "")
@@ -59,6 +67,10 @@ def load_config(path: Path) -> AppConfig:
         youtube_cookies=str(values.get("youtube_cookies", "")),
         ignored_providers=_names(values.get("ignored_providers")),
         excluded_models=_names(values.get("excluded_models")),
+        check_video_size=values.get("check_video_size") is not False,
+        size_check_skipped_models=_names(values.get("size_check_skipped_models")),
+        auto_shrink=values.get("auto_shrink") is True,
+        shrink_target_mb=_positive_int(values.get("shrink_target_mb"), DEFAULT_SHRINK_TARGET_MB),
     )
 
 
@@ -112,6 +124,10 @@ def save_config(path: Path, config: AppConfig) -> None:
         "youtube_cookies": config.youtube_cookies,
         "ignored_providers": list(config.ignored_providers),
         "excluded_models": list(config.excluded_models),
+        "check_video_size": config.check_video_size,
+        "size_check_skipped_models": list(config.size_check_skipped_models),
+        "auto_shrink": config.auto_shrink,
+        "shrink_target_mb": config.shrink_target_mb,
     }, indent=2), encoding="utf-8")
     # Restricts access on POSIX. On Windows chmod only toggles the read-only flag; there the
     # per-user application-data directory's access control list keeps the file private.

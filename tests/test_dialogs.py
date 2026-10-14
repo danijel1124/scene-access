@@ -116,6 +116,69 @@ def test_settings_show_and_keep_the_exclusions():
         app.Destroy()
 
 
+def test_size_message_explains_the_sizes_and_offers_only_what_fits():
+    online = dialogs.size_message(46_000_000, "google/gemini-flash", online=True)
+    assert "This video is 46.0 MB" in online and "adds about 15.3 MB, so 61.3 MB would be sent" in online
+    assert "lower resolution" in online and "Don't show this dialog again" in online
+    local = dialogs.size_message(46_000_000, "openrouter/auto", online=False)
+    assert "lower resolution" not in local and "Don't show this dialog again" not in local
+    assert local.endswith("Shrink the video or send it as it is? Back returns to the Start a video chat dialog for these settings.")
+
+
+def test_size_dialog_offers_lower_resolution_and_dont_ask_only_where_they_apply():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = dialogs.SizeDialog(frame, 46_000_000, "openrouter/auto", online=False)
+        assert dialog.FindWindowById(dialogs.SIZE_LOWER) is None
+        assert not dialog.dont_ask.IsShown()
+        dialog.Destroy()
+        dialog = dialogs.SizeDialog(frame, 46_000_000, "google/gemini-flash", online=True, can_lower=False)
+        assert not dialog.FindWindowById(dialogs.SIZE_LOWER).IsEnabled()
+        assert dialog.FindWindowById(dialogs.SIZE_SHRINK).IsEnabled()
+        assert dialog.dont_ask.IsShown()
+        dialog.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_start_chat_dialog_keeps_the_advanced_settings_and_a_previous_question():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = dialogs.StartChatDialog(frame, (("A", "Text A"),), "A", online=True, max_height=360, auto_shrink=True,
+                                         shrink_target_mb=30, question="What is shown?")
+        assert dialog.value() == ("What is shown?", "A")
+        assert (dialog.max_height, dialog.auto_shrink, dialog.shrink_target_mb) == (360, True, 30)
+        dialog.Destroy()
+        advanced = dialogs.AdvancedDialog(frame, False, 480, False, 18)
+        assert not advanced.youtube_quality.IsShown()
+        advanced.auto_shrink.SetValue(True)
+        advanced.shrink_target.SetValue(25)
+        assert advanced.value() == (480, True, 25)
+        advanced.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_settings_turn_the_size_check_off_and_forget_skipped_models():
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = SettingsDialog(frame, AppConfig(size_check_skipped_models=("a/one", "b/two")))
+        assert dialog.reset_skipped.GetLabel() == "Ask again for the 2 models marked \"Don't show this dialog again\""
+        dialog.check_size.SetValue(False)
+        dialog._on_reset_skipped(None)
+        assert dialog.value().check_video_size is False and dialog.value().size_check_skipped_models == ()
+        assert not dialog.reset_skipped.IsEnabled()
+        dialog.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
 def test_filename_dialog_toggles_parts_and_resets_to_the_yt_dlp_default():
     app = wx.App(False)
     frame = wx.Frame(None)

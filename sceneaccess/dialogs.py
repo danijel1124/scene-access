@@ -8,8 +8,9 @@ from pathlib import Path
 import wx
 
 from .config import AppConfig
-from .models import ModelCatalog, api_url
+from .models import AUTO_ROUTER, ModelCatalog, api_url
 from .prompts import BASE_SYSTEM_PROMPT, DEFAULT_PROFILES
+from .video_size import DEFAULT_SHRINK_TARGET_MB, SIZE_LIMIT, base64_size, megabytes
 from .youtube import (DEFAULT_FILENAME_FIELDS, DEFAULT_MAX_HEIGHT, FILENAME_FIELD_NAMES, FILENAME_FIELDS,
                       MAX_HEIGHT_CHOICES, output_template)
 
@@ -304,14 +305,107 @@ class ExclusionsDialog(wx.Dialog):
         self.model_list.SetFocus()
 
 
-class StartChatDialog(wx.Dialog):
-    """Asks for the first question and the prompt profile of a new chat."""
+def youtube_quality_labels(heights: list[int]) -> list[str]:
+    return [f"Up to {height}p" + (" (recommended)" if height == DEFAULT_MAX_HEIGHT else "") for height in heights]
 
-    def __init__(self, parent: wx.Window, profiles: tuple[tuple[str, str], ...], selected: str):
+
+class AdvancedDialog(wx.Dialog):
+    """The YouTube resolution and automatic shrinking of too large videos; kept as defaults for the next chat."""
+
+    def __init__(self, parent: wx.Window, online: bool, max_height: int, auto_shrink: bool, shrink_target_mb: int):
+        super().__init__(parent, title="Advanced")
+        layout = wx.BoxSizer(wx.VERTICAL)
+        self.heights = sorted({*MAX_HEIGHT_CHOICES, max_height})
+        self.youtube_quality = wx.Choice(self, choices=youtube_quality_labels(self.heights))
+        self.youtube_quality.SetSelection(self.heights.index(max_height))
+        if online:
+            layout.Add(wx.StaticText(self, label="YouTube quality"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+            layout.Add(self.youtube_quality, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        else:
+            self.youtube_quality.Hide()
+        self.auto_shrink = wx.CheckBox(self, label="Shrink videos that are too large automatically with ffmpeg, without asking")
+        self.auto_shrink.SetValue(auto_shrink)
+        target_label = wx.StaticText(self, label="Largest size to send, in MB after Base64 encoding")
+        self.shrink_target = wx.SpinCtrl(self, min=5, max=2000, initial=shrink_target_mb)
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        for control in (self.auto_shrink, target_label, self.shrink_target):
+            layout.Add(control, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
+        self.SetSizer(layout)
+        layout.Fit(self)
+
+    def value(self) -> tuple[int, bool, int]:
+        """The YouTube height, whether to shrink automatically, and the size to shrink to in MB."""
+        return self.heights[self.youtube_quality.GetSelection()], self.auto_shrink.GetValue(), self.shrink_target.GetValue()
+
+
+# What the size dialog returns besides wx.ID_CANCEL.
+SIZE_SHRINK, SIZE_LOWER, SIZE_SEND, SIZE_BACK = (wx.ID_HIGHEST + 101, wx.ID_HIGHEST + 102, wx.ID_HIGHEST + 103,
+                                                 wx.ID_HIGHEST + 104)
+
+
+def size_message(file_size: int, model: str, online: bool) -> str:
+    sent = base64_size(file_size)
+    lower = (", or YouTube can be asked for a lower resolution, one step at a time until the video fits"
+             if online else "")
+    skip = (f"If you send it and it works, check \"Don't show this dialog again\" to skip this question for {model}.\n\n"
+            if model != AUTO_ROUTER else "")
+    choices = ("Shrink the video, request a lower resolution, or send it as it is?" if online
+               else "Shrink the video or send it as it is?")
+    return (f"Some models accept videos only up to about {megabytes(SIZE_LIMIT)}. This video is {megabytes(file_size)}; "
+            f"the Base64 encoding used for sending adds about {megabytes(sent - file_size)}, so "
+            f"{megabytes(sent)} would be sent.\n\n"
+            f"The video can be shrunk automatically{lower}. You can also send it as it is, but then it may not work.\n\n"
+            f"{skip}"
+            "Settings can turn this size check off completely; then a video that is too large for the model causes "
+            "an error. In the Start a video chat dialog, Advanced… changes the YouTube quality or sets up automatic "
+            "shrinking with ffmpeg to a size of your choice.\n\n"
+            f"{choices} Back returns to the Start a video chat dialog for these settings.")
+
+
+class SizeDialog(wx.Dialog):
+    """Asks what to do with a video too large for some providers. ShowModal returns one of the SIZE_ IDs."""
+
+    def __init__(self, parent: wx.Window, file_size: int, model: str, online: bool, can_lower: bool = True):
+        super().__init__(parent, title="The video is large", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        label = wx.StaticText(self, label="Message")
+        self.message = wx.TextCtrl(self, value=size_message(file_size, model, online),
+                                   style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 260))
+        # A setting per model: with openrouter/auto, the next answer may come from another model.
+        self.dont_ask = wx.CheckBox(self, label="Don't show this dialog again")
+        self.dont_ask.Show(model != AUTO_ROUTER)
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        actions = [(SIZE_SHRINK, "Shrink the video"), (SIZE_LOWER, "Request a lower resolution"),
+                   (SIZE_SEND, "Send as it is"), (SIZE_BACK, "Back to Start a video chat"), (wx.ID_CANCEL, "Cancel")]
+        for action, text in actions:
+            if action == SIZE_LOWER and not online:
+                continue
+            button = wx.Button(self, action, text)
+            button.Enable(action != SIZE_LOWER or can_lower)
+            button.Bind(wx.EVT_BUTTON, lambda _event, chosen=action: self.EndModal(chosen))
+            row.Add(button, 0, wx.RIGHT, 8)
+        layout = wx.BoxSizer(wx.VERTICAL)
+        layout.Add(label, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(self.message, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(self.dont_ask, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(row, 0, wx.ALL, 12)
+        self.SetSizer(layout)
+        self.SetSize((760, 520))
+        self.message.SetFocus()
+
+
+class StartChatDialog(wx.Dialog):
+    """Asks for the first question and the prompt profile of a new chat; Advanced… holds the video settings."""
+
+    def __init__(self, parent: wx.Window, profiles: tuple[tuple[str, str], ...], selected: str, *, online: bool = False,
+                 max_height: int = DEFAULT_MAX_HEIGHT, auto_shrink: bool = False,
+                 shrink_target_mb: int = DEFAULT_SHRINK_TARGET_MB, question: str = "Describe this video."):
         super().__init__(parent, title="Start a video chat", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.profiles = profiles
+        self.online = online
+        self.max_height, self.auto_shrink, self.shrink_target_mb = max_height, auto_shrink, shrink_target_mb
         question_label = wx.StaticText(self, label="First question about the video (Enter starts, Shift+Enter adds a line)")
-        self.question = wx.TextCtrl(self, value="Describe this video.", style=wx.TE_MULTILINE, size=(-1, 110))
+        self.question = wx.TextCtrl(self, value=question, style=wx.TE_MULTILINE, size=(-1, 110))
         profile_label = wx.StaticText(self, label="Prompt profile")
         self.choices = [NO_PROFILE, *(name for name, _text in profiles)]
         self.profile = wx.Choice(self, choices=self.choices)
@@ -319,14 +413,17 @@ class StartChatDialog(wx.Dialog):
         text_label = wx.StaticText(self, label="Profile text")
         self.profile_text = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 110))
         note = wx.StaticText(self, label="The profile stays fixed for this chat, so the video can be cached.")
+        advanced = wx.Button(self, label="Advanced…")
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
         for control, proportion in ((question_label, 0), (self.question, 1), (profile_label, 0), (self.profile, 0),
                                     (text_label, 0), (self.profile_text, 1), (note, 0)):
             layout.Add(control, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        layout.Add(advanced, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
         self.SetSizer(layout)
-        self.SetSize((700, 520))
+        self.SetSize((700, 560))
+        advanced.Bind(wx.EVT_BUTTON, self._on_advanced)
         self.profile.Bind(wx.EVT_CHOICE, lambda _event: self._show_profile())
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
         self._show_profile()
@@ -337,6 +434,11 @@ class StartChatDialog(wx.Dialog):
         """The question and the chosen profile's name, empty for no profile."""
         name = self.choices[self.profile.GetSelection()]
         return self.question.GetValue().strip(), "" if name == NO_PROFILE else name
+
+    def _on_advanced(self, _event: wx.CommandEvent) -> None:
+        with AdvancedDialog(self, self.online, self.max_height, self.auto_shrink, self.shrink_target_mb) as dialog:
+            if dialog.ShowModal() == wx.ID_OK:
+                self.max_height, self.auto_shrink, self.shrink_target_mb = dialog.value()
 
     def _show_profile(self) -> None:
         _question, name = self.value()
@@ -364,15 +466,13 @@ class SettingsDialog(wx.Dialog):
         # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
         self.config = config
         self.catalog = catalog
-        form = wx.FlexGridSizer(10, 2, 8, 8)
+        form = wx.FlexGridSizer(11, 2, 8, 8)
         form.AddGrowableCol(1, 1)
         self.model = wx.TextCtrl(self, value=config.model)
         self.base_url = wx.TextCtrl(self, value=config.base_url)
         self.api_key = wx.TextCtrl(self, value=config.api_key, style=wx.TE_PASSWORD)
         self.heights = sorted({*MAX_HEIGHT_CHOICES, config.youtube_max_height})
-        self.youtube_quality = wx.Choice(self, choices=[
-            f"Up to {height}p" + (" (recommended)" if height == DEFAULT_MAX_HEIGHT else "") for height in self.heights
-        ])
+        self.youtube_quality = wx.Choice(self, choices=youtube_quality_labels(self.heights))
         self.youtube_quality.SetSelection(self.heights.index(config.youtube_max_height))
         self.download_dir = wx.DirPickerCtrl(self, path=config.download_dir or str(default_download_dir()),
                                              style=wx.DIRP_USE_TEXTCTRL | wx.DIRP_DIR_MUST_EXIST)
@@ -393,11 +493,21 @@ class SettingsDialog(wx.Dialog):
         self.exclusions_button = wx.Button(self)
         self._show_exclusions()
         self.exclusions_button.Bind(wx.EVT_BUTTON, self._on_exclusions)
+        self.check_size = wx.CheckBox(self, label=f"Ask before a chat starts with a video larger than "
+                                                  f"{megabytes(SIZE_LIMIT)} once sent (off: such videos can fail)")
+        self.check_size.SetValue(config.check_video_size)
+        self.skipped_models = config.size_check_skipped_models
+        self.reset_skipped = wx.Button(self)
+        self._show_skipped()
+        self.reset_skipped.Bind(wx.EVT_BUTTON, self._on_reset_skipped)
+        size_row = wx.BoxSizer(wx.VERTICAL)
+        size_row.Add(self.check_size, 0, wx.BOTTOM, 4)
+        size_row.Add(self.reset_skipped, 0)
         for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key),
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
                                ("Downloaded file name", self.filename_button), ("YouTube sign-in", self.cookies_button),
                                ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only),
-                               ("Providers and models", self.exclusions_button)):
+                               ("Providers and models", self.exclusions_button), ("Video size", size_row)):
             form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             form.Add(control, 1, wx.EXPAND)
         help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
@@ -420,7 +530,19 @@ class SettingsDialog(wx.Dialog):
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,
                        filename_fields=self.filename_fields, profiles=self.profiles,
                        audio_only_auto=self.audio_only.GetValue(), youtube_cookies=self.youtube_cookies,
-                       ignored_providers=self.ignored_providers, excluded_models=self.excluded_models)
+                       ignored_providers=self.ignored_providers, excluded_models=self.excluded_models,
+                       check_video_size=self.check_size.GetValue(), size_check_skipped_models=self.skipped_models)
+
+    def _show_skipped(self) -> None:
+        count = len(self.skipped_models)
+        self.reset_skipped.SetLabel(f"Ask again for the {count} model{'' if count == 1 else 's'} marked "
+                                    "\"Don't show this dialog again\"" if count else "No model skips the size question")
+        self.reset_skipped.Enable(bool(count))
+        self.Layout()
+
+    def _on_reset_skipped(self, _event: wx.CommandEvent) -> None:
+        self.skipped_models = ()
+        self._show_skipped()
 
     def _show_exclusions(self) -> None:
         self.exclusions_button.SetLabel(f"{exclusions_description(self.ignored_providers, self.excluded_models)} (change…)")

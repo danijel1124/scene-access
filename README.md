@@ -48,6 +48,12 @@ Not every model hears a video's sound: Gemini models do, many others such as GLM
 
 Providers limit how large a request may be, and SceneAccess sends the whole video in every request. Tested in October 2026 through OpenRouter: Google AI Studio rejects requests of more than 20,000,000 bytes, so a video of more than about 19 MB once Base64-encoded (a file of about 14 MB), often with nothing more than "HTTP 400: Invalid content". Google Vertex rejected 29.8 MB Base64 and more; nothing between that and 0.1 MB was tested. Qwen allows 20 MiB Base64, Xiaomi MiMo took 30 MB Base64, and Meta's Muse Wonder takes files of up to 50 MiB (before Base64).
 
+## Video size
+
+Before a chat starts with a video that would be more than 19 MB once sent, SceneAccess explains the sizes and asks: **Shrink the video**, **Request a lower resolution** (YouTube only), **Send as it is**, or **Back to Start a video chat**. Shrinking makes a copy with ffmpeg that fits into 16 MB, leaving room for the frames the model asks for, which stay in the chat and are sent again with every later question. With little room the copy keeps 5 frames per second and a sharper picture rather than smooth motion, as Gemini samples one frame per second by default, and the sound stays stereo. Only the copy is sent and stored with the chat; the original file is not changed, and while it is available, frames and the transcript still come from it. A lower resolution downloads the video again one quality step lower, replacing the larger file, and keeps stepping down until it fits.
+
+With a model other than `openrouter/auto`, **Don't show this dialog again** skips the question for that model once a large video was answered. **Settings → Video size** turns the question off completely (too large videos then fail) or asks again for skipped models. **Advanced…** in the Start a video chat dialog sets the YouTube quality and can shrink too large videos automatically, without asking, to a size of your choice.
+
 ## YouTube
 
 YouTube videos are downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) in a progress dialog that can be cancelled. By default SceneAccess downloads the best quality up to 480p, which keeps details recognizable without HD file sizes, with video and audio merged into an MP4 (preferring H.264). **Settings** lets you choose between 240p and 1080p. Videos are saved to `scene-access` in your Videos folder; if that folder does not exist, SceneAccess asks for a default download folder, which can also be changed in **Settings**. Files are named like yt-dlp's default, `Title [ID].mp4`; **Settings → File name…** lets you check any yt-dlp output template field to include, with further parts added in brackets. A bundled ffmpeg merges video and audio and extracts frames; if Deno or Node.js is installed, yt-dlp uses it for full YouTube support.
@@ -73,13 +79,14 @@ Alternatively, set `OPENROUTER_API_KEY`; the environment variable takes preceden
 All code is in the `sceneaccess` package:
 
 - `gui.py`: the main window and the app start
-- `dialogs.py`: Settings with its File name, Prompt profiles and Providers and models sub-dialogs, the start-chat dialog, and the message reader
+- `dialogs.py`: Settings with its File name, Prompt profiles and Providers and models sub-dialogs, the start-chat dialog with Advanced…, the video size question, and the message reader
 - `chat_history.py`: the lines of the Chat history list and the usage line
 - `openrouter.py`: requests to OpenRouter and the tool-call loop
 - `tools.py`: the tools offered to the model and the code that runs them (ffmpeg frames, high-resolution sections)
 - `prompts.py`: the base prompt and the default profiles
 - `models.py`: OpenRouter's model and provider lists: which models hear sound, and the routing fields that exclude providers and models
 - `transcript.py`: the timestamped transcript of a video's speech, and whether a chat needs one
+- `video_size.py`: how large a video is once sent, and shrinking it with ffmpeg
 - `session_store.py`: chats in SQLite and the private video copies
 - `youtube.py`: yt-dlp downloads, file names and video information
 - `config.py`: settings in `config.json`
