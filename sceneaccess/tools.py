@@ -8,12 +8,15 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
 from .session_store import SESSION_FILE_PREFIX, VideoSession
+from .request_control import RequestControl, RequestCancelled
+from .worker_process import run_isolated_task
 
 ZOOM_FRAME = "zoom_frame"
 HD_FRAME = "high_resolution_frame"
@@ -108,11 +111,37 @@ def _ffmpeg() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def run_ffmpeg(arguments: list[str], timeout: float = 120) -> subprocess.CompletedProcess:
+def run_ffmpeg(arguments: list[str], timeout: float = 120,
+               control: RequestControl | None = None) -> subprocess.CompletedProcess:
     # The windowed app has no console; without this flag every call would flash a console window.
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    return subprocess.run([_ffmpeg(), "-hide_banner", "-loglevel", "error", *arguments],
-                          capture_output=True, text=True, creationflags=flags, timeout=timeout)
+    command = [_ffmpeg(), "-hide_banner", "-loglevel", "error", *arguments]
+    if control is None:
+        return subprocess.run(command, capture_output=True, text=True, creationflags=flags, timeout=timeout)
+    control.check_cancelled()
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=flags)
+    def interrupt() -> None:
+        if process.poll() is None:
+            process.terminate()
+    deadline = time.monotonic() + timeout
+    try:
+        control.register_interrupt(interrupt)
+        while True:
+            control.check_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                control.check_cancelled()
+                return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        control.register_interrupt(None)
+        if process.poll() is None:
+            process.kill()
+        process.communicate()
 
 
 @contextmanager
@@ -138,7 +167,8 @@ def video_size_and_duration(path: Path) -> tuple[tuple[int, int], float]:
     return tuple(meta["size"]), float(meta.get("duration") or 0)
 
 
-def extract_frame(source: Path, seconds: float, region: tuple[float, float, float, float], target: Path) -> None:
+def extract_frame(source: Path, seconds: float, region: tuple[float, float, float, float], target: Path,
+                  control: RequestControl | None = None) -> None:
     """Writes one JPEG frame of source at seconds, cropped to region (fractions) and scaled for the model."""
     x, y, width, height = region
     filters = []
@@ -149,7 +179,7 @@ def extract_frame(source: Path, seconds: float, region: tuple[float, float, floa
     else:
         filters.append("scale='min(1536,iw)':'min(1536,ih)':force_original_aspect_ratio=decrease:flags=lanczos")
     completed = run_ffmpeg(["-ss", f"{seconds:.3f}", "-i", str(source), "-frames:v", "1", "-vf", ",".join(filters),
-                            "-q:v", "2", "-y", str(target)])
+                            "-q:v", "2", "-y", str(target)], **({"control": control} if control else {}))
     if completed.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
         target.unlink(missing_ok=True)
         raise RuntimeError(completed.stderr.strip() or "ffmpeg did not produce an image at this time.")
@@ -158,12 +188,15 @@ def extract_frame(source: Path, seconds: float, region: tuple[float, float, floa
 class ToolRunner:
     """Runs the model's tool calls for one chat. Errors become text, so the model can react to them."""
 
-    def __init__(self, session: VideoSession, youtube_cookies: str = ""):
+    def __init__(self, session: VideoSession, youtube_cookies: str = "", control: RequestControl | None = None):
         self.session = session
         self.youtube_cookies = youtube_cookies
+        self.control = control
 
     def run(self, name: str, arguments_json: str) -> ToolResult:
         try:
+            if self.control:
+                self.control.check_cancelled()
             arguments = json.loads(arguments_json or "{}")
             if not isinstance(arguments, dict):
                 raise ValueError("The arguments must be a JSON object.")
@@ -176,6 +209,8 @@ class ToolRunner:
             if name == VIDEO_INFO:
                 return self._video_information()
             raise ValueError(f"The tool {name} is not available.")
+        except RequestCancelled:
+            raise
         except Exception as error:
             return ToolResult(f"Error: {error}", caption=f"{name} failed: {error}")
 
@@ -192,19 +227,32 @@ class ToolRunner:
         seconds, region = parse_time(arguments.get("time", 0)), _region(arguments)
         with tempfile.TemporaryDirectory() as folder:
             # One second is enough for a still frame; the clip starts exactly at the requested time.
-            clip = download_section(self.session.source_url, seconds, seconds + 1, Path(folder),
-                                    cookies=self.youtube_cookies)
+            if self.control:
+                clip = run_isolated_task(download_section,
+                                      (self.session.source_url, seconds, seconds + 1, Path(folder)),
+                                      kwargs={"cookies": self.youtube_cookies}, control=self.control)
+                self.control.check_cancelled()
+            else:
+                clip = download_section(self.session.source_url, seconds, seconds + 1, Path(folder),
+                                        cookies=self.youtube_cookies)
             result = self._frame_from(clip, 0.0, region, "the online source", reported_seconds=seconds)
         return result
 
     def _frame_from(self, source: Path, seconds: float, region: tuple[float, float, float, float], origin: str,
                     reported_seconds: float | None = None) -> ToolResult:
         shown = seconds if reported_seconds is None else reported_seconds
-        (width, height), duration = video_size_and_duration(source)
+        if self.control:
+            self.control.check_cancelled()
+            (width, height), duration = run_isolated_task(video_size_and_duration, (source,),
+                                                      control=self.control, timeout=30)
+            self.control.check_cancelled()
+        else:
+            (width, height), duration = video_size_and_duration(source)
         if reported_seconds is None and duration and seconds > duration:
             raise ValueError(f"{format_time(seconds)} is after the end of the video ({format_time(duration)}).")
         name = f"frame_{uuid.uuid4().hex[:12]}.jpg"
-        extract_frame(source, seconds, region, self.session.directory / name)
+        extract_frame(source, seconds, region, self.session.directory / name,
+                      **({"control": self.control} if self.control else {}))
         x, y, w, h = region
         region_text = "the whole frame" if region == (0.0, 0.0, 1.0, 1.0) else f"region x {x:g}, y {y:g}, width {w:g}, height {h:g}"
         pixels = f"{round(width * w)}x{round(height * h)} source pixels of a {width}x{height} frame"

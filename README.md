@@ -13,9 +13,21 @@ SceneAccess is a native, accessible tool for conversations about videos, made fo
 
 The **Chat history** list contains one item per message. **Enter** on an item opens it in a read-only text field for reading line by line. Below every answer, a usage line shows the model that actually answered (useful with `openrouter/auto`), the prompt tokens read from the cache (hit), not served from the cache (miss) and written to the cache, and, when tools were used, the number of requests.
 
-When a running screen reader such as NVDA is detected, SceneAccess announces that an answer is being generated, announces every tool the model runs on this computer, and moves the focus to the new answer when it arrives.
+When a running screen reader such as NVDA is detected, SceneAccess announces that an answer is being generated, announces every tool the model runs on this computer, and moves the focus to the new answer when it arrives in the active chat window.
 
 The sidebar lists recent chats. A chat remains usable if the original file is moved or deleted because the private local video context is retained.
+
+## Chat windows and request controls
+
+Each chat opens in its own top-level window, so Alt+Tab switches between chats. Opening an already open chat raises its existing window. Settings are shared between windows; a running request keeps the settings it started with. An answer arriving in a background window does not take focus from your current window.
+
+While a request runs, **Send question** becomes **Cancel request**. Cancelling interrupts the active API connection or local frame/audio ffmpeg process and prevents further model/tool calls. Already submitted work may still be billed by the provider. Network requests, high-resolution downloads and metadata probes run in isolated worker processes, with child-process cleanup on cancellation. Other preprocessing, such as an uncached model-catalog lookup, may need to return before cancellation finishes. An unsuccessful or cancelled question is restored in the input field if you have not already typed another question. Closing a chat window cancels its running request.
+
+**Pause request** asks to pause after the current round: the model response and all local tool calls requested by that response finish, then no further model request is sent. **Resume request** continues the same in-memory turn without repeating completed tools. If the model has already given its final answer, the request completes instead of pausing. Closing the window discards a paused, unfinished turn; completed chat history remains stored.
+
+**Settings → Maximum tool rounds per answer** accepts any nonnegative whole number, with a default of 6. A round can include several local tools, and the limit is followed by one final answer request with tool selection disabled. Zero omits all tools from the request, including hosted web search. Positive limits count local tool-call rounds, not searches executed internally by OpenRouter.
+
+In **Start a video chat**, **Disable all tools for this chat** omits both local tools and hosted web search. This choice is stored with the chat and does not become the default for other chats. Automatic audio transcription is preprocessing, not a model-selected tool, and remains available. **Change prompt profile and tools** explicitly replaces the chat's tool setup and can enable tools again.
 
 ## Prompts
 
@@ -90,6 +102,8 @@ All code is in the `sceneaccess` package:
 - `chat_dialogs.py`: the start-chat dialog with Advanced…, the video size questions, Chat settings, and the message reader
 - `chat_history.py`: the lines of the Chat history list and the usage line
 - `openrouter.py`: requests to OpenRouter and the tool-call loop
+- `request_control.py`: cancellation and pause/resume boundaries
+- `worker_process.py`: interruptible network/media worker processes and child-process cleanup
 - `tools.py`: the tools offered to the model and the code that runs them (ffmpeg frames, high-resolution sections)
 - `prompts.py`: the base prompt and the default profiles
 - `models.py`: OpenRouter's model and provider lists: which models hear sound, and the routing fields that exclude providers and models

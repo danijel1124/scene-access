@@ -135,6 +135,29 @@ def test_filename_dialog_toggles_parts_and_resets_to_the_yt_dlp_default():
         app.Destroy()
 
 
+def test_settings_tool_round_limit_accepts_zero_and_unbounded_integers(monkeypatch):
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        with SettingsDialog(frame, AppConfig(max_tool_rounds=12)) as dialog:
+            assert dialog.max_tool_rounds.GetValue() == "12"
+            assert dialog.max_tool_rounds.GetName() == "Maximum tool rounds per answer (0 disables tools)"
+            for value in ("0", "100000000000000000000"):
+                dialog.max_tool_rounds.SetValue(value)
+                assert dialog.value().max_tool_rounds == int(value)
+            errors = []
+            monkeypatch.setattr(wx, "MessageBox", lambda *args: errors.append(args))
+            for value in ("-1", "1.5", "", "bad"):
+                dialog.max_tool_rounds.SetValue(value)
+                event = wx.CommandEvent(wx.EVT_BUTTON.typeId, wx.ID_OK)
+                dialog._on_ok(event)
+                assert not event.GetSkipped()
+            assert len(errors) == 4
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
 def test_settings_dialog_can_be_constructed_and_returns_its_values():
     app = wx.App(False)
     frame = wx.Frame(None)

@@ -80,7 +80,8 @@ class NewChatMixin:
             if sent != SIZE_BACK:
                 break
         if isinstance(sent, Path):
-            self._start_chat(source, source.name, *start, sent_video=sent)
+            self._start_chat(source, source.name, *start[:2], sent_video=sent,
+                             disable_tools=start[2] if len(start) > 2 else False)
 
     def new_from_youtube(self) -> None:
         with wx.TextEntryDialog(self, "YouTube link:", "Start chat from YouTube", url_from_clipboard()) as dialog:
@@ -125,7 +126,8 @@ class NewChatMixin:
                 break
         if isinstance(sent, Path):
             path, title, info = downloaded
-            self._start_chat(path, title, *start, source_url=url, video_info=info, sent_video=sent)
+            self._start_chat(path, title, *start[:2], source_url=url, video_info=info, sent_video=sent,
+                             disable_tools=start[2] if len(start) > 2 else False)
 
     def _video_to_send(self, source: Path, online: bool, lower_height: int | None = None) -> Path | int | None:
         """The file to send for a new chat: the video itself or a shrunk copy in a temporary folder. Returns
@@ -287,27 +289,31 @@ class NewChatMixin:
         save_config(self.config_path, self.config)
         return True
 
-    def _ask_first_question(self, online: bool, previous: tuple[str, str] | None = None) -> tuple[str, str] | None:
-        """Returns the first question and the chosen profile's name, or None if cancelled. previous refills
+    def _ask_first_question(self, online: bool, previous: tuple[str, str] | tuple[str, str, bool] | None = None
+                            ) -> tuple[str, str, bool] | None:
+        """Returns the question, profile name and disable-tools flag, or None if cancelled. previous refills
         the dialog when the user came back from the size question."""
-        question, profile = previous or ("Describe this video.", self.config.profile)
+        question, profile = previous[:2] if previous else ("Describe this video.", self.config.profile)
+        disable_tools = previous[2] if previous and len(previous) > 2 else False
         config = self.config
         with StartChatDialog(self, config.profiles, profile or NO_PROFILE, online=online, max_height=config.youtube_max_height,
                              auto_shrink=config.auto_shrink, shrink_target_mb=config.shrink_target_mb,
-                             question=question) as dialog:
+                             question=question, disable_tools=disable_tools) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return None
             question, profile = dialog.value()
+            disable_tools = dialog.disable_tools.GetValue()
             # The profile and the advanced settings are preselected next time.
             chosen = replace(config, profile=profile or NO_PROFILE, youtube_max_height=dialog.max_height,
                              auto_shrink=dialog.auto_shrink, shrink_target_mb=dialog.shrink_target_mb)
         if chosen != config:
             self.config = chosen
             save_config(self.config_path, self.config)
-        return (question, profile) if question else None
+        return (question, profile, disable_tools) if question else None
 
     def _start_chat(self, source: Path, title: str, question: str, profile: str, *, source_url: str = "",
-                    video_info: dict[str, Any] | None = None, sent_video: Path | None = None) -> None:
+                    video_info: dict[str, Any] | None = None, sent_video: Path | None = None,
+                    disable_tools: bool = False) -> None:
         skip_model, self.pending_size_skip = self.pending_size_skip, ""
         try:
             # Reading a large video can take a while, and one that does not fit into memory fails here.
@@ -317,7 +323,8 @@ class NewChatMixin:
                     owner_id=self.owner_id, source_path=source, title=title, model="", initial_question=question,
                     # Frozen for this chat: they precede the video in every request (see VideoSession).
                     system_prompt=system_prompt(self.config.profile_text(profile)),
-                    tools=tool_definitions(online_video=bool(source_url)), source_url=source_url, video_info=video_info,
+                    tools=[] if disable_tools else tool_definitions(online_video=bool(source_url)),
+                    source_url=source_url, video_info=video_info,
                     # The first request decides whether this model needs a transcript of the sound.
                     transcript_state=TRANSCRIPT_PENDING, audio_only=self.config.audio_only_auto, sent_video=sent_video)
         except (OSError, MemoryError) as error:

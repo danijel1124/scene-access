@@ -9,6 +9,7 @@ from typing import Any
 from .models import AUTO_ROUTER, ModelCatalog
 from .session_store import VideoSession
 from .tools import format_time, local_video, run_ffmpeg
+from .request_control import RequestControl
 
 # Audio is sent in pieces of this length, so long videos stay within request size limits.
 CHUNK_SECONDS = 600
@@ -25,12 +26,14 @@ def needs_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
     return catalog.hears_audio(session.model) is not True
 
 
-def extract_audio_chunks(video: Path, folder: Path, chunk_seconds: int | None = None) -> list[tuple[float, Path]]:
+def extract_audio_chunks(video: Path, folder: Path, chunk_seconds: int | None = None,
+                         control: RequestControl | None = None) -> list[tuple[float, Path]]:
     """Writes the sound as mono MP3 pieces and returns (start second, file); empty if there is no sound."""
     chunk_seconds = chunk_seconds or CHUNK_SECONDS
     completed = run_ffmpeg(["-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", "-f", "segment",
                             "-segment_time", str(chunk_seconds), "-reset_timestamps", "1", "-y",
-                            str(folder / "audio_%03d.mp3")], timeout=1800)
+                            str(folder / "audio_%03d.mp3")], timeout=1800,
+                            **({"control": control} if control else {}))
     chunks = sorted(path for path in folder.glob("audio_*.mp3") if path.stat().st_size > 0)
     if completed.returncode != 0 and not chunks:
         if "does not contain any stream" in completed.stderr or "matches no streams" in completed.stderr:
@@ -79,8 +82,13 @@ def _timed_words(result: dict[str, Any], offset: float) -> list[dict[str, Any]]:
 
 def make_transcript(session: VideoSession, client: Any) -> str:
     """Transcribes the chat's video; returns "" if it has no speech. Raises if transcription fails."""
+    control = getattr(client, "control", None)
+    if control:
+        control.check_cancelled()
     with local_video(session) as video, tempfile.TemporaryDirectory() as folder:
         words = []
-        for offset, chunk in extract_audio_chunks(video, Path(folder)):
+        for offset, chunk in extract_audio_chunks(video, Path(folder), **({"control": control} if control else {})):
+            if control:
+                control.check_cancelled()
             words += _timed_words(client.transcribe(chunk.read_bytes(), "mp3"), offset)
     return "\n".join(transcript_lines(words))

@@ -40,6 +40,8 @@ class AppConfig:
     # Shrink too large videos with ffmpeg without asking, to at most this many MB once Base64-encoded.
     auto_shrink: bool = False
     shrink_target_mb: int = DEFAULT_SHRINK_TARGET_MB
+    # Maximum tool-call rounds per answer; zero disables tools, not an unlimited budget.
+    max_tool_rounds: int = 6
 
     def profile_text(self, name: str) -> str:
         return dict(self.profiles).get(name, "")
@@ -71,6 +73,9 @@ def load_config(path: Path) -> AppConfig:
         size_check_skipped_models=_names(values.get("size_check_skipped_models")),
         auto_shrink=values.get("auto_shrink") is True,
         shrink_target_mb=_positive_int(values.get("shrink_target_mb"), DEFAULT_SHRINK_TARGET_MB),
+        max_tool_rounds=(values["max_tool_rounds"]
+                         if type(values.get("max_tool_rounds")) is int and values["max_tool_rounds"] >= 0
+                         else AppConfig.max_tool_rounds),
     )
 
 
@@ -128,6 +133,7 @@ def save_config(path: Path, config: AppConfig) -> None:
         "size_check_skipped_models": list(config.size_check_skipped_models),
         "auto_shrink": config.auto_shrink,
         "shrink_target_mb": config.shrink_target_mb,
+        "max_tool_rounds": config.max_tool_rounds,
     }, indent=2), encoding="utf-8")
     # Restricts access on POSIX. On Windows chmod only toggles the read-only flag; there the
     # per-user application-data directory's access control list keeps the file private.

@@ -178,3 +178,70 @@ def test_http_errors_show_the_providers_reason(tmp_path: Path):
 
     with pytest.raises(OpenRouterError, match=r"HTTP 500: Provider returned error \(File too large\)"):
         OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None)
+
+
+@pytest.mark.parametrize("limit", [0, 1, 9])
+def test_configured_round_limit_controls_tool_execution(tmp_path, limit):
+    _store, session = _tool_session(tmp_path)
+    bodies, ran = [], []
+    def opener(request, timeout):
+        bodies.append(json.loads(request.data))
+        return FakeResponse({"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": f"c{len(bodies)}", "function": {"name": "zoom_frame", "arguments": "{}"}}]}}]})
+    turn = OpenRouterClient("k", opener=opener).run_turn(
+        session, session.messages, lambda *args: ran.append(True) or ToolResult("fixture"), max_tool_rounds=limit)
+    assert len(ran) == limit
+    assert len(bodies) == limit + 1
+    if limit == 0:
+        assert "tools" not in bodies[-1]
+    else:
+        assert bodies[-1]["tool_choice"] == "none"
+    assert str(limit) in turn.completion.answer
+
+
+def test_cancel_during_response_prevents_tool_execution(tmp_path):
+    from sceneaccess.request_control import RequestControl, RequestCancelled
+    _store, session = _tool_session(tmp_path)
+    control = RequestControl()
+    def opener(request, timeout):
+        control.cancel()
+        return FakeResponse({"choices": [{"message": {"tool_calls": [
+            {"id": "x", "function": {"name": "zoom_frame", "arguments": "{}"}}]}}]})
+    ran = []
+    with pytest.raises(RequestCancelled):
+        OpenRouterClient("k", opener=opener, control=control).run_turn(
+            session, session.messages, lambda *args: ran.append(True) or ToolResult("fixture"))
+    assert ran == []
+
+
+def test_pause_finishes_tools_then_resumes_without_repeating_them(tmp_path):
+    import threading
+    from sceneaccess.request_control import RequestControl
+    _store, session = _tool_session(tmp_path)
+    control = RequestControl()
+    paused = threading.Event()
+    bodies, ran, answers = [], [], []
+    def opener(request, timeout):
+        bodies.append(json.loads(request.data))
+        if len(bodies) == 1:
+            control.pause()
+            return FakeResponse({"choices": [{"message": {"tool_calls": [
+                {"id": "x", "function": {"name": "zoom_frame", "arguments": "{}"}}]}}]})
+        return FakeResponse({"choices": [{"message": {"content": "Done"}}]})
+    def run():
+        answers.append(OpenRouterClient("k", opener=opener, control=control).run_turn(
+            session, session.messages, lambda *args: ran.append(True) or ToolResult("fixture"),
+            lambda kind, text: paused.set() if kind == "paused" else None))
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert paused.wait(2)
+        assert ran == [True] and len(bodies) == 1
+        control.resume()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert ran == [True] and len(bodies) == 2
+        assert answers[0].completion.answer == "Done"
+    finally:
+        control.cancel()
+        worker.join(2)

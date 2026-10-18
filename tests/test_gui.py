@@ -90,7 +90,7 @@ def test_a_default_chat_sends_the_settings_model_and_gets_a_transcript_if_it_can
     monkeypatch.setattr(gui, "make_transcript", lambda _session, _client: "[00:01] Hello")
     payloads = []
 
-    def fake_run_turn(_client, session, messages, run_tool, on_event=None, routing=None):
+    def fake_run_turn(_client, session, messages, run_tool, on_event=None, routing=None, max_tool_rounds=6):
         payloads.append((session.model, routing, messages))
         return Turn(entries=[{"role": "assistant", "content": "Answer"}], completion=Completion(
             "Answer", model=session.model, prompt_tokens=1, cached_tokens=None, cache_write_tokens=None))

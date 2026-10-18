@@ -199,7 +199,8 @@ class StartChatDialog(wx.Dialog):
 
     def __init__(self, parent: wx.Window, profiles: tuple[tuple[str, str], ...], selected: str, *, online: bool = False,
                  max_height: int = DEFAULT_MAX_HEIGHT, auto_shrink: bool = False,
-                 shrink_target_mb: int = DEFAULT_SHRINK_TARGET_MB, question: str = "Describe this video."):
+                 shrink_target_mb: int = DEFAULT_SHRINK_TARGET_MB, question: str = "Describe this video.",
+                 disable_tools: bool = False):
         super().__init__(parent, title="Start a video chat", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.profiles = profiles
         self.online = online
@@ -213,11 +214,13 @@ class StartChatDialog(wx.Dialog):
         text_label = wx.StaticText(self, label="Profile text")
         self.profile_text = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 110))
         note = wx.StaticText(self, label="The profile stays fixed for this chat, so the video can be cached.")
+        self.disable_tools = wx.CheckBox(self, label="Disable all tools for this chat")
+        self.disable_tools.SetValue(disable_tools)
         advanced = wx.Button(self, label="Advanced…")
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
         for control, proportion in ((question_label, 0), (self.question, 1), (profile_label, 0), (self.profile, 0),
-                                    (text_label, 0), (self.profile_text, 1), (note, 0)):
+                                    (text_label, 0), (self.profile_text, 1), (note, 0), (self.disable_tools, 0)):
             layout.Add(control, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(advanced, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)

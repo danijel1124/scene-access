@@ -1,7 +1,28 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from sceneaccess.config import AppConfig, config_path_from_standard_paths, load_config, save_config
 
+@pytest.mark.parametrize("limit", [0, 6, 100000000000000000000])
+def test_tool_round_limit_round_trips_without_an_upper_bound(tmp_path, limit):
+    path = tmp_path / "config.json"
+    save_config(path, AppConfig(max_tool_rounds=limit))
+    assert load_config(path).max_tool_rounds == limit
+
+
+@pytest.mark.parametrize("value", [-1, True, False, 1.5, "3", "bad", None, [], {}])
+def test_invalid_tool_round_limits_fall_back_safely(tmp_path, value):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"max_tool_rounds": value}), encoding="utf-8")
+    assert load_config(path).max_tool_rounds == 6
+
+
+def test_legacy_config_gets_default_tool_round_limit(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text("{}", encoding="utf-8")
+    assert load_config(path).max_tool_rounds == AppConfig().max_tool_rounds == 6
 
 class FakeStandardPaths:
     def __init__(self, root: Path):

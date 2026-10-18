@@ -325,11 +325,14 @@ class SettingsDialog(wx.Dialog):
         # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
         self.config = config
         self.catalog = catalog
-        form = wx.FlexGridSizer(11, 2, 8, 8)
+        form = wx.FlexGridSizer(12, 2, 8, 8)
         form.AddGrowableCol(1, 1)
         self.model = wx.TextCtrl(self, value=config.model)
         self.base_url = wx.TextCtrl(self, value=config.base_url)
         self.api_key = wx.TextCtrl(self, value=config.api_key, style=wx.TE_PASSWORD)
+        tool_rounds_label = "Maximum tool rounds per answer (0 disables tools)"
+        # A text field avoids the platform-dependent upper bound of a native spin control.
+        self.max_tool_rounds = wx.TextCtrl(self, value=str(config.max_tool_rounds), name=tool_rounds_label)
         self.heights = sorted({*MAX_HEIGHT_CHOICES, config.youtube_max_height})
         self.youtube_quality = wx.Choice(self, choices=youtube_quality_labels(self.heights))
         self.youtube_quality.SetSelection(self.heights.index(config.youtube_max_height))
@@ -366,7 +369,8 @@ class SettingsDialog(wx.Dialog):
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
                                ("Downloaded file name", self.filename_button), ("YouTube sign-in", self.cookies_button),
                                ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only),
-                               ("Providers and models", self.exclusions_button), ("Video size", size_row)):
+                               ("Providers and models", self.exclusions_button), ("Video size", size_row),
+                               (tool_rounds_label, self.max_tool_rounds)):
             form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             form.Add(control, 1, wx.EXPAND)
         help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
@@ -378,8 +382,12 @@ class SettingsDialog(wx.Dialog):
         self.SetSizer(layout)
         self.SetMinSize((620, -1))
         layout.Fit(self)
+        self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
 
     def value(self) -> AppConfig:
+        max_tool_rounds = int(self.max_tool_rounds.GetValue().strip())
+        if max_tool_rounds < 0:
+            raise ValueError("Tool rounds cannot be negative")
         download_dir = self.download_dir.GetPath().strip()
         # replace keeps settings this dialog does not show, such as the profile chosen last.
         return replace(self.config, model=self.model.GetValue().strip(), base_url=self.base_url.GetValue().strip(),
@@ -390,7 +398,18 @@ class SettingsDialog(wx.Dialog):
                        filename_fields=self.filename_fields, profiles=self.profiles,
                        audio_only_auto=self.audio_only.GetValue(), youtube_cookies=self.youtube_cookies,
                        ignored_providers=self.ignored_providers, excluded_models=self.excluded_models,
-                       check_video_size=self.check_size.GetValue(), size_check_skipped_models=self.skipped_models)
+                       check_video_size=self.check_size.GetValue(), size_check_skipped_models=self.skipped_models,
+                       max_tool_rounds=max_tool_rounds)
+
+    def _on_ok(self, event: wx.CommandEvent) -> None:
+        try:
+            self.value()
+        except ValueError:
+            wx.MessageBox("Enter a whole number of tool rounds, at least 0. Zero disables all tools.",
+                          "Invalid tool-round limit", wx.OK | wx.ICON_ERROR, self)
+            self.max_tool_rounds.SetFocus()
+            return
+        event.Skip()
 
     def _show_skipped(self) -> None:
         count = len(self.skipped_models)

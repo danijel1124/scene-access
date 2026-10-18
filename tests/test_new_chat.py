@@ -1,6 +1,72 @@
 import wx
+import pytest
 
 from sceneaccess import gui, new_chat
+
+@pytest.mark.parametrize("online", [False, True])
+@pytest.mark.parametrize("disabled", [False, True])
+def test_new_chat_freezes_disabled_tools_in_saved_session(tmp_path, monkeypatch, online, disabled):
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    app = wx.App(False)
+    frame = gui.MainFrame()
+    monkeypatch.setattr(frame, "_send", lambda *args, **kwargs: None)
+    try:
+        frame._start_chat(source, "Video", "Describe", "", source_url="https://youtube.test/v" if online else "",
+                          disable_tools=disabled)
+        assert bool(frame.current.tools) is not disabled
+        assert frame.store.list_sessions(frame.owner_id)[0].tools == frame.current.tools
+        if disabled:
+            assert frame.current.tools == []
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+@pytest.mark.parametrize("online", [False, True])
+def test_disabled_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monkeypatch, online):
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    app = wx.App(False)
+    frame = gui.MainFrame()
+    shown, started = [], []
+    original = new_chat.StartChatDialog
+
+    class Start(original):
+        def ShowModal(self):
+            shown.append(self.disable_tools.GetValue())
+            self.disable_tools.SetValue(True)
+            return wx.ID_OK
+
+    class Entry:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def ShowModal(self): return wx.ID_OK
+        def GetPath(self): return str(source)
+        def GetValue(self): return "https://www.youtube.com/watch?v=abcdefghijk"
+
+    monkeypatch.setattr(new_chat, "StartChatDialog", Start)
+    monkeypatch.setattr(wx, "FileDialog", Entry)
+    monkeypatch.setattr(wx, "TextEntryDialog", Entry)
+    monkeypatch.setattr(new_chat, "url_from_clipboard", lambda: "")
+    monkeypatch.setattr(new_chat, "video_height", lambda path: 480)
+    results = iter([new_chat.SIZE_BACK, source])
+    monkeypatch.setattr(frame, "_video_to_send", lambda *args, **kwargs: next(results))
+    monkeypatch.setattr(frame, "_download_dir", lambda: tmp_path)
+    monkeypatch.setattr(frame, "_download_with_progress", lambda *args: (source, "Video", {}))
+    monkeypatch.setattr(frame, "_start_chat", lambda *args, **kwargs: started.append(kwargs))
+    try:
+        (frame.new_from_youtube if online else frame.new_from_local_file)()
+        assert shown == [False, True]
+        assert started[0]["disable_tools"] is True
+        # This is per chat, not a sticky default for another new chat.
+        frame._ask_first_question(online=online)
+        assert shown[-1] is False
+    finally:
+        frame.Destroy()
+        app.Destroy()
 
 
 def test_new_video_chat_menu_runs_the_chosen_entry(tmp_path, monkeypatch):

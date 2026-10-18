@@ -13,9 +13,21 @@ SceneAccess ist ein natives, zugängliches Werkzeug für Gespräche über Videos
 
 Die Liste **Chat history** enthält einen Eintrag pro Nachricht. **Enter** auf einem Eintrag öffnet ihn in einem schreibgeschützten Textfeld zum zeilenweisen Lesen. Unter jeder Antwort zeigt eine Nutzungszeile das Modell, das tatsächlich geantwortet hat (hilfreich bei `openrouter/auto`), die Prompt-Tokens, die aus dem Cache gelesen (hit), nicht aus dem Cache bedient (miss) und in den Cache geschrieben wurden, und bei Tool-Nutzung die Zahl der Anfragen.
 
-Wenn ein laufender Screenreader wie NVDA erkannt wird, sagt SceneAccess an, dass eine Antwort erzeugt wird, sagt jedes Tool an, das das Modell auf diesem Computer ausführt, und setzt den Fokus auf die neue Antwort, sobald sie eintrifft.
+Wenn ein laufender Screenreader wie NVDA erkannt wird, sagt SceneAccess an, dass eine Antwort erzeugt wird, sagt jedes Tool an, das das Modell auf diesem Computer ausführt, und setzt den Fokus auf die neue Antwort, sobald sie im aktiven Chatfenster eintrifft.
 
 Die Seitenleiste enthält die letzten Chats. Ein Chat funktioniert weiter, wenn die Originaldatei verschoben oder gelöscht wurde, denn der private lokale Video-Kontext bleibt erhalten.
+
+## Chatfenster und Anfragesteuerung
+
+Jeder Chat öffnet ein eigenes Hauptfenster. **Alt+Tab** wechselt zwischen den Chats; ein bereits offener Chat wird nicht doppelt geöffnet. Die Einstellungen gelten gemeinsam für alle Fenster. Laufende Anfragen behalten den Einstellungsstand vom Start. Eine Antwort im Hintergrund nimmt dem aktuellen Fenster nicht den Fokus weg.
+
+Während einer Anfrage wird **Send question** zu **Cancel request**. Abbrechen unterbricht die aktive API-Verbindung beziehungsweise den lokalen ffmpeg-Prozess für Standbilder oder Audio und verhindert weitere Modell-/Tool-Aufrufe. Bereits übermittelte Arbeit kann der Anbieter weiterhin berechnen. Netzwerkanfragen, HD-Downloads und Metadatenprüfungen laufen in isolierten Arbeitsprozessen, deren Unterprozesse beim Abbruch ebenfalls beendet werden. Andere Vorverarbeitung, etwa das erstmalige Laden des Modellkatalogs, kann erst nach ihrer Rückkehr auf den Abbruch reagieren. Eine fehlgeschlagene oder abgebrochene Frage wird im Eingabefeld wiederhergestellt, solange dort noch keine neue Frage steht. Schließen eines Chatfensters bricht seine laufende Anfrage ab.
+
+**Pause request** hält nach der aktuellen Runde an: Modellantwort und sämtliche davon angeforderten lokalen Tools werden noch fertig ausgeführt; vor der nächsten Modellanfrage pausiert der Ablauf. **Resume request** setzt denselben Ablauf im Arbeitsspeicher fort, ohne erledigte Tools zu wiederholen. Hat das Modell schon seine endgültige Antwort geliefert, wird die Anfrage abgeschlossen statt pausiert. Schließen des Fensters verwirft eine pausierte, unfertige Runde; der abgeschlossene Chatverlauf bleibt gespeichert.
+
+**Settings → Maximum tool rounds per answer** akzeptiert jede nichtnegative ganze Zahl, voreingestellt sind 6. Eine Runde kann mehrere lokale Tools enthalten. Nach dem Limit folgt eine letzte Anfrage mit deaktivierter Tool-Auswahl. Null lässt sämtliche Tools einschließlich der integrierten Websuche aus der Anfrage weg. Positive Limits zählen lokale Tool-Runden, nicht die intern bei OpenRouter ausgeführten Suchen.
+
+Im Startdialog deaktiviert **Disable all tools for this chat** lokale Tools und die integrierte Websuche für diesen Chat. Die Wahl wird mit dem Chat gespeichert und nicht auf neue Chats übertragen. Automatische Audiotranskription ist eine Vorverarbeitung, kein vom Modell gewähltes Tool, und bleibt verfügbar. **Change prompt profile and tools** ersetzt die Tool-Einrichtung ausdrücklich und kann Tools wieder einschalten.
 
 ## Prompts
 

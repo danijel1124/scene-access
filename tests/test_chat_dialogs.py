@@ -19,6 +19,31 @@ def test_start_chat_dialog_returns_the_question_and_profile():
         app.Destroy()
 
 
+def test_start_chat_disable_tools_is_opt_in_and_survives_advanced(monkeypatch):
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    class Advanced:
+        def __init__(self, *args): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def ShowModal(self): return wx.ID_OK
+        def value(self): return 360, True, 25
+    monkeypatch.setattr(chat_dialogs, "AdvancedDialog", Advanced)
+    try:
+        with chat_dialogs.StartChatDialog(frame, (), "") as dialog:
+            assert dialog.disable_tools.GetLabel() == "Disable all tools for this chat"
+            assert not dialog.disable_tools.GetValue()
+            dialog.disable_tools.SetValue(True)
+            dialog._on_advanced(None)
+            assert dialog.disable_tools.GetValue()
+            assert dialog.value() == ("Describe this video.", "")
+        with chat_dialogs.StartChatDialog(frame, (), "", disable_tools=True) as dialog:
+            assert dialog.disable_tools.GetValue()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
 def test_size_message_explains_the_sizes_and_offers_only_what_fits():
     online = chat_dialogs.size_message(46_000_000, "google/gemini-flash", online=True)
     assert "This video is 46.0 MB" in online and "adds about 15.3 MB, so 61.3 MB would be sent" in online

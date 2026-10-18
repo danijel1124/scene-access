@@ -185,6 +185,15 @@ class VideoSessionStore:
             conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
                          (json.dumps([*session.history, *entries]), session_id, owner_id))
 
+    def update_initial_question(self, session_id: str, owner_id: str, question: str) -> None:
+        """A first-request retry uses the question actually submitted, not the failed original."""
+        session = self.get_session(session_id, owner_id)
+        if session.history:
+            raise ValueError("The initial question of an answered chat cannot be replaced.")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET initial_question = ? WHERE id = ? AND owner_id = ?",
+                         (question, session_id, owner_id))
+
     def update_source_path(self, session_id: str, owner_id: str, source_path: Path) -> None:
         source_path = Path(source_path).resolve()
         if not source_path.is_file():

@@ -5,9 +5,11 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
 from .session_store import VideoSession
+from .request_control import RequestControl
+from .worker_process import run_isolated_task
 
 # A question may trigger several rounds of tool calls; after this many the model must answer.
 MAX_TOOL_ROUNDS = 6
@@ -57,28 +59,61 @@ class Turn:
 EventHandler = Callable[[str, str], None]
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # Do not forward the bearer token to a redirected host.
+
+
+def _request_json(url: str, body: bytes, headers: dict[str, str]) -> tuple[int | None, Any]:
+    request = Request(url, data=body, headers=headers, method="POST")
+    try:
+        with build_opener(_NoRedirect).open(request, timeout=300) as response:
+            return None, json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        return error.code, _error_message(error)
+
+
 class OpenRouterClient:
     endpoint = "https://openrouter.ai/api/v1/chat/completions"
 
-    def __init__(self, api_key: str, base_url: str | None = None, opener: Callable[..., Any] = urlopen):
+    def __init__(self, api_key: str, base_url: str | None = None, opener: Callable[..., Any] = urlopen,
+                 control: RequestControl | None = None):
         self.api_key = api_key
         self.endpoint = base_url or self.endpoint
         self.opener = opener
+        self.control = control
 
     def _post(self, payload: dict[str, Any], url: str | None = None) -> dict[str, Any]:
+        if self.control:
+            self.control.check_cancelled()
         request = Request(
             url or self.endpoint, data=json.dumps(payload).encode("utf-8"),
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             method="POST",
         )
         try:
-            with self.opener(request, timeout=300) as response:
-                data = json.loads(response.read().decode("utf-8"))
+            if self.control and self.opener is urlopen:
+                data = self._controlled_post(request)
+            else:
+                with self.opener(request, timeout=300) as response:
+                    data = json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
             # The body says why, e.g. that a file is too large or a model does not support tools.
             raise OpenRouterError(f"HTTP {error.code}: {_error_message(error)}", error.code) from None
+        if self.control:
+            self.control.check_cancelled()
         if "error" in data:
             raise OpenRouterError(data["error"].get("message", "OpenRouter request failed"), data["error"].get("code"))
+        return data
+
+    def _controlled_post(self, request: Request) -> dict[str, Any]:
+        """Keep urllib's TLS/proxy support while making the whole request interruptible."""
+        assert self.control is not None
+        status, data = run_isolated_task(_request_json,
+                                      (request.full_url, request.data, dict(request.header_items())),
+                                      control=self.control, timeout=330)
+        if status is not None:
+            raise OpenRouterError(f"HTTP {status}: {data}", status)
         return data
 
     def transcribe(self, audio: bytes, audio_format: str = "mp3", model: str = "elevenlabs/scribe-v2") -> dict[str, Any]:
@@ -90,24 +125,29 @@ class OpenRouterClient:
         return self._post(payload, api_url(self.endpoint, "audio/transcriptions"))
 
     def run_turn(self, session: VideoSession, messages: list[dict[str, Any]], run_tool: Callable[[str, str], Any],
-                 on_event: EventHandler | None = None, routing: dict[str, Any] | None = None) -> Turn:
+                 on_event: EventHandler | None = None, routing: dict[str, Any] | None = None,
+                 max_tool_rounds: int = MAX_TOOL_ROUNDS) -> Turn:
         """Asks the model and runs its tool calls until it answers. run_tool returns a tools.ToolResult.
         routing holds extra request fields such as plugins and provider, see models.routing."""
         from .tools import describe_call, image_message
 
         notify = on_event or (lambda _kind, _text: None)
+        if type(max_tool_rounds) is not int or max_tool_rounds < 0:
+            raise ValueError("The maximum number of tool rounds must be a nonnegative integer.")
         messages = list(messages)
         turn = Turn()
         responses: list[dict[str, Any]] = []
-        tools = list(session.tools)
+        tools = list(session.tools) if max_tool_rounds else []
         tools_unavailable = False
         rounds = 0
         while True:
+            if self.control:
+                self.control.checkpoint(lambda: notify("paused", "Request paused after the completed round."))
             payload: dict[str, Any] = {"model": session.model, "session_id": session.id, "messages": messages,
                                        **(routing or {})}
             if tools:
                 payload["tools"] = tools
-                if rounds >= MAX_TOOL_ROUNDS:
+                if rounds >= max_tool_rounds:
                     payload["tool_choice"] = "none"
             try:
                 data = self._post(payload)
@@ -123,13 +163,13 @@ class OpenRouterClient:
             assistant = {key: message[key] for key in ("role", "content", "tool_calls", "reasoning_details") if key in message}
             assistant["role"] = "assistant"
             assistant.setdefault("content", None)
-            if calls and rounds >= MAX_TOOL_ROUNDS:
+            if calls and (not tools or rounds >= max_tool_rounds):
                 # The model ignored tool_choice "none". Never run more calls: each round is a paid request.
                 # The calls are dropped, so the stored chat has no call without a result.
                 calls = []
                 assistant.pop("tool_calls", None)
                 message = {**message, "content": message.get("content") or
-                           f"The model kept calling tools after {MAX_TOOL_ROUNDS} rounds and gave no answer."}
+                           f"The model kept calling tools after {max_tool_rounds} rounds and gave no answer."}
                 data = {**data, "choices": [{**data["choices"][0], "message": message}]}
             if not calls:
                 completion = _completion(data, session, responses, tools_unavailable)
@@ -146,10 +186,14 @@ class OpenRouterClient:
             messages.append(_wire(assistant))
             images = []
             for call in calls:
+                if self.control:
+                    self.control.check_cancelled()
                 function = call.get("function") or {}
                 name, arguments = function.get("name", ""), function.get("arguments") or "{}"
                 notify("tool_call", describe_call(name, arguments))
                 result = run_tool(name, arguments)
+                if self.control:
+                    self.control.check_cancelled()
                 tool_message = {"role": "tool", "tool_call_id": call.get("id", ""), "content": result.text,
                                 "caption": result.caption or result.text}
                 turn.entries.append(tool_message)
