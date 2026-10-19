@@ -70,4 +70,4 @@ def test_only_models_that_are_known_to_hear_get_no_transcript(tmp_path: Path):
     # Unknown, e.g. because the model list could not be loaded: a transcript is the safe choice.
     assert needs_transcript(glm, FakeCatalog(hears=None)) is True
     assert needs_transcript(auto, FakeCatalog(audio_models=["google/gemini"])) is False
-    assert needs_transcript(auto, FakeCatalog(audio_models=[])) is True
+    assert needs_transcript(auto, FakeCatalog(audio_models=[])) is False

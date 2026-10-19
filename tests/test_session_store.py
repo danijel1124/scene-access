@@ -175,6 +175,62 @@ def test_deleting_session_removes_persisted_video_context(tmp_path: Path):
         store.get_session(session.id, owner_id="matrix:room-a")
 
 
+@pytest.mark.parametrize("fail_on", [1, 2])
+def test_failed_session_unlink_keeps_chat_registered_for_retry(tmp_path: Path, monkeypatch, fail_on):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"private video")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="local", source_path=source, title="Delete", model="", initial_question="?")
+    (session.directory / "frame_a.jpg").write_bytes(b"private frame")
+    original_unlink = Path.unlink
+    calls = []
+
+    def fail_unlink(path, *args, **kwargs):
+        if path.parent == session.directory:
+            calls.append(path)
+            # A separate reader must still see the chat until its files are removed.
+            assert store.get_session(session.id, "local").id == session.id
+            if len(calls) == fail_on:
+                raise PermissionError("injected unlink failure")
+        return original_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_unlink)
+        with pytest.raises(PermissionError, match="injected unlink failure"):
+            store.delete_session(session.id, "local")
+
+    assert [item.id for item in store.list_sessions("local")] == [session.id]
+    assert calls[-1].exists()
+    if fail_on == 2:
+        assert not calls[0].exists()
+    store.delete_session(session.id, "local")
+    assert store.list_sessions("local") == []
+    assert not session.directory.exists()
+    assert source.read_bytes() == b"private video"
+
+
+@pytest.mark.parametrize("unexpected", ["symlink", "subdirectory"])
+def test_delete_refuses_unexpected_directories_without_removing_private_files(tmp_path: Path, unexpected):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"private video")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="local", source_path=source, title="Keep", model="", initial_question="?")
+    if unexpected == "symlink":
+        target = tmp_path / "unrelated"
+        session.directory.rename(target)
+        session.directory.symlink_to(target, target_is_directory=True)
+    else:
+        target = session.directory
+        (target / "unrelated").mkdir()
+        (target / "unrelated" / "keep.txt").write_text("keep")
+
+    with pytest.raises(OSError):
+        store.delete_session(session.id, "local")
+
+    assert (target / "context.data-url").is_file()
+    assert store.get_session(session.id, "local").id == session.id
+
+
 def test_list_sessions_returns_most_recent_first(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")
@@ -223,6 +279,24 @@ def test_failed_video_read_leaves_no_session_behind(tmp_path: Path, monkeypatch)
 
     assert list(store.sessions_dir.iterdir()) == []
     assert store.list_sessions("local") == []
+
+
+def test_failed_insert_removes_only_the_new_private_session_files(tmp_path: Path):
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"private video")
+    store = VideoSessionStore(tmp_path / "app-data")
+    existing = store.create_session(owner_id="local", source_path=source, title="Keep", model="", initial_question="?")
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("""CREATE TRIGGER reject_session BEFORE INSERT ON sessions
+                        BEGIN SELECT RAISE(ABORT, 'injected insert failure'); END""")
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected insert failure"):
+        store.create_session(owner_id="local", source_path=source, title="Fail", model="", initial_question="?")
+
+    assert list(store.sessions_dir.iterdir()) == [existing.directory]
+    assert existing.video_data_url.endswith(base64.b64encode(b"private video").decode("ascii"))
+    assert [session.id for session in store.list_sessions("local")] == [existing.id]
+    assert source.read_bytes() == b"private video"
 
 
 def test_recorded_usage_is_kept_locally_but_not_sent_to_the_provider(tmp_path: Path):

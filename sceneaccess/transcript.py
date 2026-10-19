@@ -20,7 +20,7 @@ MAX_LINE_SECONDS = 15.0
 
 def needs_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
     """True unless the chat's model is known to hear the video's sound."""
-    if session.audio_only and session.model == AUTO_ROUTER and catalog.audio_video_tool_models():
+    if session.audio_only and session.model == AUTO_ROUTER:
         return False
     # Unknown models, and openrouter/auto without the audio-only setting, may not hear; a transcript is safe.
     return catalog.hears_audio(session.model) is not True
@@ -35,8 +35,8 @@ def extract_audio_chunks(video: Path, folder: Path, chunk_seconds: int | None = 
                             str(folder / "audio_%03d.mp3")], timeout=1800,
                             **({"control": control} if control else {}))
     chunks = sorted(path for path in folder.glob("audio_*.mp3") if path.stat().st_size > 0)
-    if completed.returncode != 0 and not chunks:
-        if "does not contain any stream" in completed.stderr or "matches no streams" in completed.stderr:
+    if completed.returncode != 0:
+        if not chunks and ("does not contain any stream" in completed.stderr or "matches no streams" in completed.stderr):
             return []
         raise RuntimeError(completed.stderr.strip() or "ffmpeg could not read the sound of the video.")
     return [(float(index * chunk_seconds), path) for index, path in enumerate(chunks)]

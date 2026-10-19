@@ -24,6 +24,8 @@ from .request_control import RequestControl, RequestCancelled
 from .prompts import system_prompt
 from .session_store import TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession, VideoSessionStore, SessionNotFound
 from .speech import announce
+from .single_instance import SingleInstance
+from .models import api_url
 from .tools import ToolRunner, format_time, local_video, tool_definitions
 from .transcript import make_transcript, needs_transcript
 from .video_size import SIZE_LIMIT, megabytes
@@ -66,6 +68,29 @@ class ChatWindows:
         self.frames: list[MainFrame] = []
         self.config: AppConfig | None = None
         self.catalog: ModelCatalog | None = None
+        self.last_active: MainFrame | None = None
+        self.requests: dict[str, RequestControl] = {}
+
+    def request_finished(self, session_id: str, control: RequestControl) -> None:
+        if self.requests.get(session_id) is not control:
+            return
+        self.requests.pop(session_id)
+        for frame in self.frames:
+            if (not frame._closing and not frame._request and frame.current
+                    and frame.current.id == session_id):
+                try:
+                    frame.current = frame.store.get_session(session_id, OWNER_ID)
+                except SessionNotFound:
+                    continue
+                frame.render_current()
+
+    def activate(self) -> None:
+        frame = self.last_active if self.last_active in self.frames else (self.frames[-1] if self.frames else None)
+        if frame is not None:
+            if frame.IsIconized():
+                frame.Iconize(False)
+            frame.Raise()
+            frame.SetFocus()
 
     def new_window(self) -> MainFrame:
         frame = MainFrame(self)
@@ -149,6 +174,12 @@ class MainFrame(NewChatMixin, wx.Frame):
         self._build()
         self.refresh_sessions()
         self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Bind(wx.EVT_ACTIVATE, self.on_activate)
+
+    def on_activate(self, event: wx.ActivateEvent) -> None:
+        if event.GetActive() and self.windows:
+            self.windows.last_active = self
+        event.Skip()
 
     def on_close(self, event: wx.CloseEvent) -> None:
         self._closing = True
@@ -253,8 +284,12 @@ class MainFrame(NewChatMixin, wx.Frame):
         dialog = SettingsDialog(self, self.config, self.catalog)
         if dialog.ShowModal() == wx.ID_OK:
             candidate = dialog.value()
-            if not candidate.model or not candidate.base_url.startswith(("https://", "http://")):
-                wx.MessageBox("A model and a complete http(s) base URL are required.", "Invalid settings", wx.OK | wx.ICON_ERROR)
+            try:
+                if not candidate.model:
+                    raise ValueError("A model is required.")
+                api_url(candidate.base_url, "models")
+            except ValueError as error:
+                wx.MessageBox(str(error), "Invalid settings", wx.OK | wx.ICON_ERROR)
             else:
                 self.config = candidate
                 save_config(self.config_path, self.config)
@@ -319,11 +354,31 @@ class MainFrame(NewChatMixin, wx.Frame):
         return session.model or self.config.model
 
     def change_chat_settings(self) -> None:
-        if not self.current:
+        if not self.current or getattr(self, '_loading_chat_settings', False):
+            return
+        session_id, catalog = self.current.id, self.catalog
+        self._loading_chat_settings = True
+        self.chat_settings_button.Disable()
+        self.status.SetLabel("Loading the model list. Other chat windows remain available.")
+
+        def worker() -> None:
+            try:
+                models = catalog.model_ids()
+            except Exception:
+                models = []  # Manual model entry remains available when the list fails.
+            if wx.GetApp():
+                wx.CallAfter(self._chat_settings_loaded, session_id, models)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _chat_settings_loaded(self, session_id: str, models: list[str]) -> None:
+        if not self or self._closing:
+            return
+        self._loading_chat_settings = False
+        self.chat_settings_button.Enable(not self._request)
+        if not self.current or self.current.id != session_id or self._request:
             return
         session = self.current
-        with wx.BusyCursor():
-            models = self.catalog.model_ids()
         with ChatSettingsDialog(self, session.model, self.config.model, session.audio_only, session.sent_video_size,
                                 self.config.shrink_target_mb, models) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
@@ -386,7 +441,10 @@ class MainFrame(NewChatMixin, wx.Frame):
             choices.append((f"The video ID in the file name: {link}", link))
         announce("Searching YouTube…")
         try:
-            results = self._with_youtube_sign_in(lambda cookies: search_videos(session.title, cookies=cookies))
+            results = self._with_youtube_sign_in(
+                lambda cookies: self._lookup_with_progress(search_videos, (session.title,), cookies))
+        except RequestCancelled:
+            return False
         except Exception as error:
             results = []
             wx.MessageBox(f"YouTube could not be searched: {error}", "Search failed", wx.OK | wx.ICON_WARNING)
@@ -410,7 +468,10 @@ class MainFrame(NewChatMixin, wx.Frame):
                 return True
         announce("Loading the video information…")
         try:
-            info = self._with_youtube_sign_in(lambda cookies: fetch_video_info(url, cookies=cookies))
+            info = self._with_youtube_sign_in(
+                lambda cookies: self._lookup_with_progress(fetch_video_info, (url,), cookies))
+        except RequestCancelled:
+            return False
         except Exception as error:
             wx.MessageBox(f"The video information could not be loaded: {error}", "Link not used", wx.OK | wx.ICON_WARNING)
             return True
@@ -423,7 +484,12 @@ class MainFrame(NewChatMixin, wx.Frame):
             return
         if wx.MessageBox("The conversation history and locally stored video data URL will be deleted.", "Delete this chat?", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
             return
-        self.store.delete_session(self.current.id, OWNER_ID)
+        try:
+            self.store.delete_session(self.current.id, OWNER_ID)
+        except (OSError, SessionNotFound) as error:
+            wx.MessageBox(f"The chat could not be completely deleted. You can retry deleting it.\n\n{error}",
+                          "Delete failed", wx.OK | wx.ICON_ERROR)
+            return
         self.current = None
         self.history_items = []
         self.reader_texts = []
@@ -471,6 +537,11 @@ class MainFrame(NewChatMixin, wx.Frame):
     def _send(self, question: str, *, initial: bool) -> None:
         if not self.current or self._request:
             return
+        if self.windows and self.current.id in self.windows.requests:
+            self.question.SetValue(question)
+            wx.MessageBox("The previous request for this chat is still finishing. Please retry shortly.",
+                          "Previous request is stopping", wx.OK | wx.ICON_INFORMATION)
+            return
         api_key = resolve_openrouter_key(self.config)
         if not api_key:
             self.question.SetValue(question)
@@ -480,6 +551,8 @@ class MainFrame(NewChatMixin, wx.Frame):
         if initial:
             self.store.update_initial_question(session_id, OWNER_ID, question)
         control = self._request = RequestControl()
+        if self.windows:
+            self.windows.requests[session_id] = control
         config = self.config
         catalog = self.catalog
         self._pending_question = question
@@ -498,12 +571,17 @@ class MainFrame(NewChatMixin, wx.Frame):
             wx.CallAfter(self._request_callback, control, self._show_progress_item, session_id, item)
 
         def worker() -> None:
+            runner = None
             try:
-                client = OpenRouterClient(api_key, base_url=config.base_url, control=control)
+                client = OpenRouterClient(api_key, base_url=config.base_url, control=control,
+                                          ignored_providers=config.ignored_providers)
                 # A chat on "default" asks the model that is in Settings now.
                 session = self.store.get_session(session_id, OWNER_ID)
                 follows_settings = not session.model
                 session = replace(session, model=session.model or config.model)
+                # Reject impossible routing before any potentially billable preprocessing.
+                options = routing(session.model, session.audio_only, catalog, config.ignored_providers,
+                                  config.excluded_models)
                 if follows_settings and session.transcript_state == TRANSCRIPT_NONE and needs_transcript(session, catalog):
                     # Settings now name a model that cannot hear, so this chat needs a transcript after all.
                     session = replace(session, transcript_state=TRANSCRIPT_PENDING)
@@ -512,21 +590,24 @@ class MainFrame(NewChatMixin, wx.Frame):
                     session = self.store.get_session(session_id, OWNER_ID)
                     session = replace(session, model=session.model or config.model)
                 messages = session.messages if initial else self.store.build_follow_up_messages(session_id, OWNER_ID, question)
-                # Raises if this chat may only go to hearing models but the model list is unavailable.
-                options = routing(session.model, session.audio_only, catalog, config.ignored_providers,
-                                  config.excluded_models)
                 runner = ToolRunner(session, config.youtube_cookies, control=control)
                 turn = client.run_turn(session, messages, runner.run, on_event, options,
                                        max_tool_rounds=config.max_tool_rounds)
                 control.check_cancelled()
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)
+                runner.commit_files()
                 completion = turn.completion
                 wx.CallAfter(self._request_callback, control, self._completed, session_id, completion.model, completion.tools_unavailable)
             except RequestCancelled:
                 wx.CallAfter(self._request_callback, control, self._cancelled)
             except Exception as error:
                 wx.CallAfter(self._request_callback, control, self._failed, str(error))
+            finally:
+                if runner is not None:
+                    runner.cleanup_files()
+                if self.windows:
+                    wx.CallAfter(self.windows.request_finished, session_id, control)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -585,6 +666,14 @@ class MainFrame(NewChatMixin, wx.Frame):
         A failure never stops the answer; the chat remembers it, so it is not paid for on every question."""
         if not needs_transcript(session, catalog or self.catalog):
             self.store.update_transcript(session.id, OWNER_ID, TRANSCRIPT_NONE)
+            return
+        if not client.transcription_allowed():
+            reason = ('Speech recognition skipped because ElevenLabs is excluded. '
+                      'The model answers without a transcript and cannot hear the video. '
+                      'After changing the exclusion, Change prompt profile and tools tries again.')
+            self.store.update_transcript(session.id, OWNER_ID, TRANSCRIPT_FAILED, reason)
+            shown, full = transcript_entry(TRANSCRIPT_FAILED, reason)
+            wx.CallAfter(self._show_progress_item, session.id, shown, full=full)
             return
         wx.CallAfter(self._show_progress_item, session.id, "Transcribing the video's speech for a model that cannot hear it…")
         try:
@@ -665,9 +754,33 @@ def _report_unexpected_error(error_type, error, trace) -> None:
                   "SceneAccess error", wx.OK | wx.ICON_ERROR)
 
 
-def main() -> None:
+def main() -> int:
     app = wx.App()
+    app.SetAppName("SceneAccess")
     sys.excepthook = _report_unexpected_error
-    windows = ChatWindows()
-    windows.new_window()
-    app.MainLoop()
+    instance = None
+    try:
+        path = config_path_from_standard_paths(wx.StandardPaths.Get())
+        instance = SingleInstance(path.parent)
+        if not instance.is_primary:
+            if instance.activate_existing():
+                return 0
+            wx.MessageBox("SceneAccess is already running, but its window could not be activated. "
+                          "Please switch to the existing instance.", "SceneAccess is already running", wx.OK | wx.ICON_WARNING)
+            return 1
+        config = load_config(path)  # Validate before constructing any application window.
+        windows = ChatWindows()
+        windows.config = config
+        windows.new_window()
+        instance.start(lambda: wx.CallAfter(windows.activate))
+        app.MainLoop()
+        return 0
+    except (ValueError, OSError, RuntimeError) as error:
+        wx.MessageBox(f"SceneAccess could not start.\n\n{error}", "SceneAccess startup error", wx.OK | wx.ICON_ERROR)
+        return 1
+    finally:
+        if instance:
+            instance.close()
+        for window in wx.GetTopLevelWindows():
+            window.Destroy()
+        app.Destroy()

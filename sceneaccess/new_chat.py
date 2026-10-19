@@ -20,9 +20,11 @@ from .prompts import system_prompt
 from .session_store import TRANSCRIPT_PENDING
 from .speech import announce
 from .tools import tool_definitions
+from .request_control import RequestControl, RequestCancelled
+from .worker_process import run_isolated_task
 from .video_size import (SIZE_LIMIT, ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_video,
                          video_height)
-from .youtube import MAX_HEIGHT_CHOICES, download_video, needs_sign_in
+from .youtube import MAX_HEIGHT_CHOICES, download_video_isolated, needs_sign_in
 
 
 class DownloadCancelled(Exception):
@@ -106,9 +108,8 @@ class NewChatMixin:
             lowering = False
             while True:
                 if downloaded is None or downloaded_height != height:
-                    if downloaded:
-                        # The program downloaded this file itself; a new quality replaces it under the same name.
-                        _remove_file(downloaded[0])
+                    # A returned path may be a pre-existing yt-dlp download. Keep the previous
+                    # file, including when the replacement fails or the user cancels.
                     downloaded = self._download_with_progress(url, target_dir, height)
                     if not downloaded:
                         return
@@ -214,6 +215,7 @@ class NewChatMixin:
 
     def _download_with_progress(self, url: str, target_dir: Path, max_height: int) -> tuple[Path, str, dict[str, Any]] | None:
         filename_fields = self.config.filename_fields
+        control = RequestControl()
         state: dict[str, Any] = {"percent": 0, "done": False, "cancel": False, "result": None, "error": None}
 
         def progress(update: dict[str, Any]) -> None:
@@ -225,14 +227,13 @@ class NewChatMixin:
 
         def worker() -> None:
             try:
-                state["result"] = download_video(url, target_dir, max_height, progress, filename_fields,
-                                                 self.config.youtube_cookies)
+                state["result"] = download_video_isolated(url, target_dir, max_height, progress, filename_fields,
+                                                          self.config.youtube_cookies, control=control)
             except Exception as error:
                 state["error"] = error
             finally:
                 state["done"] = True
 
-        existing = set(target_dir.iterdir())
         announce("Downloading video…")
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
@@ -246,25 +247,55 @@ class NewChatMixin:
                 keep_going, _skip = dialog.Update(min(state["percent"], 99))
                 if not keep_going:
                     state["cancel"] = True
+                    control.cancel()
                 wx.MilliSleep(100)
         thread.join()
-        if state["cancel"] or state["error"] is not None:
-            # Remove only the partial files this download created, never anything that was there before.
-            for leftover in set(target_dir.iterdir()) - existing:
-                try:
-                    leftover.unlink()
-                except OSError:
-                    pass
         if state["cancel"]:
-            self.status.SetLabel("The download was cancelled.")
+            notice = (f'The download was cancelled. Native HLS downloads may leave media fragment files in '
+                      f'{target_dir}. These are not automatically removed unless owned by this job.')
+            self.status.SetLabel(notice)
+            announce(notice)
             return None
         if state["error"] is not None:
             if needs_sign_in(state["error"]) and self._ask_youtube_sign_in():
                 return self._download_with_progress(url, target_dir, max_height)
             self.status.SetLabel("The video could not be downloaded.")
-            wx.MessageBox(str(state["error"]), "Download failed", wx.OK | wx.ICON_ERROR)
+            wx.MessageBox(str(state["error"]) +
+                          f'\n\nNative HLS downloads may leave media fragment files in {target_dir}.',
+                          "Download failed", wx.OK | wx.ICON_ERROR)
             return None
         return state["result"]
+
+    def _lookup_with_progress(self, function: Callable, args: tuple, cookies: str) -> Any:
+        """Keep wx events responsive while an interruptible lookup runs outside the GUI process."""
+        control = RequestControl()
+        state: dict[str, Any] = {'done': False, 'result': None, 'error': None}
+
+        def worker() -> None:
+            try:
+                state['result'] = run_isolated_task(function, args, kwargs={'cookies': cookies},
+                                                     control=control, timeout=90)
+            except Exception as error:
+                state['error'] = error
+            finally:
+                state['done'] = True
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        try:
+            with wx.GenericProgressDialog('YouTube lookup', 'Looking up video information…',
+                                          parent=self, style=wx.PD_CAN_ABORT | wx.PD_AUTO_HIDE) as dialog:
+                while not state['done']:
+                    keep_going, _skip = dialog.Pulse()
+                    if not keep_going:
+                        control.cancel()
+                    wx.MilliSleep(20)
+        finally:
+            control.cancel()
+            thread.join()
+        if state['error'] is not None:
+            raise state['error']
+        return state['result']
 
     def _with_youtube_sign_in(self, call: Callable[[str], Any]) -> Any:
         """Runs a YouTube request with the configured cookies; if YouTube asks to sign in, asks where the

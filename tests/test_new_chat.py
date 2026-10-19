@@ -167,8 +167,8 @@ def run_youtube_chat(tmp_path, monkeypatch, sizes, choices):
     frame = gui.MainFrame()
 
     def download(_url, target_dir, height):
-        path = target_dir / "Video [abcdefghijk].mp4"
-        assert not path.exists()  # the larger file was deleted first
+        path = target_dir / f"Video [abcdefghijk] [{height}].mp4"
+        assert not path.exists()  # Each replacement has its own job path.
         path.write_bytes(b"x" * sizes[height])
         downloads.append(height)
         return path, "Video", {}
@@ -211,7 +211,9 @@ def test_a_lower_resolution_is_requested_step_by_step_until_the_video_fits(tmp_p
                                                          [new_chat.SIZE_LOWER])
     # Asked once; 360p was still too large, so 240p followed without asking again.
     assert downloads == [480, 360, 240] and len(calls) == 1
-    assert started[0][1]["sent_video"] == tmp_path / "Video [abcdefghijk].mp4"
+    assert started[0][1]["sent_video"] == tmp_path / "Video [abcdefghijk] [240].mp4"
+    assert (tmp_path / "Video [abcdefghijk] [480].mp4").stat().st_size == 300
+    assert (tmp_path / "Video [abcdefghijk] [360].mp4").stat().st_size == 200
 
 
 def test_going_back_keeps_a_video_already_stepped_down(tmp_path, monkeypatch):

@@ -5,6 +5,28 @@ import pytest
 
 from sceneaccess.config import AppConfig, config_path_from_standard_paths, load_config, save_config
 
+@pytest.mark.parametrize("content", ["[]", "null", "42", "true", '"text"', "{broken", '{"model":'])
+def test_invalid_config_raises_with_path_and_preserves_original_file(tmp_path, content):
+    path = tmp_path / "config.json"
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError) as raised:
+        load_config(path)
+    from sceneaccess.config import InvalidConfigError
+
+    assert isinstance(raised.value, InvalidConfigError)
+    assert str(path) in str(raised.value)
+    assert "Invalid configuration" in str(raised.value)
+    assert ("JSON object" if content in ("[]", "null", "42", "true", '"text"') else "JSON syntax") in str(raised.value)
+    assert path.read_text(encoding="utf-8") == content
+    assert not path.with_suffix(".tmp").exists()
+
+
+def test_missing_configuration_still_uses_defaults_without_creating_a_file(tmp_path):
+    path = tmp_path / "missing.json"
+    assert load_config(path) == AppConfig()
+    assert not path.exists()
+
+
 @pytest.mark.parametrize("limit", [0, 6, 100000000000000000000])
 def test_tool_round_limit_round_trips_without_an_upper_bound(tmp_path, limit):
     path = tmp_path / "config.json"

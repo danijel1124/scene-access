@@ -192,6 +192,20 @@ class ToolRunner:
         self.session = session
         self.youtube_cookies = youtube_cookies
         self.control = control
+        self._created_images: set[Path] = set()
+
+    def commit_files(self) -> None:
+        """The turn's history now owns its generated images."""
+        self._created_images.clear()
+
+    def cleanup_files(self) -> None:
+        """Discard only this unfinished turn's images, including partial extractions."""
+        for path in tuple(self._created_images):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                continue
+            self._created_images.discard(path)
 
     def run(self, name: str, arguments_json: str) -> ToolResult:
         try:
@@ -251,6 +265,7 @@ class ToolRunner:
         if reported_seconds is None and duration and seconds > duration:
             raise ValueError(f"{format_time(seconds)} is after the end of the video ({format_time(duration)}).")
         name = f"frame_{uuid.uuid4().hex[:12]}.jpg"
+        self._created_images.add(self.session.directory / name)
         extract_frame(source, seconds, region, self.session.directory / name,
                       **({"control": self.control} if self.control else {}))
         x, y, w, h = region

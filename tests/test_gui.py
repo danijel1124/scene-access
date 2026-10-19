@@ -236,7 +236,7 @@ def test_a_failed_transcription_is_remembered_and_does_not_stop_the_answer(tmp_p
     try:
         session = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="T", model="m",
                                              initial_question="?", transcript_state="pending")
-        frame._prepare_transcript(session, client=None)
+        frame._prepare_transcript(session, client=gui.OpenRouterClient('fixture-only'))
         assert frame.store.get_session(session.id, gui.OWNER_ID).transcript_state == "failed"
     finally:
         frame.Destroy()

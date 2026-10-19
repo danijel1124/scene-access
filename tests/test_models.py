@@ -27,7 +27,45 @@ class FakeResponse:
 
 def test_api_url_finds_other_endpoints_next_to_chat_completions():
     assert api_url("https://openrouter.ai/api/v1/chat/completions", "models") == "https://openrouter.ai/api/v1/models"
-    assert api_url("https://proxy.example/custom", "audio/transcriptions") == "https://openrouter.ai/api/v1/audio/transcriptions"
+
+
+@pytest.mark.parametrize("endpoint", ["models", "providers", "audio/transcriptions"])
+@pytest.mark.parametrize("base", [
+    "https://proxy.example/custom/v2/chat/completions",
+    "https://proxy.example/custom/v2/chat/completions/",
+    "http://localhost:8080/custom/v2/chat/completions/",
+])
+def test_api_url_preserves_configured_origin_and_api_prefix(base, endpoint):
+    prefix = base.rstrip("/")[:-len("chat/completions")]
+    assert api_url(base, endpoint) == prefix + endpoint
+
+
+@pytest.mark.parametrize("base", [
+    "https://proxy.example/custom", "https://proxy.example/v1", "",
+    "proxy.example/chat/completions", "ftp://proxy.example/chat/completions",
+    "https:///chat/completions", "https://proxy.example:bad/chat/completions",
+    "https://user:password@proxy.example/chat/completions",
+    "https://proxy.example/chat/completions?key=secret",
+    "https://proxy.example/chat/completions?",
+    "https://proxy.example/chat/completions#fragment",
+    "https://proxy.example/chat/completions#",
+    " https://proxy.example/chat/completions",
+    "https://proxy.example/\nchat/completions",
+    "https://proxy.example/api/../chat/completions",
+    "https://proxy.example/api/%2f/chat/completions",
+    "https://proxy.example//chat/completions",
+    "https://proxy.example/\\chat/completions",
+])
+def test_api_url_rejects_ambiguous_addresses_without_fallback(base):
+    with pytest.raises(ValueError, match="API URL"):
+        api_url(base, "models")
+
+
+@pytest.mark.parametrize("endpoint", ["https://other.example/models", "//other.example/models",
+                                      "../models", "/models", "models?key=x", "models#x"])
+def test_api_url_rejects_endpoint_paths_that_can_change_destination(endpoint):
+    with pytest.raises(ValueError, match="endpoint"):
+        api_url("https://proxy.example/v1/chat/completions", endpoint)
 
 
 def test_catalog_knows_which_models_hear_and_lists_only_real_tool_models():

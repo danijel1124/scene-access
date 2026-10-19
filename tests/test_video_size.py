@@ -1,4 +1,8 @@
 import subprocess
+import sys
+import time
+
+import sceneaccess.video_size as video_size
 
 import imageio_ffmpeg
 import pytest
@@ -55,6 +59,45 @@ def test_shrink_video_fits_the_target_and_keeps_stereo_sound(tmp_path):
     probe = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-i", str(target)],
                            capture_output=True, text=True).stderr
     assert "stereo" in probe
+
+
+@pytest.mark.parametrize("width,height", [(322, 181), (323, 180), (181, 322)])
+def test_shrink_video_rounds_both_dimensions_down_without_enlarging(tmp_path, width, height):
+    source, target = tmp_path / "odd.mov", tmp_path / "even.mp4"
+    subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-loglevel", "error", "-f", "lavfi", "-i",
+                    f"testsrc=duration=1:size={width}x{height}:rate=5", "-c:v", "png", "-y", str(source)],
+                   check=True)
+    assert video_size_and_duration(source)[0] == (width, height)
+
+    shrink_video(source, target, 1_000_000)
+
+    (out_width, out_height), duration = video_size_and_duration(target)
+    assert (out_width, out_height) == (width // 2 * 2, height // 2 * 2)
+    assert 0 < out_width <= width and 0 < out_height <= height
+    assert duration == pytest.approx(1, abs=0.25)
+    assert base64_size(target.stat().st_size) <= 1_000_000
+
+
+def test_run_rejects_initial_cancellation_without_starting_child(tmp_path, monkeypatch):
+    started = tmp_path / "started"
+    command = [sys.executable, "-c", f"from pathlib import Path; Path({str(started)!r}).touch()"]
+    # Replace only command selection; Popen and all pipe/process handling stay real.
+    monkeypatch.setattr(video_size, "_ffmpeg_command", lambda *_: command, raising=False)
+    with pytest.raises(ShrinkCancelled):
+        video_size._run(imageio_ffmpeg.get_ffmpeg_exe(), [], 1, lambda _: None, lambda: True)
+    assert not started.exists()
+
+
+def test_run_cancels_silent_child_promptly_and_reaps_it(tmp_path, monkeypatch):
+    pid_file = tmp_path / "child.pid"
+    command = [sys.executable, "-c",
+               "import os, time; from pathlib import Path; "
+               f"Path({str(pid_file)!r}).write_text(str(os.getpid())); time.sleep(10)"]
+    monkeypatch.setattr(video_size, "_ffmpeg_command", lambda *_: command)
+    with pytest.raises(ShrinkCancelled):
+        video_size._run("unused", [], 1, lambda _: None, lambda: True)
+    # The child process should have been killed and the file removed
+    assert not pid_file.exists()
 
 
 def test_shrink_video_can_be_cancelled(tmp_path):

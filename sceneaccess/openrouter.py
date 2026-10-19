@@ -77,11 +77,16 @@ class OpenRouterClient:
     endpoint = "https://openrouter.ai/api/v1/chat/completions"
 
     def __init__(self, api_key: str, base_url: str | None = None, opener: Callable[..., Any] = urlopen,
-                 control: RequestControl | None = None):
+                 control: RequestControl | None = None, ignored_providers: tuple[str, ...] = ()):
         self.api_key = api_key
         self.endpoint = base_url or self.endpoint
         self.opener = opener
         self.control = control
+        self.ignored_providers = ignored_providers
+
+    def transcription_allowed(self, model: str = 'elevenlabs/scribe-v2') -> bool:
+        vendor = model.split('/', 1)[0].casefold()
+        return vendor not in {name.casefold() for name in self.ignored_providers}
 
     def _post(self, payload: dict[str, Any], url: str | None = None) -> dict[str, Any]:
         if self.control:
@@ -118,6 +123,8 @@ class OpenRouterClient:
 
     def transcribe(self, audio: bytes, audio_format: str = "mp3", model: str = "elevenlabs/scribe-v2") -> dict[str, Any]:
         """Speech to text with word timestamps through OpenRouter's transcription endpoint."""
+        if not self.transcription_allowed(model):
+            raise ValueError('Speech recognition skipped because the transcription provider is excluded.')
         from .models import api_url
 
         payload = {"model": model, "input_audio": {"data": base64.b64encode(audio).decode("ascii"), "format": audio_format},

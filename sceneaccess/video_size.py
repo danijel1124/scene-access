@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections import deque
+from threading import Thread
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -72,7 +74,9 @@ def shrink_plan(target_base64: int, duration: float) -> ShrinkPlan:
 
 
 def ffmpeg_arguments(source: Path, target: Path, plan: ShrinkPlan) -> list[str]:
-    filters = [f"scale=-2:'min(ih,{plan.max_height})'"]  # never enlarge
+    # Round both scaled dimensions down: -2 rounds width to nearest (possibly up),
+    # and an unchanged odd source height is not encodable with yuv420p.
+    filters = [f"scale='trunc(iw*min(1,{plan.max_height}/ih)/2)*2':'trunc(min(ih,{plan.max_height})/2)*2'"]
     if plan.fps:
         filters.append(f"fps={plan.fps}")
     return ["-y", "-i", str(source), "-vf", ",".join(filters), "-c:v", "libx264", "-preset", "veryfast",
@@ -102,23 +106,61 @@ def shrink_video(source: Path, target: Path, target_base64: int,
                        f"the smallest attempt was {megabytes(sent)}.")
 
 
+def _ffmpeg_command(ffmpeg: str, arguments: list[str]) -> list[str]:
+    return [ffmpeg, "-hide_banner", "-loglevel", "error", *arguments]
+
+
 def _run(ffmpeg: str, arguments: list[str], duration: float, progress: Callable[[float], None],
          cancelled: Callable[[], bool]) -> None:
+    if cancelled():
+        raise ShrinkCancelled()
     # The windowed app has no console; without this flag ffmpeg would flash a console window.
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    process = subprocess.Popen([ffmpeg, "-hide_banner", "-loglevel", "error", *arguments], stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, text=True, creationflags=flags)
+    process = subprocess.Popen(_ffmpeg_command(ffmpeg, arguments), stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, creationflags=flags)
+    # Anonymous pipes are not selectable on Windows. A reader thread keeps the
+    # supervising thread responsive even when ffmpeg emits no progress at all.
+    positions: deque[bytes] = deque(maxlen=1)
+    error_tail: deque[bytes] = deque(maxlen=16)
+
+    def read_errors() -> None:
+        while block := process.stderr.read(4096):
+            error_tail.append(block)
+
+    def read_progress() -> None:
+        for line in iter(lambda: process.stdout.readline(4096), b""):
+            if line.startswith(b"out_time_us=") and line[12:].strip().isdigit():
+                positions.append(line)
+
+    reader = Thread(target=read_progress, name="ffmpeg-progress")
+    error_reader = Thread(target=read_errors, name="ffmpeg-errors")
+    reader.start()
+    error_reader.start()
     try:
-        # ffmpeg reports its position about twice a second, so a cancel is noticed quickly.
-        for line in process.stdout:
+        while True:
             if cancelled():
                 raise ShrinkCancelled()
-            if line.startswith("out_time_us=") and line[12:].strip().isdigit() and duration:
-                progress(min(int(line[12:]) / 1_000_000 / duration, 1.0))
-        errors = process.stderr.read()
-        if process.wait() != 0:
+            if positions and duration:
+                progress(min(int(positions.popleft()[12:]) / 1_000_000 / duration, 1.0))
+            try:
+                process.wait(timeout=0.05)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+        reader.join()
+        if cancelled():
+            raise ShrinkCancelled()
+        if positions and duration:
+            progress(min(int(positions.popleft()[12:]) / 1_000_000 / duration, 1.0))
+        error_reader.join()
+        errors = b"".join(error_tail).decode("utf-8", errors="replace")
+        if process.returncode != 0:
             raise RuntimeError(errors.strip() or "ffmpeg could not shrink the video.")
     finally:
         if process.poll() is None:
             process.kill()
-            process.wait()
+        process.wait()
+        reader.join()
+        error_reader.join()
+        process.stdout.close()
+        process.stderr.close()

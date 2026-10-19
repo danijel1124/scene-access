@@ -3,7 +3,116 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import stat
+import uuid
 from typing import Any, Callable
+
+from .request_control import RequestCancelled, RequestControl
+from .worker_process import run_isolated_task
+
+
+class DownloadFiles:
+    """Exact job paths, admitted only before creation; never infer ownership from a folder diff.
+
+    Existing files (including resumed .part files) are never owned. Identity checks also spare
+    replacements observed after a progress hook. Unknown sidecars are deliberately left alone.
+    """
+
+    def __init__(self, target_dir: Path, on_change: Callable[[dict], None] | None = None):
+        self.target_dir = target_dir.resolve()
+        self._paths: dict[Path, tuple[int, int] | None] = {}
+        self._protected: set[Path] = set()
+        self._protected_ids: set[tuple[int, int]] = set()
+        self._on_change = on_change
+
+    def snapshot(self) -> dict:
+        return {"paths": {str(path): identity for path, identity in self._paths.items()},
+                "protected": [str(path) for path in self._protected],
+                "protected_ids": list(self._protected_ids)}
+
+    def adopt(self, state: dict) -> None:
+        """Import the worker's pre-creation decisions, never infer them from current files."""
+        for path in state['protected']:
+            self._protected.add(self.path(path))
+        self._protected_ids.update(tuple(identity) for identity in state['protected_ids'])
+        for path, identity in state['paths'].items():
+            path = self.path(path)
+            if path not in self._protected:
+                self._paths[path] = tuple(identity) if identity is not None else None
+
+    def _notify(self) -> None:
+        if self._on_change:
+            self._on_change(self.snapshot())
+
+    def path(self, value: str | Path) -> Path:
+        path = Path(value).absolute()
+        if path.parent.resolve() != self.target_dir or path.is_symlink():
+            raise ValueError(f"Download path is outside the target folder or a symlink: {path}")
+        return path
+
+    def reserve(self, value: str | Path) -> None:
+        path = self.path(value)
+        if path in self._paths or path in self._protected:
+            return
+        if path.exists():
+            self._protected.add(path)
+            info = path.lstat()
+            self._protected_ids.add((info.st_dev, info.st_ino))
+        else:
+            self._paths[path] = None
+        self._notify()
+
+    def observe(self) -> None:
+        for path, identity in self._paths.items():
+            if identity is not None:
+                continue
+            try:
+                info = path.lstat()
+                if stat.S_ISREG(info.st_mode):
+                    self._paths[path] = (info.st_dev, info.st_ino)
+            except OSError:
+                pass
+        self._notify()
+
+    def cleanup(self) -> None:
+        for path, identity in self._paths.items():
+            if identity is None or identity in self._protected_ids:
+                continue
+            try:
+                self.path(path)
+                info = path.lstat()
+                if stat.S_ISREG(info.st_mode) and (info.st_dev, info.st_ino) == identity:
+                    path.unlink()
+            except (OSError, ValueError):
+                pass
+
+    def claim_merge_output(self, final: Path) -> tuple[Path, tuple[int, int]]:
+        """Own the merge inode before ffmpeg writes, and track its eventual rename."""
+        temporary = final.with_name(final.stem + '.temp' + final.suffix)
+        self.reserve(final)
+        self.reserve(temporary)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            info = os.fstat(descriptor)
+            identity = (info.st_dev, info.st_ino)
+        finally:
+            os.close(descriptor)
+        self._paths[temporary] = identity
+        if final in self._paths and self._paths[final] is None:
+            self._paths[final] = identity
+        self._notify()
+        return temporary, identity
+
+    def release_empty_placeholder(self, placeholder: tuple[Path, tuple[int, int]]) -> None:
+        path, identity = placeholder
+        try:
+            info = path.lstat()
+            if stat.S_ISREG(info.st_mode) and info.st_size == 0 and (info.st_dev, info.st_ino) == identity:
+                path.unlink()
+        except FileNotFoundError:
+            pass
+
 
 DEFAULT_MAX_HEIGHT = 480
 MAX_HEIGHT_CHOICES = (240, 360, 480, 720, 1080)
@@ -206,18 +315,94 @@ def download_options(target_dir: Path, max_height: int, progress: Callable[[dict
     return options
 
 
+def _download_video_isolated_worker(url: str, target_dir: Path, max_height: int, filename_fields,
+                                   cookies: str, _progress_pipe=None, _job_id: str = "") -> tuple[Path, str, dict[str, Any]]:
+    def state_changed(state: dict) -> None:
+        if _progress_pipe is not None:
+            _progress_pipe.send(('event', state))
+
+    def progress(update: dict[str, Any]) -> None:
+        if _progress_pipe is not None:
+            # Do not pickle the whole yt-dlp info_dict into every progress event.
+            fields = ('status', 'downloaded_bytes', 'total_bytes', 'total_bytes_estimate')
+            _progress_pipe.send(('progress', {key: update[key] for key in fields if key in update}))
+
+    files = DownloadFiles(target_dir, on_change=state_changed)
+    return download_video(url, target_dir, max_height, progress, filename_fields, cookies,
+                          files=files, _job_id=_job_id)
+
+
 def download_video(url: str, target_dir: Path, max_height: int = DEFAULT_MAX_HEIGHT,
                    progress: Callable[[dict[str, Any]], None] | None = None,
                    filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS,
-                   cookies: str = "") -> tuple[Path, str, dict[str, Any]]:
-    """Returns the downloaded file, the title and the video information the model may read later."""
+                   cookies: str = "", *, files: DownloadFiles | None = None,
+                   _job_id: str = "") -> tuple[Path, str, dict[str, Any]]:
     import yt_dlp
-
     target_dir.mkdir(parents=True, exist_ok=True)
-    with yt_dlp.YoutubeDL(download_options(target_dir, max_height, progress, filename_fields, cookies)) as downloader:
-        info = downloader.extract_info(url, download=True)
-    path = Path(info["requested_downloads"][0]["filepath"])
-    return path, str(info.get("title") or path.name), video_info_summary(info)
+    files = files if files is not None else DownloadFiles(target_dir)
+    def tracked_progress(update: dict[str, Any]) -> None:
+        files.observe()
+        if progress:
+            progress(update)
+    class JobDownloader(yt_dlp.YoutubeDL):
+        def dl(self, name, info, subtitle=False, test=False):
+            if not test:
+                for candidate in (name, name + ".part", name + ".ytdl", name + ".part.ytdl"):
+                    files.reserve(candidate)
+            try:
+                return super().dl(name, info, subtitle=subtitle, test=test)
+            finally:
+                files.observe()
+        def run_pp(self, pp, infodict):
+            placeholder = None
+            if infodict.get("filepath"):
+                final = files.path(infodict["filepath"])
+                placeholder = files.claim_merge_output(final)
+            try:
+                return super().run_pp(pp, infodict)
+            finally:
+                files.observe()
+                if placeholder:
+                    files.release_empty_placeholder(placeholder)
+    try:
+        options = download_options(target_dir, max_height, tracked_progress, filename_fields, cookies)
+        if _job_id:
+            # yt-dlp trims from the end. Keep the complete job identifier at the
+            # beginning, outside the user-controlled long metadata fields.
+            template = f'[{_job_id}] ' + output_template(filename_fields)
+            options['outtmpl'] = str(target_dir / template)
+        with JobDownloader(options) as downloader:
+            info = downloader.extract_info(url, download=True)
+        path = files.path(info["requested_downloads"][0]["filepath"])
+        return path, str(info.get("title") or path.name), video_info_summary(info)
+    except BaseException:
+        files.cleanup()
+        raise
+
+
+def download_video_isolated(
+    url: str,
+    target_dir: Path,
+    max_height: int = 480,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+    filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS,
+    cookies: str = "",
+    *,
+    control: RequestControl | None = None,
+) -> tuple[Path, str, dict[str, Any]]:
+    """Isolated download in a separate process; never reuses an existing file of the same job."""
+    if control is None:
+        control = RequestControl()
+
+    args = (url, target_dir, max_height, filename_fields, cookies)
+    files = DownloadFiles(target_dir)
+    try:
+        return run_isolated_task(_download_video_isolated_worker, args, control=control,
+                                 kwargs={'_job_id': uuid.uuid4().hex}, progress_callback=progress,
+                                 event_callback=files.adopt, timeout=86400)
+    except BaseException:
+        files.cleanup()
+        raise
 
 
 # Information about a video the model can ask for; everything else in yt-dlp's info is format detail.

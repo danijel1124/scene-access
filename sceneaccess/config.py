@@ -10,6 +10,10 @@ from .video_size import DEFAULT_SHRINK_TARGET_MB
 from .youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
 
 
+class InvalidConfigError(ValueError):
+    """The existing configuration cannot be safely loaded; leave it untouched."""
+
+
 @dataclass(frozen=True)
 class AppConfig:
     model: str = "google/gemini-2.5-flash"
@@ -54,8 +58,18 @@ def config_path_from_standard_paths(standard_paths: object) -> Path:
 def load_config(path: Path) -> AppConfig:
     try:
         values = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
         return AppConfig()
+    except json.JSONDecodeError as error:
+        raise InvalidConfigError(
+            f"Invalid configuration in '{path}': invalid JSON syntax at line {error.lineno}, "
+            f"column {error.colno}. Please correct the file before restarting."
+        ) from error
+    if not isinstance(values, dict):
+        raise InvalidConfigError(
+            f"Invalid configuration in '{path}': expected a JSON object at the root. "
+            "Please correct the file before restarting."
+        )
     return AppConfig(
         model=str(values.get("model", AppConfig.model)),
         base_url=str(values.get("base_url", AppConfig.base_url)),
@@ -114,9 +128,9 @@ def _positive_int(value: object, default: int) -> int:
 
 
 def save_config(path: Path, config: AppConfig) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps({
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    content = json.dumps({
         "model": config.model,
         "base_url": config.base_url,
         "api_key": config.api_key,
@@ -134,9 +148,15 @@ def save_config(path: Path, config: AppConfig) -> None:
         "auto_shrink": config.auto_shrink,
         "shrink_target_mb": config.shrink_target_mb,
         "max_tool_rounds": config.max_tool_rounds,
-    }, indent=2), encoding="utf-8")
-    # Restricts access on POSIX. On Windows chmod only toggles the read-only flag; there the
-    # per-user application-data directory's access control list keeps the file private.
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
+    }, indent=2)
+    # mkstemp creates with 0600 before any secret is written, including in legacy
+    # application-data directories that still have permissive directory modes.
+    descriptor, name = tempfile.mkstemp(prefix=path.name + '.', suffix='.tmp', dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+            stream.write(content)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
     os.chmod(path, 0o600)

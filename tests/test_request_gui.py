@@ -41,6 +41,79 @@ def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, mon
     assert frame.current.initial_question == 'Revised question'
 
 
+def test_audio_only_routing_failure_does_not_transcribe(frame, monkeypatch):
+    from sceneaccess.session_store import TRANSCRIPT_PENDING
+    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
+    frame.store.update_chat_settings(frame.current.id, gui.OWNER_ID, 'openrouter/auto', True)
+    frame.store.update_transcript(frame.current.id, gui.OWNER_ID, TRANSCRIPT_PENDING)
+    frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    class Unavailable:
+        def audio_video_tool_models(self): return []
+        def hears_audio(self, model): return None
+    frame.catalog = Unavailable()
+    called = []
+    errors = []
+    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: errors.append(message))
+    monkeypatch.setattr(gui, 'make_transcript', lambda *a, **kw: called.append(True) or 'Unnecessary')
+    frame._send('Original question', initial=True)
+    assert called == []
+    assert errors and 'model list could not be loaded' in errors[-1]
+
+
+@pytest.mark.parametrize('outcome', ['failure', 'cancel', 'success'])
+def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypatch, outcome):
+    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
+    monkeypatch.setattr(gui, 'needs_transcript', lambda *a: False)
+    generated = []
+    def answer(client, session, messages, run_tool, *args, **kwargs):
+        runner = run_tool.__self__
+        image = session.directory/'frame_fixture.jpg'
+        image.write_bytes(b'new image')
+        runner._created_images.add(image)
+        generated.append(image)
+        if outcome == 'failure': raise RuntimeError('provider fixture failed')
+        if outcome == 'cancel': raise gui.RequestCancelled()
+        return Turn(entries=[{'role': 'assistant', 'content': 'Answer'}],
+                    completion=Completion('Answer', 'fixture', 1, None, None))
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answer)
+    frame._send('Original question', initial=True)
+    assert generated and generated[0].exists() is (outcome == 'success')
+
+
+def test_delete_error_keeps_chat_visible_and_reports_failure(frame, monkeypatch):
+    messages = []
+    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: messages.append(message) or wx.YES)
+    def fail(*a, **kw): raise PermissionError('fixture: file is locked')
+    monkeypatch.setattr(frame.store, 'delete_session', fail)
+    session_id = frame.current.id
+    frame.on_delete(None)
+    assert frame.current.id == session_id
+    assert 'file is locked' in messages[-1]
+
+
+def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
+    from sceneaccess.session_store import TRANSCRIPT_PENDING, TRANSCRIPT_FAILED
+    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
+    monkeypatch.setattr(gui, 'needs_transcript', lambda *a: True)
+    frame.config = gui.replace(frame.config, ignored_providers=('elevenlabs',))
+    frame.store.update_transcript(frame.current.id, gui.OWNER_ID, TRANSCRIPT_PENDING)
+    frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    transcriptions, requests = [], []
+    monkeypatch.setattr(gui, 'make_transcript', lambda *a: transcriptions.append(True) or 'should not run')
+    def answer(*args, **kwargs):
+        requests.append(True)
+        return Turn(entries=[{'role':'assistant','content':'Picture-only answer'}],
+                    completion=Completion('Picture-only answer','fixture',1,None,None))
+    monkeypatch.setattr(gui.OpenRouterClient,'run_turn',answer)
+    frame._send('Original question',initial=True)
+    assert requests == [True] and not transcriptions
+    saved = frame.store.get_session(frame.current.id,gui.OWNER_ID)
+    assert saved.transcript_state == TRANSCRIPT_FAILED
+    assert 'excluded' in saved.transcript.lower() and 'elevenlabs' in saved.transcript.lower()
+    entries = gui.chat_history_entries(saved.initial_question,saved.history,saved.transcript_state,saved.transcript)
+    assert any('excluded' in text.lower() for text, _ in entries)
+
+
 def test_missing_api_key_preserves_question(frame):
     frame.config = gui.replace(frame.config, api_key="")
     frame.question.SetValue("Keep this question")

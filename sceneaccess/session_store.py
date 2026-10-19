@@ -142,15 +142,26 @@ class VideoSessionStore:
         data_url = f"data:{mime};base64," + base64.b64encode(sent.read_bytes()).decode("ascii")
         session_id = "vid_" + uuid.uuid4().hex
         directory = self.sessions_dir / session_id
-        directory.mkdir(mode=0o700)
-        data_url_path = directory / "context.data-url"
-        data_url_path.write_text(data_url, encoding="ascii")
-        os.chmod(data_url_path, 0o600)
         values = (session_id, owner_id, title, str(source_path), model, initial_question, "[]", system_prompt,
                   json.dumps(tools or []), source_url, json.dumps(video_info) if video_info else "",
                   "", transcript_state, "1" if audio_only else "0", "0")
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(f"INSERT INTO sessions ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})", values)
+        # A collision must never authorize cleanup of an existing directory or file.
+        directory.mkdir(mode=0o700)
+        data_url_path = directory / "context.data-url"
+        created_file = False
+        try:
+            with data_url_path.open("x", encoding="ascii") as context:
+                created_file = True
+                context.write(data_url)
+            os.chmod(data_url_path, 0o600)
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(f"INSERT INTO sessions ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})", values)
+        except BaseException:
+            if created_file:
+                data_url_path.unlink(missing_ok=True)
+            # Do not recursively remove unexpected content, even on failure.
+            directory.rmdir()
+            raise
         return self.get_session(session_id, owner_id)
 
     def get_session(self, session_id: str, owner_id: str) -> VideoSession:
@@ -180,10 +191,15 @@ class VideoSessionStore:
 
     def record_turn(self, session_id: str, owner_id: str, entries: list[dict[str, Any]]) -> None:
         """Appends one turn: the question (if any), tool calls, tool results, images and the answer."""
-        session = self.get_session(session_id, owner_id)
         with sqlite3.connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT history_json FROM sessions WHERE id = ? AND owner_id = ?",
+                               (session_id, owner_id)).fetchone()
+            if row is None:
+                raise SessionNotFound(session_id)
+            history = json.loads(row[0])
             conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
-                         (json.dumps([*session.history, *entries]), session_id, owner_id))
+                         (json.dumps([*history, *entries]), session_id, owner_id))
 
     def update_initial_question(self, session_id: str, owner_id: str, question: str) -> None:
         """A first-request retry uses the question actually submitted, not the failed original."""
@@ -259,13 +275,33 @@ class VideoSessionStore:
             conn.execute("UPDATE sessions SET owner_id = ? WHERE owner_id = ?", (new_owner_id, old_owner_id))
 
     def delete_session(self, session_id: str, owner_id: str) -> None:
-        self.get_session(session_id, owner_id)
         with sqlite3.connect(self.db_path) as conn:
+            # Serialize deletion and owner changes before checking authorization. Keep the
+            # row registered until all file operations succeed; partial removal is retryable.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT id FROM sessions WHERE id = ? AND owner_id = ?",
+                               (session_id, owner_id)).fetchone()
+            if not row:
+                raise SessionNotFound(session_id)
             conn.execute("DELETE FROM sessions WHERE id = ? AND owner_id = ?", (session_id, owner_id))
-        directory = self.sessions_dir / session_id
-        for child in directory.iterdir():
-            child.unlink()
-        directory.rmdir()
+            directory = self.sessions_dir / session_id
+            if directory.is_symlink():
+                raise OSError(f"Refusing to delete a linked session directory: {directory}")
+            try:
+                children = list(directory.iterdir())
+            except FileNotFoundError:
+                children = []
+            # Session files are flat. Never recurse into unexpected directories or
+            # follow a directory link into unrelated data.
+            for child in children:
+                if child.is_dir() and not child.is_symlink():
+                    raise IsADirectoryError(child)
+            for child in children:
+                child.unlink(missing_ok=True)
+            try:
+                directory.rmdir()
+            except FileNotFoundError:
+                pass
 
     def build_follow_up_messages(self, session_id: str, owner_id: str, question: str) -> list[dict[str, Any]]:
         session = self.get_session(session_id, owner_id)

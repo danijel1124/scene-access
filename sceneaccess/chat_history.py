@@ -41,6 +41,9 @@ def transcript_entry(state: str, transcript: str) -> tuple[str, str] | None:
         text = "Transcript: no speech was detected in the video."
         return text, text
     if state == TRANSCRIPT_FAILED:
+        if transcript:
+            text = 'Transcript: ' + transcript
+            return text, text
         text = ("Transcript: speech recognition failed, so the model answered without it. "
                 "Change prompt profile and tools tries again.")
         return text, text

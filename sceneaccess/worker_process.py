@@ -62,12 +62,17 @@ class _WindowsJob:
 
 
 def run_isolated_task(function: Callable[..., Any], args: tuple, *, control: RequestControl,
-                   kwargs: dict | None = None, timeout: float = 300) -> Any:
+                   kwargs: dict | None = None, timeout: float = 300,
+                   progress_callback: Callable[[dict[str, Any]], None] | None = None,
+                   event_callback: Callable[[Any], None] | None = None) -> Any:
     """Run a picklable media operation; cancellation terminates its entire process tree."""
     control.check_cancelled()
     context = multiprocessing.get_context('spawn')
     receiving, sending = context.Pipe(duplex=False)
     ready = context.Event()
+    kwargs = dict(kwargs or {})
+    if progress_callback is not None or event_callback is not None:
+        kwargs['_progress_pipe'] = sending
     process = context.Process(target=_worker, args=(sending, ready, function, args, kwargs or {}), daemon=True)
     job = None
     group_ready = False
@@ -113,6 +118,12 @@ def run_isolated_task(function: Callable[..., Any], args: tuple, *, control: Req
                 control.register_interrupt(interrupt)
                 control.check_cancelled()
                 ready.set()
+            elif kind == 'progress':
+                if progress_callback:
+                    progress_callback(value)
+            elif kind == 'event':
+                if event_callback:
+                    event_callback(value)
             elif kind == 'error':
                 raise RuntimeError(value)
             elif kind == 'result':
@@ -125,6 +136,16 @@ def run_isolated_task(function: Callable[..., Any], args: tuple, *, control: Req
         if process.is_alive():
             process.kill()
             process.join()
+        # A cancellation may arrive between file creation and processing its ownership
+        # event. Drain already-sent events after the entire process tree is stopped.
+        if event_callback:
+            while receiving.poll():
+                try:
+                    kind, value = receiving.recv()
+                except EOFError:
+                    break
+                if kind == 'event':
+                    event_callback(value)
         receiving.close()
         with interrupt_lock:
             active = False

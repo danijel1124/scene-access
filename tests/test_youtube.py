@@ -93,13 +93,13 @@ def test_download_video_returns_the_downloaded_file_and_title(tmp_path: Path, mo
             seen["url"], seen["download"] = url, download
             return {"title": "Me at the zoo", "description": "The first video.", "tags": [], "formats": [{"url": "x"}],
                     "chapters": [{"start_time": 0, "end_time": 5, "title": "Intro", "extra": 1}],
-                    "requested_downloads": [{"filepath": str(tmp_path / "jNQXAC9IVRw-240p.mp4")}]}
+                    "requested_downloads": [{"filepath": str(tmp_path / "downloads" / "jNQXAC9IVRw-240p.mp4")}]}
 
     monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYoutubeDL))
 
     path, title, info = youtube.download_video("https://www.youtube.com/watch?v=jNQXAC9IVRw", tmp_path / "downloads", 480)
 
-    assert path == tmp_path / "jNQXAC9IVRw-240p.mp4"
+    assert path == tmp_path / "downloads" / "jNQXAC9IVRw-240p.mp4"
     assert title == "Me at the zoo"
     # Only what the model may read: no format details, no empty fields, chapters trimmed.
     assert info == {"title": "Me at the zoo", "description": "The first video.",

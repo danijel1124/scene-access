@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import threading
 
 import wx
 
@@ -427,12 +428,38 @@ class SettingsDialog(wx.Dialog):
         self.Layout()
 
     def _on_exclusions(self, _event: wx.CommandEvent) -> None:
+        if getattr(self, '_loading_exclusions', False):
+            return
         # The base URL may have been changed in this dialog, so ask the API it now names.
         base_url, catalog = self.base_url.GetValue().strip(), self.catalog
-        if catalog is None or catalog.url != api_url(base_url, "models"):
-            catalog = ModelCatalog(base_url)
-        with wx.BusyCursor():
-            providers, models = catalog.providers(), catalog.model_ids()
+        try:
+            if catalog is None or catalog.url != api_url(base_url, "models"):
+                catalog = ModelCatalog(base_url)
+        except ValueError as error:
+            wx.MessageBox(str(error), "Invalid API URL", wx.OK | wx.ICON_ERROR, self)
+            return
+        self._loading_exclusions = True
+        self.exclusions_button.Disable()
+        self.exclusions_button.SetLabel("Loading providers and models…")
+
+        def worker() -> None:
+            try:
+                providers, models = catalog.providers(), catalog.model_ids()
+            except Exception:
+                providers, models = [], []
+            if wx.GetApp():
+                wx.CallAfter(self._exclusions_loaded, base_url, providers, models)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _exclusions_loaded(self, base_url: str, providers: list, models: list[str]) -> None:
+        if not self:
+            return
+        self._loading_exclusions = False
+        self.exclusions_button.Enable()
+        self._show_exclusions()
+        if self.base_url.GetValue().strip() != base_url:
+            return  # The user changed providers while the old catalogue was loading.
         with ExclusionsDialog(self, providers, self.ignored_providers, models, self.excluded_models) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
                 self.ignored_providers, self.excluded_models = dialog.value()

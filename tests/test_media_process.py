@@ -78,7 +78,16 @@ def test_cancel_kills_media_worker_and_its_subprocess(tmp_path):
         else:
             from pathlib import Path
             stat = Path(f'/proc/{pid}/stat')
-            assert not stat.exists() or stat.read_text().split()[2] == 'Z'
+            deadline = time.monotonic() + 3
+            while True:
+                try:
+                    state = stat.read_text().split()[2]
+                except (FileNotFoundError, ProcessLookupError):
+                    break  # The child has exited and was reaped.
+                if state == 'Z':
+                    break
+                assert time.monotonic() < deadline, f'Child is still running (state={state})'
+                time.sleep(0.02)
     finally:
         control.cancel()
         worker.join(5)

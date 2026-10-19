@@ -5,16 +5,41 @@ from __future__ import annotations
 import json
 import threading
 from typing import Any, Callable
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 AUTO_ROUTER = "openrouter/auto"
 
 
 def api_url(base_url: str, path: str) -> str:
-    """Another endpoint of the configured API, e.g. "models" next to ".../chat/completions"."""
-    if base_url.endswith("/chat/completions"):
-        return base_url[: -len("chat/completions")] + path
-    return "https://openrouter.ai/api/v1/" + path
+    """Derive a sibling endpoint without changing the configured origin or API prefix.
+
+    Only an explicit HTTP(S) chat/completions URL is unambiguous. Queries,
+    fragments and credentials are rejected, never silently dropped or forwarded.
+    """
+    message = ("Invalid API URL: use an absolute http(s) URL ending in /chat/completions "
+               "(an optional trailing slash is allowed), without credentials, query or fragment.")
+    if (not isinstance(base_url, str) or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in base_url)
+            or any(c in base_url for c in "?#\\")):
+        raise ValueError(message)
+    try:
+        parsed = urlsplit(base_url)
+        port = parsed.port  # Validate the port, even though its spelling is preserved.
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.netloc.endswith(":") or port == 0):
+            raise ValueError(message)
+    except ValueError:
+        raise ValueError(message) from None
+    api_path = parsed.path.rstrip("/")
+    if (not api_path.endswith("/chat/completions") or "%" in api_path
+            or any(part in ("", ".", "..") for part in api_path.split("/")[1:])):
+        raise ValueError(message)
+    if (not isinstance(path, str) or not path
+            or any(not part or not all(c.isascii() and (c.isalnum() or c in "_-") for c in part)
+                   for part in path.split("/"))):
+        raise ValueError("Invalid API endpoint: use a relative path such as models or audio/transcriptions.")
+    return urlunsplit((parsed.scheme, parsed.netloc, api_path[:-len("chat/completions")] + path, "", ""))
 
 
 class ModelCatalog:
