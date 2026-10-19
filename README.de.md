@@ -21,6 +21,10 @@ Die Seitenleiste enthält die letzten Chats. Ein Chat funktioniert weiter, wenn 
 
 Jeder Chat öffnet ein eigenes Hauptfenster. **Alt+Tab** wechselt zwischen den Chats; ein bereits offener Chat wird nicht doppelt geöffnet. Die Einstellungen gelten gemeinsam für alle Fenster. Laufende Anfragen behalten den Einstellungsstand vom Start. Eine Antwort im Hintergrund nimmt dem aktuellen Fenster nicht den Fokus weg.
 
+Pro Benutzer-Anwendungsdatenordner läuft nur ein SceneAccess-Prozess. Ein weiterer Start stellt das zuletzt aktive Chatfenster wieder her und aktiviert es, statt einen zweiten Prozess zu öffnen, der Chatverläufe überschreiben könnte. Scheitert die Aktivierung, meldet der neue Prozess, dass SceneAccess bereits läuft, und beendet sich ohne zweite Instanz.
+
+Schließen eines Chats bricht seine Anfrage ab. Bis der alte Worker das Speichern beziehungsweise Beenden abgeschlossen hat, bleibt der Chat gegen eine weitere Anfrage gesperrt. Wiederöffnen ist erlaubt; eine neue Frage bleibt im Eingabefeld und kann kurz darauf erneut gesendet werden. Der Verlauf wird in einer SQLite-Schreibtransaktion ergänzt, sodass abgeschlossene Runden einander nicht überschreiben.
+
 Während einer Anfrage wird **Send question** zu **Cancel request**. Abbrechen unterbricht die aktive API-Verbindung beziehungsweise den lokalen ffmpeg-Prozess für Standbilder oder Audio und verhindert weitere Modell-/Tool-Aufrufe. Bereits übermittelte Arbeit kann der Anbieter weiterhin berechnen. Netzwerkanfragen, HD-Downloads und Metadatenprüfungen laufen in isolierten Arbeitsprozessen, deren Unterprozesse beim Abbruch ebenfalls beendet werden. Andere Vorverarbeitung, etwa das erstmalige Laden des Modellkatalogs, kann erst nach ihrer Rückkehr auf den Abbruch reagieren. Eine fehlgeschlagene oder abgebrochene Frage wird im Eingabefeld wiederhergestellt, solange dort noch keine neue Frage steht. Schließen eines Chatfensters bricht seine laufende Anfrage ab.
 
 **Pause request** hält nach der aktuellen Runde an: Modellantwort und sämtliche davon angeforderten lokalen Tools werden noch fertig ausgeführt; vor der nächsten Modellanfrage pausiert der Ablauf. **Resume request** setzt denselben Ablauf im Arbeitsspeicher fort, ohne erledigte Tools zu wiederholen. Hat das Modell schon seine endgültige Antwort geliefert, wird die Anfrage abgeschlossen statt pausiert. Schließen des Fensters verwirft eine pausierte, unfertige Runde; der abgeschlossene Chatverlauf bleibt gespeichert.
@@ -50,6 +54,8 @@ Den Cache hält jeder Anbieter selbst, nicht OpenRouter. OpenRouter kann eine An
 
 ## Ton und Transkript
 
+Anbieterausschlüsse gelten auch für die automatische Spracherkennung. Ist ElevenLabs ausgeschlossen, wird kein Ton zur Transkription gesendet. Der Chat antwortet ohne Transkript und zeigt den Grund ausdrücklich im Verlauf an. Nach erneuter Freigabe des Anbieters kann **Change prompt profile and tools** die Transkription wieder versuchen.
+
 Nicht jedes Modell hört den Ton eines Videos: Gemini-Modelle tun es, viele andere wie GLM sehen nur das Bild. SceneAccess erkennt das an der Modellliste von OpenRouter. Kann das Modell des Chats nicht hören, oder bei `openrouter/auto`, wo das antwortende Modell vorher nicht feststeht, schickt die erste Frage eines Chats zuerst den Ton über die Transkriptions-Schnittstelle von OpenRouter an ElevenLabs Scribe v2 (etwa 0,11 Dollar pro Stunde Ton). Das Transkript mit mm:ss-Zeiten geht in jeder Anfrage mit dem Video mit und wird mit ihm gecacht. Die Chat history zeigt einen kurzen Eintrag Transcript; **Enter** zeigt den vollen Text. Automatische Spracherkennung kann Fehler enthalten, das wird dem Modell auch gesagt. Scheitert die Transkription, antwortet das Modell ohne, und **Change prompt profile and tools** versucht es erneut.
 
 **Settings → Sound: With openrouter/auto, use only models that hear the video's sound** (standardmäßig aus) beschränkt `openrouter/auto` auf Modelle, die Video mit Ton annehmen und Tools unterstützen. Neue Chats brauchen dann kein Transkript.
@@ -62,7 +68,7 @@ Anbieter begrenzen, wie groß eine Anfrage sein darf, und SceneAccess schickt in
 
 ## Videogröße
 
-Bevor ein Chat mit einem Video startet, das gesendet größer als 19 MB wäre, erklärt SceneAccess die Größen und fragt: **Shrink the video**, **Request a lower resolution** (nur YouTube), **Send as it is** oder **Back to Start a video chat**. Verkleinern erzeugt mit ffmpeg eine Kopie, die in 16 MB passt; so bleibt Platz für die Standbilder, die das Modell anfordert, denn sie bleiben im Chat und werden mit jeder späteren Frage erneut gesendet. Bei wenig Platz behält die Kopie lieber 5 Bilder pro Sekunde und ein schärferes Bild als flüssige Bewegung, weil Gemini standardmäßig ein Bild pro Sekunde abtastet, und der Ton bleibt Stereo. Nur die Kopie wird gesendet und mit dem Chat gespeichert; die Originaldatei bleibt unverändert, und solange sie vorhanden ist, kommen Standbilder und Transkript weiter aus ihr. Eine geringere Auflösung lädt das Video eine Qualitätsstufe niedriger neu, ersetzt die größere Datei und stuft weiter ab, bis es passt.
+Bevor ein Chat mit einem Video startet, das gesendet größer als 19 MB wäre, erklärt SceneAccess die Größen und fragt: **Shrink the video**, **Request a lower resolution** (nur YouTube), **Send as it is** oder **Back to Start a video chat**. Verkleinern erzeugt mit ffmpeg eine Kopie, die in 16 MB passt; so bleibt Platz für die Standbilder, die das Modell anfordert, denn sie bleiben im Chat und werden mit jeder späteren Frage erneut gesendet. Bei wenig Platz behält die Kopie lieber 5 Bilder pro Sekunde und ein schärferes Bild als flüssige Bewegung, weil Gemini standardmäßig ein Bild pro Sekunde abtastet, und der Ton bleibt Stereo. Nur die Kopie wird gesendet und mit dem Chat gespeichert; die Originaldatei bleibt unverändert, und solange sie vorhanden ist, kommen Standbilder und Transkript weiter aus ihr. Eine geringere Auflösung lädt das Video eine Qualitätsstufe niedriger neu und stuft weiter ab, bis es passt. Jeder GUI-Download erhält einen eindeutigen Jobpräfix im selben Zielordner, damit keine ältere Datei mit höherer Qualität unbemerkt wiederverwendet wird. Bisherige vollständige Downloads bleiben erhalten, auch wenn der Ersatz scheitert oder abgebrochen wird. Abgebrochene Downloads bereinigen ausschließlich ausdrücklich registrierte Jobdateien mit passender Dateiidentität; fremde Dateien werden weder über Ordnervergleiche noch über Namenspräfixe ausgewählt.
 
 Bei einem anderen Modell als `openrouter/auto` überspringt **Don't show this dialog again** die Frage für dieses Modell, sobald ein großes Video beantwortet wurde. **Settings → Video size** schaltet die Frage ganz ab (zu große Videos scheitern dann) oder fragt für übersprungene Modelle wieder. **Advanced…** im Dialog Start a video chat stellt die YouTube-Qualität ein und kann zu große Videos ohne Nachfrage automatisch auf eine gewählte Größe verkleinern.
 
@@ -74,6 +80,8 @@ Chats, die vor dieser Prüfung begonnen wurden, können ein größeres Video ges
 
 ## YouTube
 
+Bekannte Einschränkung: Abgebrochene oder fehlgeschlagene native HLS-Downloads können Medienfragmente wie `.part-Frag1.part` im gewählten Downloadordner zurücklassen. SceneAccess weist nach Abbruch oder Fehler darauf hin. Entfernt werden nur ausdrücklich registrierte Dateien mit geprüfter Zugehörigkeit; es gibt keine pauschale Löschung passender Namen oder fremder Downloads. Die Fragmente können private Videodaten enthalten und Speicherplatz belegen. Der native HLS-Downloader bleibt bewusst erhalten.
+
 YouTube-Videos werden mit [yt-dlp](https://github.com/yt-dlp/yt-dlp) in einem Fortschrittsdialog heruntergeladen, der sich abbrechen lässt. Standardmäßig lädt SceneAccess die beste Qualität bis 480p – Details bleiben erkennbar, ohne HD-Dateigrößen – und fügt Bild und Ton zu einer MP4 zusammen, bevorzugt in H.264. In den **Settings** lässt sich zwischen 240p und 1080p wählen. Videos werden unter `scene-access` im Videos-Ordner gespeichert; gibt es diesen Ordner nicht, fragt SceneAccess nach einem Standard-Downloadordner, der sich auch in den **Settings** ändern lässt. Dateien heißen wie beim yt-dlp-Standard `Titel [ID].mp4`; unter **Settings → File name…** lässt sich per Kontrollkästchen jedes yt-dlp-Vorlagenfeld hinzunehmen, weitere Teile stehen in eckigen Klammern. Ein mitgeliefertes ffmpeg fügt Bild und Ton zusammen und schneidet Standbilder aus; ist Deno oder Node.js installiert, nutzt yt-dlp es für vollen YouTube-Support.
 
 Verlangt YouTube „confirm you're not a bot“, fragt SceneAccess, wo du bei YouTube angemeldet bist, und versucht es mit den YouTube-Cookies dieses Browsers erneut; angemeldet bekommt yt-dlp außerdem mehr Videoinformationen. Firefox funktioniert direkt. Chrome und Edge verschlüsseln ihre Cookies so, dass yt-dlp sie unter Windows nicht lesen kann; für sie eine `cookies.txt` mit einer Browser-Erweiterung exportieren und auswählen. **Settings → YouTube sign-in** ändert die Wahl.
@@ -82,6 +90,10 @@ Verlangt YouTube „confirm you're not a bot“, fragt SceneAccess, wo du bei Yo
 
 SceneAccess verwendet `wx.StandardPaths.GetUserDataDir()` und damit den nativen Benutzer-Anwendungsdatenordner des jeweiligen Betriebssystems. Es gibt keine fest codierten Linux-, Windows- oder Hermes-Pfade.
 
+Die API-Base-URL muss ein vollständiger HTTP(S)-Chat-Completions-Endpunkt sein, etwa `https://openrouter.ai/api/v1/chat/completions`; ein abschließender Schrägstrich ist erlaubt. Modell-, Anbieter- und Audiotranskriptions-Endpunkte werden ausschließlich vom selben API-Ursprung und Pfadpräfix abgeleitet. Uneindeutige Adressen, Zugangsdaten in der URL, Query-Parameter und Fragmente werden abgelehnt. Es gibt keinen automatischen Rückfall auf einen anderen API-Anbieter; ein eigener Endpunkt muss die angeforderte API unterstützen.
+
+`config.json` muss ein JSON-Objekt enthalten. Ungültiges JSON oder ein anderer Wurzeltyp beendet den Start mit einer Fehlermeldung einschließlich Dateipfad. Die Datei bleibt unverändert; SceneAccess setzt Einstellungen nicht stillschweigend zurück und überschreibt sie nicht.
+
 Dort liegen:
 
 - `config.json`: Einstellungen, Prompt-Profile und optional der API-Key
@@ -89,6 +101,7 @@ Dort liegen:
 - `chats/sessions/<id>/context.data-url`: vollständige rekonstruierbare Videokopie als Base64-Data-URL
 - `chats/sessions/<id>/frame_*.jpg`: die Bilder, die das Modell angefordert hat
 - `error.log`: unerwartete Fehler, die zusätzlich als Meldung erscheinen
+- `instance.port` und plattformspezifische Sperrdateien: lokale Ein-Instanz-Koordination; keine API-Schlüssel oder Chatinhalte
 
 Der API-Key kann alternativ über `OPENROUTER_API_KEY` gesetzt werden, diese Umgebungsvariable hat Vorrang. Base64 ist keine Verschlüsselung. Wer auf `context.data-url` zugreifen kann, besitzt eine Videokopie.
 
@@ -97,6 +110,7 @@ Der API-Key kann alternativ über `OPENROUTER_API_KEY` gesetzt werden, diese Umg
 Der gesamte Code liegt im Paket `sceneaccess`:
 
 - `gui.py`: Hauptfenster und App-Start
+- `single_instance.py`: Prozesssperre und lokaler Aktivierungskanal mit festem Nachrichtentyp
 - `new_chat.py`: einen Chat aus einer lokalen Datei oder von YouTube starten: Chatstart-Dialog, Frage zur Videogröße, Verkleinern und Download
 - `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models
 - `chat_dialogs.py`: der Chatstart-Dialog mit Advanced…, die Fragen zur Videogröße, Chat settings und der Nachrichtenleser

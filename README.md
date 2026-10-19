@@ -21,6 +21,10 @@ The sidebar lists recent chats. A chat remains usable if the original file is mo
 
 Each chat opens in its own top-level window, so Alt+Tab switches between chats. Opening an already open chat raises its existing window. Settings are shared between windows; a running request keeps the settings it started with. An answer arriving in a background window does not take focus from your current window.
 
+Only one SceneAccess process runs per user application-data directory. Starting it again restores and activates the last active chat window instead of opening a second process that could overwrite chat history. If activation fails, the new process reports that SceneAccess is already running and exits without opening another instance.
+
+Closing a chat cancels its request, but the chat remains protected against another request until its old worker has finished saving or stopping. Reopening it during that interval is allowed; a new question stays in the input field and can be retried shortly. History is appended in a SQLite write transaction, so completed turns cannot overwrite one another.
+
 While a request runs, **Send question** becomes **Cancel request**. Cancelling interrupts the active API connection or local frame/audio ffmpeg process and prevents further model/tool calls. Already submitted work may still be billed by the provider. Network requests, high-resolution downloads and metadata probes run in isolated worker processes, with child-process cleanup on cancellation. Other preprocessing, such as an uncached model-catalog lookup, may need to return before cancellation finishes. An unsuccessful or cancelled question is restored in the input field if you have not already typed another question. Closing a chat window cancels its running request.
 
 **Pause request** asks to pause after the current round: the model response and all local tool calls requested by that response finish, then no further model request is sent. **Resume request** continues the same in-memory turn without repeating completed tools. If the model has already given its final answer, the request completes instead of pausing. Closing the window discards a paused, unfinished turn; completed chat history remains stored.
@@ -50,6 +54,8 @@ The cache is kept by each provider, not by OpenRouter. OpenRouter may send a req
 
 ## Sound and transcript
 
+Provider exclusions also apply to automatic speech recognition. If ElevenLabs is excluded, SceneAccess does not send audio for transcription: the chat continues without a transcript, and its history explicitly records the reason. After allowing the provider again, **Change prompt profile and tools** can retry transcription.
+
 Not every model hears a video's sound: Gemini models do, many others such as GLM only see the picture. SceneAccess reads OpenRouter's model list to find out. If the chat's model cannot hear, or with `openrouter/auto`, where the answering model is not known in advance, the first question of a chat first sends the sound to ElevenLabs Scribe v2 through OpenRouter's transcription endpoint (about $0.11 per hour of sound). The transcript, with mm:ss times, goes with the video in every request and is cached with it. The Chat history shows a short Transcript item; **Enter** shows the full text. Automatic speech recognition can contain errors, and the model is told so. If transcription fails, the model answers without it, and **Change prompt profile and tools** tries again.
 
 **Settings → Sound: With openrouter/auto, use only models that hear the video's sound** (off by default) limits `openrouter/auto` to models that take video with sound and support tools. New chats then need no transcript.
@@ -62,7 +68,7 @@ Providers limit how large a request may be, and SceneAccess sends the whole vide
 
 ## Video size
 
-Before a chat starts with a video that would be more than 19 MB once sent, SceneAccess explains the sizes and asks: **Shrink the video**, **Request a lower resolution** (YouTube only), **Send as it is**, or **Back to Start a video chat**. Shrinking makes a copy with ffmpeg that fits into 16 MB, leaving room for the frames the model asks for, which stay in the chat and are sent again with every later question. With little room the copy keeps 5 frames per second and a sharper picture rather than smooth motion, as Gemini samples one frame per second by default, and the sound stays stereo. Only the copy is sent and stored with the chat; the original file is not changed, and while it is available, frames and the transcript still come from it. A lower resolution downloads the video again one quality step lower, replacing the larger file, and keeps stepping down until it fits.
+Before a chat starts with a video that would be more than 19 MB once sent, SceneAccess explains the sizes and asks: **Shrink the video**, **Request a lower resolution** (YouTube only), **Send as it is**, or **Back to Start a video chat**. Shrinking makes a copy with ffmpeg that fits into 16 MB, leaving room for the frames the model asks for, which stay in the chat and are sent again with every later question. With little room the copy keeps 5 frames per second and a sharper picture rather than smooth motion, as Gemini samples one frame per second by default, and the sound stays stereo. Only the copy is sent and stored with the chat; the original file is not changed, and while it is available, frames and the transcript still come from it. A lower resolution downloads the video again one quality step lower and keeps stepping down until it fits. Each GUI download gets a unique job prefix in the same target folder, so it cannot silently reuse an older, higher-quality file. Previous complete downloads are retained, including if a replacement fails or is cancelled. Aborted downloads clean up only explicitly registered, identity-matching job files; unrelated files are never selected by directory differences or filename prefixes.
 
 With a model other than `openrouter/auto`, **Don't show this dialog again** skips the question for that model once a large video was answered. **Settings → Video size** turns the question off completely (too large videos then fail) or asks again for skipped models. **Advanced…** in the Start a video chat dialog sets the YouTube quality and can shrink too large videos automatically, without asking, to a size of your choice.
 
@@ -74,6 +80,8 @@ Chats started before this check may store a larger video. Before a question in s
 
 ## YouTube
 
+Known limitation: cancelled or failed native HLS downloads can leave media fragments such as `.part-Frag1.part` in the chosen download folder. SceneAccess reports this after cancellation or failure. Only explicitly registered files with verified ownership are removed; it does not sweep matching names or other downloads. Those fragments can contain private video data and consume disk space. The native HLS downloader is deliberately retained.
+
 YouTube videos are downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) in a progress dialog that can be cancelled. By default SceneAccess downloads the best quality up to 480p, which keeps details recognizable without HD file sizes, with video and audio merged into an MP4 (preferring H.264). **Settings** lets you choose between 240p and 1080p. Videos are saved to `scene-access` in your Videos folder; if that folder does not exist, SceneAccess asks for a default download folder, which can also be changed in **Settings**. Files are named like yt-dlp's default, `Title [ID].mp4`; **Settings → File name…** lets you check any yt-dlp output template field to include, with further parts added in brackets. A bundled ffmpeg merges video and audio and extracts frames; if Deno or Node.js is installed, yt-dlp uses it for full YouTube support.
 
 When YouTube asks to "confirm you're not a bot", SceneAccess asks where you are signed in to YouTube and tries again with that browser's YouTube cookies; signed in, yt-dlp also gets more video information. Firefox works directly. Chrome and Edge encrypt their cookies so that yt-dlp cannot read them on Windows, so for them, export a `cookies.txt` file with a browser extension and choose it. **Settings → YouTube sign-in** changes the choice.
@@ -82,6 +90,10 @@ When YouTube asks to "confirm you're not a bot", SceneAccess asks where you are 
 
 SceneAccess uses `wx.StandardPaths.GetUserDataDir()` and therefore the native per-user application-data directory of the operating system. No Linux, Windows, or Hermes paths are hard-coded.
 
+The API base URL must be a complete HTTP(S) chat-completions endpoint, such as `https://openrouter.ai/api/v1/chat/completions`; a trailing slash is accepted. Model, provider and audio-transcription endpoints are derived only from that same API origin and prefix. Ambiguous addresses, URL credentials, queries and fragments are rejected. There is no automatic fallback to another API provider; a custom endpoint must support the requested API.
+
+`config.json` must contain a JSON object. Invalid JSON or a non-object root stops startup with an error showing the file path. The file is left unchanged; SceneAccess does not silently reset your settings or overwrite it.
+
 That directory contains:
 
 - `config.json`: settings, prompt profiles, and optionally the API key
@@ -89,6 +101,7 @@ That directory contains:
 - `chats/sessions/<id>/context.data-url`: a complete reconstructable video copy as a Base64 data URL
 - `chats/sessions/<id>/frame_*.jpg`: the images the model asked for
 - `error.log`: unexpected errors, which are also shown in a message
+- `instance.port` and platform-specific lock files: local single-instance coordination; no API keys or chat contents
 
 Alternatively, set `OPENROUTER_API_KEY`; the environment variable takes precedence. Base64 is not encryption. Anyone who can access `context.data-url` has a copy of the video.
 
@@ -103,6 +116,7 @@ All code is in the `sceneaccess` package:
 - `chat_history.py`: the lines of the Chat history list and the usage line
 - `openrouter.py`: requests to OpenRouter and the tool-call loop
 - `request_control.py`: cancellation and pause/resume boundaries
+- `single_instance.py`: process locking and the fixed-message local window-activation channel
 - `worker_process.py`: interruptible network/media worker processes and child-process cleanup
 - `tools.py`: the tools offered to the model and the code that runs them (ffmpeg frames, high-resolution sections)
 - `prompts.py`: the base prompt and the default profiles
