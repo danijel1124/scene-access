@@ -1,6 +1,5 @@
 import subprocess
 import sys
-import time
 
 import sceneaccess.video_size as video_size
 

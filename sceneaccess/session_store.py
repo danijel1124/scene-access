@@ -285,7 +285,8 @@ class VideoSessionStore:
                 raise SessionNotFound(session_id)
             conn.execute("DELETE FROM sessions WHERE id = ? AND owner_id = ?", (session_id, owner_id))
             directory = self.sessions_dir / session_id
-            if directory.is_symlink():
+            # Windows junctions need no special rights and are not reported by is_symlink().
+            if directory.is_symlink() or directory.is_junction():
                 raise OSError(f"Refusing to delete a linked session directory: {directory}")
             try:
                 children = list(directory.iterdir())

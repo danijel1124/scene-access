@@ -1,5 +1,4 @@
 import threading
-import time
 
 from sceneaccess.session_store import VideoSessionStore
 

@@ -8,7 +8,7 @@ import stat
 import uuid
 from typing import Any, Callable
 
-from .request_control import RequestCancelled, RequestControl
+from .request_control import RequestControl
 from .worker_process import run_isolated_task
 
 

@@ -54,7 +54,6 @@ def test_cancel_interrupts_real_http_wait_without_waiting_for_provider(phase):
 
 
 def test_controlled_transport_honors_http_proxy(monkeypatch):
-    from sceneaccess import openrouter
     seen = []
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):

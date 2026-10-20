@@ -20,7 +20,7 @@ from .prompts import system_prompt
 from .session_store import TRANSCRIPT_PENDING
 from .speech import announce
 from .tools import tool_definitions
-from .request_control import RequestControl, RequestCancelled
+from .request_control import RequestControl
 from .worker_process import run_isolated_task
 from .video_size import (SIZE_LIMIT, ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_video,
                          video_height)

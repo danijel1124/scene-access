@@ -174,7 +174,12 @@ def test_ownership_rejects_unsafe_paths(tmp_path, kind):
         target = tmp_path / 'target'
         target.write_bytes(b'foreign')
         path = tmp_path / 'link.part'
-        path.symlink_to(target)
+        try:
+            path.symlink_to(target)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                pytest.skip('creating symlinks on Windows needs Developer Mode or admin rights')
+            raise
     else:
         (tmp_path / 'nested').mkdir()
         path = tmp_path / 'nested' / 'video.part'

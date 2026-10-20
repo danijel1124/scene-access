@@ -27,8 +27,9 @@ def test_activating_application_restores_last_chat_window(tmp_path, monkeypatch)
     try:
         first, second = manager.new_window(), manager.new_window()
         raised = []
-        monkeypatch.setattr(first, 'Raise', lambda: raised.append(first))
-        monkeypatch.setattr(first, 'SetFocus', lambda: None)
+        for frame in (first, second):
+            monkeypatch.setattr(frame, 'Raise', lambda frame=frame: raised.append(frame))
+            monkeypatch.setattr(frame, 'SetFocus', lambda: None)
         manager.last_active = first
         manager.activate()
         assert raised == [first]

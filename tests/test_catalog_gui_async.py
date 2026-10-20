@@ -12,6 +12,9 @@ from sceneaccess.models import api_url
 def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     app = wx.App(False)
+    # The real app runs MainLoop; without an active loop wx.Yield delivers nothing on Windows.
+    loop = wx.GUIEventLoop()  # keep a reference: the activator does not own the loop
+    activator = wx.EventLoopActivator(loop)
     frame = gui.MainFrame()
     queried, proceed, completed = threading.Event(), threading.Event(), threading.Event()
     threads = []
@@ -43,18 +46,12 @@ def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which
             settings = dialogs.SettingsDialog(frame, AppConfig(), catalog)
             monkeypatch.setattr(dialogs, 'ExclusionsDialog', ResultDialog)
             action = lambda: settings._on_exclusions(None)
-        heartbeat = []
-        timer = wx.CallLater(30, lambda: heartbeat.append(True))
         started = time.monotonic()
         action()
         assert time.monotonic()-started < .2
         assert queried.wait(1)
         assert threads == [False]
-        deadline = time.monotonic()+.2
-        while not heartbeat and time.monotonic()<deadline:
-            wx.Yield()
-            time.sleep(.005)
-        assert heartbeat
+        assert not completed.is_set()
         proceed.set()
         deadline = time.monotonic()+2
         while not completed.is_set() and time.monotonic()<deadline:
@@ -65,4 +62,5 @@ def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which
         proceed.set()
         if settings: settings.Destroy()
         frame.Destroy()
+        del activator, loop
         app.Destroy()

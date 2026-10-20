@@ -30,6 +30,15 @@ def _worker(pipe, ready, function, args, kwargs) -> None:
         pipe.close()
 
 
+def _poll(connection, timeout: float = 0.0) -> bool:
+    """POSIX reports a closed writer as readable and recv() raises EOFError; Windows raises
+    BrokenPipeError from poll() instead. Treat both alike so recv() takes the EOF path."""
+    try:
+        return connection.poll(timeout)
+    except BrokenPipeError:
+        return True
+
+
 class _WindowsJob:
     def __init__(self, process_handle: int):
         import ctypes
@@ -101,7 +110,7 @@ def run_isolated_task(function: Callable[..., Any], args: tuple, *, control: Req
             control.check_cancelled()
             if time.monotonic() >= deadline:
                 raise TimeoutError('The media operation timed out.')
-            if not receiving.poll(0.05):
+            if not _poll(receiving, 0.05):
                 if not process.is_alive():
                     raise RuntimeError('The media worker exited without a result.')
                 continue
@@ -139,7 +148,7 @@ def run_isolated_task(function: Callable[..., Any], args: tuple, *, control: Req
         # A cancellation may arrive between file creation and processing its ownership
         # event. Drain already-sent events after the entire process tree is stopped.
         if event_callback:
-            while receiving.poll():
+            while _poll(receiving):
                 try:
                     kind, value = receiving.recv()
                 except EOFError:

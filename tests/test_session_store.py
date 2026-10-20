@@ -1,6 +1,7 @@
 from pathlib import Path
 import base64
 import json
+import os
 import sqlite3
 
 import pytest
@@ -209,16 +210,32 @@ def test_failed_session_unlink_keeps_chat_registered_for_retry(tmp_path: Path, m
     assert source.read_bytes() == b"private video"
 
 
-@pytest.mark.parametrize("unexpected", ["symlink", "subdirectory"])
+def link_directory(link: Path, target: Path, kind: str) -> None:
+    """Creates a directory symlink or, on Windows, a junction, which needs no special rights."""
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions exist only on Windows")
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+        return
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("creating symlinks on Windows needs Developer Mode or admin rights")
+        raise
+
+
+@pytest.mark.parametrize("unexpected", ["symlink", "junction", "subdirectory"])
 def test_delete_refuses_unexpected_directories_without_removing_private_files(tmp_path: Path, unexpected):
     source = tmp_path / "video.mp4"
     source.write_bytes(b"private video")
     store = VideoSessionStore(tmp_path / "app-data")
     session = store.create_session(owner_id="local", source_path=source, title="Keep", model="", initial_question="?")
-    if unexpected == "symlink":
+    if unexpected in ("symlink", "junction"):
         target = tmp_path / "unrelated"
         session.directory.rename(target)
-        session.directory.symlink_to(target, target_is_directory=True)
+        link_directory(session.directory, target, unexpected)
     else:
         target = session.directory
         (target / "unrelated").mkdir()
