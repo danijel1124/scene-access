@@ -30,15 +30,23 @@ class InlineThread:
 
 def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, monkeypatch):
     monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
-    seen = []
+    sent = []
     def answer(client, session, messages, *args, **kwargs):
-        seen.extend(messages)
+        sent.append(messages[0]['content'][0]['text'])
+        if len(sent) == 1:
+            raise RuntimeError('Fixture provider failure')
         return Turn(entries=[{'role':'assistant','content':'Answer'}], completion=Completion('Answer','fixture',1,None,None))
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answer)
+    frame.question.SetValue('Original question')
+    frame.on_send(None)
+    # The first request failed: nothing was answered and the question is back in the field.
+    assert frame.current.history == [] and frame.question.GetValue() == 'Original question'
     frame.question.SetValue('Revised question')
     frame.on_send(None)
-    assert seen[0]['content'][0]['text'] == 'Revised question'
-    assert frame.current.initial_question == 'Revised question'
+    assert sent == ['Original question', 'Revised question']
+    stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    assert stored.initial_question == 'Revised question'
+    assert [item['content'] for item in stored.history] == ['Answer']
 
 
 def test_audio_only_routing_failure_does_not_transcribe(frame, monkeypatch):
@@ -62,22 +70,35 @@ def test_audio_only_routing_failure_does_not_transcribe(frame, monkeypatch):
 
 @pytest.mark.parametrize('outcome', ['failure', 'cancel', 'success'])
 def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypatch, outcome):
-    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
+    import subprocess
+    import types
+    import imageio_ffmpeg
+    from sceneaccess.tools import ZOOM_FRAME, tool_definitions
+    # Only gui's own thread runs inline: the real tool starts subprocesses, whose reader threads
+    # need the real threading.Thread.
+    monkeypatch.setattr(gui, 'threading', types.SimpleNamespace(Thread=InlineThread))
     monkeypatch.setattr(gui, 'needs_transcript', lambda *a: False)
+    video = gui.Path(frame.current.source_path).with_name('real.mp4')
+    subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-loglevel', 'error', '-f', 'lavfi', '-i',
+                    'testsrc=duration=1:size=160x120:rate=5', '-pix_fmt', 'yuv420p', '-y', str(video)], check=True)
+    frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title='Real',
+        model='fixture/model', initial_question='Original question', tools=tool_definitions(online_video=False))
     generated = []
     def answer(client, session, messages, run_tool, *args, **kwargs):
-        runner = run_tool.__self__
-        image = session.directory/'frame_fixture.jpg'
-        image.write_bytes(b'new image')
-        runner._created_images.add(image)
-        generated.append(image)
+        # The real zoom tool makes the frame, so the test relies on the tool registering it.
+        result = run_tool(ZOOM_FRAME, '{"time": 0}')
+        assert result.image, result.text
+        generated.append(session.directory/result.image)
         if outcome == 'failure': raise RuntimeError('provider fixture failed')
         if outcome == 'cancel': raise gui.RequestCancelled()
         return Turn(entries=[{'role': 'assistant', 'content': 'Answer'}],
                     completion=Completion('Answer', 'fixture', 1, None, None))
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answer)
+    errors = []
+    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: errors.append(message))
     frame._send('Original question', initial=True)
-    assert generated and generated[0].exists() is (outcome == 'success')
+    assert generated, errors
+    assert generated[0].exists() is (outcome == 'success')
 
 
 def test_delete_error_keeps_chat_visible_and_reports_failure(frame, monkeypatch):
@@ -157,6 +178,48 @@ def test_request_buttons_cancel_and_pause_without_sending_another_question(frame
     frame._cancelled()
     assert frame.send_button.GetLabel() == 'Send question'
     assert not frame.pause_button.IsShown()
+
+
+def test_a_background_answer_never_takes_the_focus(frame, monkeypatch):
+    frame.store.record_turn(frame.current.id, gui.OWNER_ID, [{'role': 'assistant', 'content': 'Answer'}])
+    focused, spoken = [], []
+    monkeypatch.setattr(frame.chat_list, 'SetFocus', lambda: focused.append(True))
+    monkeypatch.setattr(gui, 'announce', lambda text, **kw: spoken.append(text))
+    # Another chat window or application is active: neither the focus nor the screen reader is taken.
+    monkeypatch.setattr(frame, 'IsActive', lambda: False)
+    frame._completed(frame.current.id, 'fixture')
+    assert focused == [] and spoken == []
+    # This window is active: the focus moves to the answer, so the screen reader reads it.
+    monkeypatch.setattr(frame, 'IsActive', lambda: True)
+    monkeypatch.setattr(gui.wx.Window, 'FindFocus', staticmethod(lambda: frame.question))
+    frame._completed(frame.current.id, 'fixture')
+    assert focused == [True] and spoken == []
+    # The list already has the focus, so moving it would read nothing: the answer is announced.
+    monkeypatch.setattr(gui.wx.Window, 'FindFocus', staticmethod(lambda: frame.chat_list))
+    frame._completed(frame.current.id, 'fixture')
+    assert focused == [True] and spoken == ['Model: Answer']
+
+
+def test_the_newest_answer_is_selected_not_its_usage_line(frame):
+    frame.store.record_turn(frame.current.id, gui.OWNER_ID, [
+        {'role': 'assistant', 'content': 'First', 'usage': {'model': 'm', 'prompt_tokens': 1}},
+        {'role': 'user', 'content': 'More?'},
+        {'role': 'assistant', 'content': 'Second', 'usage': {'model': 'm', 'prompt_tokens': 2}}])
+    frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    frame.render_current()
+    assert frame.chat_list.GetStringSelection() == 'Model: Second'
+    assert frame.chat_list.GetString(frame.chat_list.GetCount() - 1).startswith('Usage:')
+
+
+def test_a_failed_question_comes_back_only_into_an_empty_field(frame):
+    frame._pending_question = 'Failed question'
+    frame.question.SetValue('A new question typed meanwhile')
+    frame._failed('Fixture provider failure')
+    assert frame.question.GetValue() == 'A new question typed meanwhile'
+    frame._pending_question = 'Failed question'
+    frame.question.SetValue('')
+    frame._failed('Fixture provider failure')
+    assert frame.question.GetValue() == 'Failed question'
 
 
 def test_shared_settings_replace_catalog_in_every_window(tmp_path, monkeypatch):

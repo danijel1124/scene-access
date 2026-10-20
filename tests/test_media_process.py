@@ -16,6 +16,16 @@ def _fail():
     raise ValueError('Fixture failure')
 
 
+def _crash_after_progress(_progress_pipe=None):
+    import os
+    _progress_pipe.send(('progress', {'status': 'downloading'}))
+    os._exit(3)  # Dies without sending a result, like a worker killed by the system.
+
+
+def _sleep():
+    time.sleep(30)
+
+
 def _blocking_download(marker):
     process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     from pathlib import Path
@@ -28,6 +38,23 @@ def test_media_process_returns_value_and_propagates_error():
     assert run_isolated_task(_addition, (2, 3), control=RequestControl()) == 5
     with pytest.raises(RuntimeError, match='Fixture failure'):
         run_isolated_task(_fail, (), control=RequestControl())
+
+
+def test_a_crashed_worker_is_reported_as_such():
+    from sceneaccess.worker_process import run_isolated_task
+    # While the progress is handled, the worker dies; the next poll then meets its closed, empty pipe.
+    # On Windows that poll raises BrokenPipeError, which must not leak out.
+    with pytest.raises(RuntimeError, match='exited without a result'):
+        run_isolated_task(_crash_after_progress, (), control=RequestControl(),
+                          progress_callback=lambda _update: time.sleep(0.5))
+
+
+def test_a_worker_that_takes_too_long_times_out():
+    from sceneaccess.worker_process import run_isolated_task
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        run_isolated_task(_sleep, (), control=RequestControl(), timeout=2)
+    assert time.monotonic() - started < 10
 
 
 def test_cancel_kills_media_worker_and_its_subprocess(tmp_path):

@@ -77,6 +77,44 @@ def test_controlled_transport_honors_http_proxy(monkeypatch):
         serving.join(2)
 
 
+def test_the_api_key_is_never_sent_to_a_redirect_target():
+    received = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_POST(self):
+            received.append(self.headers.get('Authorization'))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+        def log_message(self, *args): pass
+
+    target = ThreadingHTTPServer(('127.0.0.1', 0), Target)
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(307)
+            self.send_header('Location', f'http://127.0.0.1:{target.server_port}/chat')
+            self.end_headers()
+        def log_message(self, *args): pass
+
+    redirect = ThreadingHTTPServer(('127.0.0.1', 0), Redirect)
+    servers = [threading.Thread(target=server.serve_forever, daemon=True) for server in (target, redirect)]
+    for thread in servers:
+        thread.start()
+    try:
+        client = OpenRouterClient('secret-test-key', base_url=f'http://127.0.0.1:{redirect.server_port}/chat',
+                                  control=RequestControl())
+        with pytest.raises(OpenRouterError, match='307'):
+            client._post({})
+        assert received == []
+    finally:
+        for server in (target, redirect):
+            server.shutdown()
+            server.server_close()
+        for thread in servers:
+            thread.join(2)
+
+
 @pytest.mark.parametrize('status', [200, 400])
 def test_controlled_transport_reads_json_and_provider_error(status):
     class Handler(BaseHTTPRequestHandler):

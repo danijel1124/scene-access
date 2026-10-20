@@ -4,6 +4,7 @@ from pathlib import Path
 import imageio_ffmpeg
 
 from sceneaccess import transcript
+from sceneaccess.models import ModelCatalog
 from sceneaccess.session_store import VideoSessionStore
 from sceneaccess.transcript import extract_audio_chunks, make_transcript, needs_transcript, transcript_lines
 
@@ -18,14 +19,11 @@ def _video(path: Path, *, sound: bool, seconds: int = 3) -> Path:
 
 
 class FakeCatalog:
-    def __init__(self, hears=None, audio_models=()):
-        self.hears, self.audio_models = hears, list(audio_models)
+    def __init__(self, hears=None):
+        self.hears = hears
 
     def hears_audio(self, model):
         return self.hears
-
-    def audio_video_tool_models(self):
-        return self.audio_models
 
 
 def test_words_are_grouped_into_timed_lines_at_sentence_ends_and_pauses():
@@ -63,11 +61,19 @@ def test_only_models_that_are_known_to_hear_get_no_transcript(tmp_path: Path):
     video.write_bytes(b"fake")
     store = VideoSessionStore(tmp_path / "data")
     glm = store.create_session(owner_id="o", source_path=video, title="T", model="z-ai/glm", initial_question="?")
+    hearing_auto = store.create_session(owner_id="o", source_path=video, title="T", model="openrouter/auto",
+                                        initial_question="?", audio_only=True)
     auto = store.create_session(owner_id="o", source_path=video, title="T", model="openrouter/auto",
-                                initial_question="?", audio_only=True)
+                                initial_question="?")
     assert needs_transcript(glm, FakeCatalog(hears=False)) is True
     assert needs_transcript(glm, FakeCatalog(hears=True)) is False
     # Unknown, e.g. because the model list could not be loaded: a transcript is the safe choice.
     assert needs_transcript(glm, FakeCatalog(hears=None)) is True
-    assert needs_transcript(auto, FakeCatalog(audio_models=["google/gemini"])) is False
-    assert needs_transcript(auto, FakeCatalog(audio_models=[])) is False
+    # The real catalog decides what openrouter/auto may hear; its model list is not even needed.
+    def offline(request, timeout):
+        raise OSError("offline")
+    catalog = ModelCatalog("https://openrouter.ai/api/v1/chat/completions", opener=offline)
+    # Limited to hearing models, openrouter/auto needs no transcript.
+    assert needs_transcript(hearing_auto, catalog) is False
+    # Unlimited, it may pick a model that only sees the picture.
+    assert needs_transcript(auto, catalog) is True

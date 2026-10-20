@@ -126,7 +126,16 @@ Der gesamte Code liegt im Paket `sceneaccess`:
 - `config.py`: Einstellungen in `config.json`
 - `speech.py`: Ansagen über den laufenden Screenreader
 
-`SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`, eine Datei pro Modul (`prompts.py` wird in den Tests von Hauptfenster und Dialogen mitgeprüft), dazu Prüfungen der Doku-Sprache, des Standardmodells und der Release-Dateien.
+`SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`: eine Datei pro Modul (`prompts.py` wird in den Tests von Hauptfenster und Dialogen mitgeprüft), weitere Dateien für modulübergreifendes Verhalten (Lebensdauer und Steuerung von Anfragen, Downloads und ihr Aufräumen, Arbeitsprozesse, Ein-Instanz-Betrieb, Start) sowie Prüfungen der Doku-Sprache, des Datenbanknamens, des Standardmodells und der Release-Dateien.
+
+Bekannte Lücken der Tests:
+
+- Echte OpenRouter-Anfragen gehören nicht zu den Tests, weil sie kosten; sie werden von Hand geprüft. Die Tests verwenden stattdessen lokale HTTP-Server und vorgegebene Antworten.
+- Das Laden eines Moments in hoher Auflösung von YouTube (`download_section`) braucht das Internet und hat keinen Test.
+- Ansagen über einen echten Screenreader werden nur mit Attrappen getestet und von Hand mit NVDA geprüft.
+- Private Dateirechte für `config.json` und die Chatdateien gibt es unter Linux und macOS; unter Windows werden diese Tests übersprungen, und die Dateien sind durch die Rechte des Benutzerprofils geschützt.
+- Symlink-Tests werden unter Windows ohne Entwicklermodus oder Administratorrechte übersprungen; das Löschen eines Chats wird zusätzlich mit einer Verzeichnis-Junction getestet, die keine besonderen Rechte braucht.
+- Die Tests für Doku und Release-Dateien prüfen nur, ob bestimmte Wörter vorkommen.
 
 ## Start aus dem Quellcode
 

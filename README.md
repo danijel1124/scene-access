@@ -128,7 +128,16 @@ All code is in the `sceneaccess` package:
 - `config.py`: settings in `config.json`
 - `speech.py`: announcements through the running screen reader
 
-`SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`, one file per module (`prompts.py` is covered by the main window and dialog tests), plus checks of the documentation language, the default model and the release files.
+`SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`: one file per module (`prompts.py` is covered by the main window and dialog tests), further files for behaviour that spans modules (request lifetime and controls, downloads and their cleanup, worker processes, the single instance, startup), and checks of the documentation language, the database name, the default model and the release files.
+
+Known gaps in the tests:
+
+- Real OpenRouter requests are not part of the tests, because they are billed; they are checked by hand. The tests use local HTTP servers and recorded responses instead.
+- Loading a moment in high resolution from YouTube (`download_section`) needs the internet and has no test.
+- Announcements through a real screen reader are tested with fakes only and checked by hand with NVDA.
+- Private file permissions for `config.json` and the chat files are a Linux and macOS feature; on Windows these tests are skipped, and the files rely on the permissions of the user profile.
+- Symlink tests are skipped on Windows without Developer Mode or administrator rights; deleting a chat is also tested with a directory junction, which needs no special rights.
+- The documentation and release-file tests only check that certain words appear.
 
 ## Run from source
 

@@ -18,7 +18,8 @@ def test_invalid_config_raises_with_path_and_preserves_original_file(tmp_path, c
     assert "Invalid configuration" in str(raised.value)
     assert ("JSON object" if content in ("[]", "null", "42", "true", '"text"') else "JSON syntax") in str(raised.value)
     assert path.read_text(encoding="utf-8") == content
-    assert not path.with_suffix(".tmp").exists()
+    # Nothing was written next to it either, e.g. a repaired copy or a temporary file.
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_missing_configuration_still_uses_defaults_without_creating_a_file(tmp_path):

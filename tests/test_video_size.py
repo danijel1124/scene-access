@@ -1,5 +1,7 @@
 import subprocess
 import sys
+import threading
+import time
 
 import sceneaccess.video_size as video_size
 
@@ -77,6 +79,29 @@ def test_shrink_video_rounds_both_dimensions_down_without_enlarging(tmp_path, wi
     assert base64_size(target.stat().st_size) <= 1_000_000
 
 
+@pytest.mark.parametrize("sizes,attempts", [((2_000_000, 600_000), 2), ((2_000_000, 1_500_000, 1_200_000), 3)])
+def test_shrink_video_aims_lower_after_an_overshoot_and_gives_up_after_three_attempts(tmp_path, monkeypatch,
+                                                                                       sizes, attempts):
+    from sceneaccess import tools
+    goals, written = [], list(sizes)
+    real_plan = video_size.shrink_plan
+    monkeypatch.setattr(video_size, "shrink_plan", lambda goal, duration: goals.append(goal) or real_plan(goal, duration))
+    monkeypatch.setattr(tools, "video_size_and_duration", lambda path: ((640, 360), 60.0))
+    # The encoder overshoots: each attempt writes a file of the next given size.
+    monkeypatch.setattr(video_size, "_run", lambda _ffmpeg, arguments, *_: video_size.Path(arguments[-1]).write_bytes(
+        b"x" * written.pop(0)))
+    target = tmp_path / "small.mp4"
+    goal = 1_000_000
+    if attempts == 3:
+        with pytest.raises(RuntimeError, match="could not shrink"):
+            video_size.shrink_video(tmp_path / "big.mp4", target, goal)
+    else:
+        video_size.shrink_video(tmp_path / "big.mp4", target, goal)
+        assert base64_size(target.stat().st_size) <= goal
+    assert len(goals) == attempts and goals[0] == goal
+    assert all(later < earlier for earlier, later in zip(goals, goals[1:]))
+
+
 def test_run_rejects_initial_cancellation_without_starting_child(tmp_path, monkeypatch):
     started = tmp_path / "started"
     command = [sys.executable, "-c", f"from pathlib import Path; Path({str(started)!r}).touch()"]
@@ -87,16 +112,44 @@ def test_run_rejects_initial_cancellation_without_starting_child(tmp_path, monke
     assert not started.exists()
 
 
-def test_run_cancels_silent_child_promptly_and_reaps_it(tmp_path, monkeypatch):
-    pid_file = tmp_path / "child.pid"
+def test_run_cancels_a_running_silent_child_and_stops_it(tmp_path):
+    heartbeat = tmp_path / "heartbeat"
+    # A silent child that proves it is alive by growing a file, without any ffmpeg progress output.
     command = [sys.executable, "-c",
-               "import os, time; from pathlib import Path; "
-               f"Path({str(pid_file)!r}).write_text(str(os.getpid())); time.sleep(10)"]
-    monkeypatch.setattr(video_size, "_ffmpeg_command", lambda *_: command)
-    with pytest.raises(ShrinkCancelled):
-        video_size._run("unused", [], 1, lambda _: None, lambda: True)
-    # The child process should have been killed and the file removed
-    assert not pid_file.exists()
+               "import time\n"
+               f"with open({str(heartbeat)!r}, 'ab', buffering=0) as beat:\n"
+               "    while True:\n"
+               "        beat.write(b'.')\n"
+               "        time.sleep(0.02)\n"]
+    cancel = threading.Event()
+    errors = []
+
+    def work():
+        try:
+            video_size._run("unused", [], 1, lambda _: None, cancel.is_set)
+        except Exception as error:
+            errors.append(error)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(video_size, "_ffmpeg_command", lambda *_: command)
+        thread = threading.Thread(target=work)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 5
+            while not (heartbeat.exists() and heartbeat.stat().st_size > 2) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert heartbeat.exists() and heartbeat.stat().st_size > 2, "the child never started"
+            cancel.set()
+            thread.join(3)
+            assert not thread.is_alive()
+        finally:
+            cancel.set()
+            thread.join(3)
+    assert len(errors) == 1 and isinstance(errors[0], ShrinkCancelled)
+    # A child that was only abandoned, not stopped, would keep growing the file.
+    size = heartbeat.stat().st_size
+    time.sleep(0.3)
+    assert heartbeat.stat().st_size == size
 
 
 def test_shrink_video_can_be_cancelled(tmp_path):

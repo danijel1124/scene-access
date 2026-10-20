@@ -1,5 +1,7 @@
+import json
 import threading
 
+from sceneaccess import session_store
 from sceneaccess.session_store import VideoSessionStore
 
 
@@ -8,29 +10,42 @@ def test_parallel_turn_appends_are_atomic(tmp_path, monkeypatch):
     source.write_bytes(b'fixture')
     store = VideoSessionStore(tmp_path/'store')
     session = store.create_session(owner_id='owner', source_path=source, title='Chat', model='test', initial_question='?')
-    # The legacy reader pauses after taking its snapshot; a transactional append must
-    # read with its own write transaction instead of using this detached snapshot.
-    first_read, release = threading.Event(), threading.Event()
-    original = store.get_session
-    def stale_read(*args):
-        result = original(*args)
-        if threading.current_thread().name == 'old-turn':
-            first_read.set()
-            release.wait(2)
-        return result
-    monkeypatch.setattr(store, 'get_session', stale_read)
+    # The old turn pauses inside record_turn, after reading the history and before writing it back.
+    # A second turn appends meanwhile; an append that is not one write transaction would then
+    # overwrite it with the stale history it read.
+    paused, release = threading.Event(), threading.Event()
+
+    class PausingJson:
+        dumps = staticmethod(json.dumps)
+
+        @staticmethod
+        def loads(text, *args, **kwargs):
+            value = json.loads(text, *args, **kwargs)
+            if threading.current_thread().name == 'old-turn':
+                paused.set()
+                release.wait(5)
+            return value
+
+    monkeypatch.setattr(session_store, 'json', PausingJson)
     errors = []
+
     def append(value):
         try:
-            store.record_turn(session.id, 'owner', [{'role':'assistant', 'content':value}])
-        except Exception as error: errors.append(error)
+            store.record_turn(session.id, 'owner', [{'role': 'assistant', 'content': value}])
+        except Exception as error:
+            errors.append(error)
+
     old = threading.Thread(target=append, args=('old',), name='old-turn')
     old.start()
+    timer = threading.Timer(0.3, release.set)
     try:
-        first_read.wait(.2)
+        assert paused.wait(3), 'the old turn never reached the point between reading and writing'
+        timer.start()
         append('new')
     finally:
         release.set()
-        old.join(3)
+        timer.cancel()
+        old.join(5)
     assert not old.is_alive() and not errors
-    assert sorted(item['content'] for item in original(session.id,'owner').history) == ['new','old']
+    monkeypatch.undo()
+    assert sorted(item['content'] for item in store.get_session(session.id, 'owner').history) == ['new', 'old']

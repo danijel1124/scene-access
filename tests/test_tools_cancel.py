@@ -14,8 +14,11 @@ def test_cancelled_hd_download_never_starts_metadata_probe(tmp_path, monkeypatch
     def download(*args, **kwargs):
         control.cancel()
         return source
-    # Simulate cancellation arriving just as the isolated downloader returns.
-    monkeypatch.setattr(tools, 'run_isolated_task', lambda *args, **kwargs: download(), raising=False)
+    # Simulate cancellation arriving just as the isolated downloader returns. Every other isolated
+    # task really runs, so a metadata probe after the cancellation would be recorded.
+    def isolated(function, args, **kwargs):
+        return download() if function is youtube.download_section else function(*args)
+    monkeypatch.setattr(tools, 'run_isolated_task', isolated)
     monkeypatch.setattr(youtube, 'download_section', download)
     monkeypatch.setattr(tools, 'video_size_and_duration', lambda path: probes.append(path) or ((320,240), 1))
     with pytest.raises(RequestCancelled):

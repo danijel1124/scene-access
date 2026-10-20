@@ -169,6 +169,58 @@ def test_run_turn_answers_without_tools_when_the_model_rejects_them(tmp_path: Pa
     assert "tools" not in bodies[-1]
 
 
+def test_transcription_asks_for_word_times_next_to_the_chat_endpoint():
+    seen = {}
+    words = {"text": "Hello.", "words": [{"word": "Hello.", "start": 0.5, "end": 0.9}]}
+
+    def opener(request, timeout):
+        seen["url"], seen["body"] = request.full_url, json.loads(request.data)
+        seen["authorization"] = request.get_header("Authorization")
+        return FakeResponse(words)
+
+    client = OpenRouterClient("test-key", base_url="https://router.example/api/v1/chat/completions", opener=opener)
+    assert client.transcribe(b"audio bytes", "mp3") == words
+    assert seen["url"] == "https://router.example/api/v1/audio/transcriptions"
+    assert seen["authorization"] == "Bearer test-key"
+    assert seen["body"] == {"model": "elevenlabs/scribe-v2",
+                            "input_audio": {"data": "YXVkaW8gYnl0ZXM=", "format": "mp3"},
+                            "response_format": "verbose_json", "timestamp_granularities": ["word", "segment"]}
+
+
+def test_an_error_in_a_successful_response_is_reported(tmp_path: Path):
+    _store, session = _tool_session(tmp_path)
+
+    def opener(request, timeout):
+        return FakeResponse({"error": {"message": "Rate limit exceeded", "code": 429}})
+
+    with pytest.raises(OpenRouterError, match="Rate limit exceeded") as raised:
+        OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None)
+    assert raised.value.status == 429
+
+
+def test_a_pause_during_the_final_answer_still_completes(tmp_path: Path):
+    import threading
+    from sceneaccess.request_control import RequestControl
+    _store, session = _tool_session(tmp_path)
+    control = RequestControl()
+
+    def opener(request, timeout):
+        control.pause()  # The user presses Pause while the model writes its final answer.
+        return FakeResponse({"choices": [{"message": {"content": "Done"}}]})
+
+    answers = []
+    worker = threading.Thread(target=lambda: answers.append(OpenRouterClient("k", opener=opener, control=control)
+                                                            .run_turn(session, session.messages, lambda *_: None)))
+    worker.start()
+    worker.join(3)
+    try:
+        assert not worker.is_alive(), "a pause after the final answer must not hold the request"
+        assert answers[0].completion.answer == "Done"
+    finally:
+        control.cancel()
+        worker.join(2)
+
+
 def test_http_errors_show_the_providers_reason(tmp_path: Path):
     _store, session = _tool_session(tmp_path)
 
