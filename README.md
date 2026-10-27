@@ -15,6 +15,8 @@ The **Chat history** list contains one item per message. **Enter** on an item op
 
 When a running screen reader such as NVDA is detected, SceneAccess announces that an answer is being generated, announces every tool the model runs on this computer, and moves the focus to the new answer when it arrives in the active chat window.
 
+Direct announcements use only recognised screen-reader bridges. Available standalone synthesizers such as SAPI, ESpeak or Speech Dispatcher do not trigger speech; unknown output backends remain silent. No direct Orca announcement integration is included.
+
 The sidebar lists recent chats. A chat remains usable if the original file is moved or deleted because the private local video context is retained.
 
 ## Chat windows and request controls
@@ -80,7 +82,15 @@ Chats started before this check may store a larger video. Before a question in s
 
 ## YouTube
 
+Filename templates containing `autonumber`, `video_autonumber` or `epoch` cannot identify existing files by name reliably: their counters or extraction timestamps belong to an individual run, not to a video. For these templates, completed files are recognised only through an existing chat's saved source URL. Files without a chat are not automatically reused and may be downloaded again. Choose stable filename fields such as title and ID for automatic orphan-file recognition.
+
+When assigning an online source to an existing chat, enter a single-video link. Collection links are rejected without changing the saved source. HD tools also reject collections before downloading media, including collection URLs stored by older versions.
+
+When starting a new chat, playlist links open a video selection before any media is downloaded. Entries with both a completed file in the download folder and an existing chat are hidden. A file without a chat remains selectable as **file present, create chat**: SceneAccess starts the normal chat setup using that file, without downloading it again. Full video information is loaded for the selected existing file; if that lookup fails, a warning explains that the file can still be used with limited information. Explicit quality changes in **Advanced** request the newly chosen quality instead of silently retaining the old file. Missing files remain selectable for download. File matching uses yt-dlp's expected filenames and saved chat source URLs, including SceneAccess job prefixes. Arbitrary bracketed title text is never treated as a video identity, and known conflicting sources or ambiguous names are not reused automatically; there is no permanent download-history database. If an older custom filename contains no ID and no longer matches the current naming settings, automatic recognition may not be possible.
+
 Known limitation: cancelled or failed native HLS downloads can leave media fragments such as `.part-Frag1.part` in the chosen download folder. SceneAccess reports this after cancellation or failure. Only explicitly registered files with verified ownership are removed; it does not sweep matching names or other downloads. Those fragments can contain private video data and consume disk space. The native HLS downloader is deliberately retained.
+
+Cancellation immediately after HLS remuxing can also leave the newly created, complete MP4 in the download folder because cleanup conservatively refuses a changed file identity. This is an accepted cleanup limitation, not a successful download: cancellation does not guarantee removal of all newly created local video data. Retained files may contain private content and use disk space; remove them manually if no longer needed.
 
 YouTube videos are downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp) in a progress dialog that can be cancelled. By default SceneAccess downloads the best quality up to 480p, which keeps details recognizable without HD file sizes, with video and audio merged into an MP4 (preferring H.264). **Settings** lets you choose between 240p and 1080p. Videos are saved to `scene-access` in your Videos folder; if that folder does not exist, SceneAccess asks for a default download folder, which can also be changed in **Settings**. Files are named like yt-dlp's default, `Title [ID].mp4`; **Settings → File name…** lets you check any yt-dlp output template field to include, with further parts added in brackets. A bundled ffmpeg merges video and audio and extracts frames; if Deno or Node.js is installed, yt-dlp uses it for full YouTube support.
 
