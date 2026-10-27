@@ -558,7 +558,7 @@ def fetch_video_info(url: str, cookies: str = "") -> dict[str, Any]:
 def download_section(url: str, start: float, end: float, target_dir: Path, max_height: int = 2160,
                      cookies: str = "") -> Path:
     """Downloads only the video picture between start and end seconds, in high resolution."""
-    import yt_dlp
+    from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
     from yt_dlp.utils import download_range_func
 
     options = download_options(target_dir, max_height, cookies=cookies)
@@ -573,6 +573,14 @@ def download_section(url: str, start: float, end: float, target_dir: Path, max_h
     })
     options.pop("merge_output_format", None)
     downloader_type = _single_video_downloader_class()
-    with downloader_type(options) as downloader:
-        info = downloader.extract_info(url, download=True)
+    # FFmpegFD.available() has no downloader instance and ignores its options.
+    # Match yt-dlp's CLI bridge, but scope the location to this call instead of
+    # changing PATH or leaving another request's ffmpeg location overwritten.
+    location_context = FFmpegPostProcessor._ffmpeg_location
+    token = location_context.set(options.get('ffmpeg_location', location_context.get()))
+    try:
+        with downloader_type(options) as downloader:
+            info = downloader.extract_info(url, download=True)
+    finally:
+        location_context.reset(token)
     return Path(info["requested_downloads"][0]["filepath"])
