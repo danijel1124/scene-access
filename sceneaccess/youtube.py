@@ -12,6 +12,20 @@ from .request_control import RequestControl
 from .worker_process import run_isolated_task
 
 
+def _single_video_downloader_class() -> Any:
+    """Reject collections before yt-dlp visits children or starts media transfer."""
+    import yt_dlp
+
+    class SingleVideoDownloader(yt_dlp.YoutubeDL):
+        def process_ie_result(self, ie_result, download=True, extra_info=None):
+            # noplaylist disambiguates watch URLs but does not block pure collections.
+            if ie_result.get('_type') in ('playlist', 'multi_video', 'compat_list'):
+                raise ValueError('Please select a single video before using this collection.')
+            return super().process_ie_result(ie_result, download=download, extra_info=extra_info)
+
+    return SingleVideoDownloader
+
+
 class DownloadFiles:
     """Exact job paths, admitted only before creation; never infer ownership from a folder diff.
 
@@ -295,7 +309,8 @@ def download_options(target_dir: Path, max_height: int, progress: Callable[[dict
         "format_sort": [f"res:{max_height}", "vcodec:h264", "ext:mp4:m4a", "+size"],
         "merge_output_format": "mp4",
         "noplaylist": True,
-        "outtmpl": str(target_dir / output_template(filename_fields)),
+        "outtmpl": output_template(filename_fields),
+        "paths": {"home": str(target_dir)},
         # Many fields together can exceed the Windows file name limit.
         "trim_file_name": 180,
         "logger": _QuietLogger(),
@@ -344,7 +359,7 @@ def download_video(url: str, target_dir: Path, max_height: int = DEFAULT_MAX_HEI
         files.observe()
         if progress:
             progress(update)
-    class JobDownloader(yt_dlp.YoutubeDL):
+    class JobDownloader(_single_video_downloader_class()):
         def dl(self, name, info, subtitle=False, test=False):
             if not test:
                 for candidate in (name, name + ".part", name + ".ytdl", name + ".part.ytdl"):
@@ -370,7 +385,7 @@ def download_video(url: str, target_dir: Path, max_height: int = DEFAULT_MAX_HEI
             # yt-dlp trims from the end. Keep the complete job identifier at the
             # beginning, outside the user-controlled long metadata fields.
             template = f'[{_job_id}] ' + output_template(filename_fields)
-            options['outtmpl'] = str(target_dir / template)
+            options['outtmpl'] = template
         with JobDownloader(options) as downloader:
             info = downloader.extract_info(url, download=True)
         path = files.path(info["requested_downloads"][0]["filepath"])
@@ -439,11 +454,104 @@ def search_videos(query: str, count: int = 8, cookies: str = "") -> list[dict[st
     return results
 
 
+def list_video_choices(url: str, cookies: str = "",
+                       filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS,
+                       max_height: int = DEFAULT_MAX_HEIGHT) -> dict[str, Any]:
+    """Picklable metadata for a single video or flat collection, never media downloads.
+
+    Consume lazy entries while the downloader (and its cookie/network context) is open.
+    Nested collections are omitted rather than recursively expanded. The caller chooses
+    one returned URL and runs the usual single-video download separately. ``filename``
+    predicts the normal basename via yt-dlp's naming/trim rules, without a job prefix.
+    Flat entries lack some metadata: unknown extensions offer mp4, webm and mov
+    candidates without another extraction. Fields not supplied by the extractor
+    retain yt-dlp's normal NA fallback.
+    Run-dependent templates return no filename candidates: only an existing
+    saved source identity can associate those files, never a downloader-local counter.
+    """
+    import yt_dlp
+    from yt_dlp.utils import DownloadError
+    from urllib.parse import urlsplit
+
+    class ChoiceDownloader(yt_dlp.YoutubeDL):
+        def process_ie_result(self, ie_result, download=True, extra_info=None):
+            if extra_info and 'playlist' in extra_info:
+                kind = ie_result.get('_type')
+                if kind in ('playlist', 'multi_video', 'compat_list'):
+                    return ie_result  # Leave nested collections opaque; never walk their entries.
+                if kind in ('url', 'url_transparent') and not ie_result.get('url'):
+                    return None
+                if ie_result.get('availability') in ('private', 'premium_only', 'subscriber_only', 'needs_auth'):
+                    return None
+            return super().process_ie_result(ie_result, download=download, extra_info=extra_info)
+
+    options = {**download_options(Path('.'), max_height, filename_fields=filename_fields, cookies=cookies),
+               **_info_options(cookies), "extract_flat": "in_playlist"}
+    prefix = '[' + '0' * 32 + '] '
+    naming_options = {'outtmpl': prefix + output_template(filename_fields),
+                      'trim_file_name': options['trim_file_name'], 'quiet': True, 'logger': _QuietLogger()}
+    with ChoiceDownloader(options) as downloader, yt_dlp.YoutubeDL(naming_options) as prefixed_names:
+        info = downloader.extract_info(url, download=False)
+        if not info:
+            return {"is_playlist": False, "title": "", "entries": []}
+        is_playlist = info.get('_type') in ('playlist', 'multi_video', 'compat_list')
+        entries = (info.get('entries') or []) if is_playlist else [info]
+        choices = []
+        for entry in entries:
+            if not entry or entry.get('_type') in ('playlist', 'multi_video', 'compat_list'):
+                continue
+            # Generic multi-video pages give every child the *collection* webpage_url.
+            # Their media URL is the only individually selectable URL in that case.
+            entry_url = entry.get('url')
+            webpage = entry.get('webpage_url')
+            if webpage and (not is_playlist or webpage != info.get('webpage_url')):
+                entry_url = webpage
+            if not isinstance(entry_url, str) or urlsplit(entry_url).scheme not in ('http', 'https'):
+                continue
+            identifier = str(entry.get('id') or entry_url)
+            title = str(entry.get('title') or identifier)
+            # A generic collection's synthetic title/id is not used when the
+            # selected media URL is extracted on its own. Resolve that metadata
+            # with downloads disabled so prediction uses the same context.
+            standalone = entry
+            fields = filename_fields or DEFAULT_FILENAME_FIELDS
+            needs_standalone = (webpage == info.get('webpage_url') and webpage != entry_url
+                                or any(field not in entry or field.startswith('playlist') for field in fields))
+            if is_playlist and needs_standalone:
+                try:
+                    standalone = downloader.extract_info(entry_url, download=False)
+                except DownloadError:
+                    # One unavailable child's metadata must not discard the other
+                    # choices. Root extraction and cancellation still propagate.
+                    continue
+                if not standalone or standalone.get('_type') in ('playlist', 'multi_video', 'compat_list'):
+                    continue
+            known_extension = standalone.get('ext')
+            extensions = (known_extension,) if known_extension else ('mp4', 'webm', 'mov')
+            # These fields belong to a downloader instance, not to the video.
+            # A fresh single-video download and a playlist lookup have different
+            # counter states; epoch is the extraction time, not a video property.
+            # Never advertise these guesses as file identities.
+            if {'autonumber', 'video_autonumber', 'epoch'}.intersection(fields):
+                extensions = ()
+            filenames = []
+            for extension in extensions:
+                naming_info = {**standalone, 'ext': extension}
+                filenames.append(Path(downloader.prepare_filename(naming_info)).name)
+                prefixed = Path(prefixed_names.prepare_filename(naming_info)).name
+                filenames.append(prefixed.removeprefix(prefix))
+            filenames = list(dict.fromkeys(filenames))
+            filename = filenames[0] if filenames else ''
+            choices.append({"id": identifier, "url": entry_url, "title": title, "filename": filename,
+                            "filenames": filenames,
+                            "info": downloader.sanitize_info(video_info_summary(standalone))})
+        return {"is_playlist": is_playlist, "title": str(info.get('title') or ""), "entries": choices}
+
+
 def fetch_video_info(url: str, cookies: str = "") -> dict[str, Any]:
     """The video information the model may read, for a video that is not downloaded again."""
-    import yt_dlp
-
-    with yt_dlp.YoutubeDL(_info_options(cookies)) as downloader:
+    downloader_type = _single_video_downloader_class()
+    with downloader_type(_info_options(cookies)) as downloader:
         return video_info_summary(downloader.extract_info(url, download=False))
 
 
@@ -464,6 +572,7 @@ def download_section(url: str, start: float, end: float, target_dir: Path, max_h
         "force_keyframes_at_cuts": True,
     })
     options.pop("merge_output_format", None)
-    with yt_dlp.YoutubeDL(options) as downloader:
+    downloader_type = _single_video_downloader_class()
+    with downloader_type(options) as downloader:
         info = downloader.extract_info(url, download=True)
     return Path(info["requested_downloads"][0]["filepath"])

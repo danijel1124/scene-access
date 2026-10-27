@@ -56,6 +56,7 @@ def test_disabled_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monk
     monkeypatch.setattr(frame, "_video_to_send", lambda *args, **kwargs: next(results))
     monkeypatch.setattr(frame, "_download_dir", lambda: tmp_path)
     monkeypatch.setattr(frame, "_download_with_progress", lambda *args: (source, "Video", {}))
+    monkeypatch.setattr(frame, "_choose_youtube_video", lambda url, folder: (url, None))
     monkeypatch.setattr(frame, "_start_chat", lambda *args, **kwargs: started.append(kwargs))
     try:
         (frame.new_from_youtube if online else frame.new_from_local_file)()
@@ -195,6 +196,7 @@ def run_youtube_chat(tmp_path, monkeypatch, sizes, choices):
                             lambda online, previous=None: asked.append(previous) or ("Describe it.", ""))
         monkeypatch.setattr(frame, "_download_dir", lambda: tmp_path)
         monkeypatch.setattr(frame, "_download_with_progress", download)
+        monkeypatch.setattr(frame, "_choose_youtube_video", lambda url, folder: (url, None))
         monkeypatch.setattr(new_chat, "video_height", lambda path: downloads[-1])
         monkeypatch.setattr(new_chat, "SizeDialog", fake_size_dialog(choices, calls))
         monkeypatch.setattr(frame, "_start_chat", lambda path, title, *start, **options: started.append((path, options)))

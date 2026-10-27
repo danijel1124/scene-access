@@ -306,7 +306,7 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.render_current()
 
     def on_update_path(self, _event: wx.CommandEvent) -> None:
-        if not self.current:
+        if not self.current or self._chat_busy():
             return
         with wx.FileDialog(self, "Choose the original video at its new location", wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
@@ -321,7 +321,7 @@ class MainFrame(NewChatMixin, wx.Frame):
 
     def change_setup(self) -> None:
         """Gives the open chat the current base prompt, a profile and the tools, e.g. for chats from before tools."""
-        if not self.current:
+        if not self.current or self._chat_busy():
             return
         if not self.current.source_url and not self._find_online_source():
             return
@@ -339,7 +339,7 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.apply_setup("" if choice == NO_PROFILE else choice)
 
     def apply_setup(self, profile: str) -> None:
-        if not self.current:
+        if not self.current or self._chat_busy():
             return
         self.store.update_setup(self.current.id, OWNER_ID, system_prompt(self.config.profile_text(profile)),
                                 tool_definitions(online_video=bool(self.current.source_url)),
@@ -354,7 +354,7 @@ class MainFrame(NewChatMixin, wx.Frame):
         return session.model or self.config.model
 
     def change_chat_settings(self) -> None:
-        if not self.current or getattr(self, '_loading_chat_settings', False):
+        if not self.current or self._chat_busy() or getattr(self, '_loading_chat_settings', False):
             return
         session_id, catalog = self.current.id, self.catalog
         self._loading_chat_settings = True
@@ -375,8 +375,8 @@ class MainFrame(NewChatMixin, wx.Frame):
         if not self or self._closing:
             return
         self._loading_chat_settings = False
-        self.chat_settings_button.Enable(not self._request)
-        if not self.current or self.current.id != session_id or self._request:
+        self._set_chat_mutation_buttons()
+        if not self.current or self.current.id != session_id or self._chat_busy():
             return
         session = self.current
         with ChatSettingsDialog(self, session.model, self.config.model, session.audio_only, session.sent_video_size,
@@ -394,6 +394,8 @@ class MainFrame(NewChatMixin, wx.Frame):
     def shrink_stored_video(self) -> bool:
         """Replaces the open chat's stored video by a shrunk copy, made from the original file if it is still
         there. Returns False if cancelled or failed."""
+        if not self.current or self._chat_busy():
+            return False
         with local_video(self.current) as source:
             shrunk = self._shrink_with_progress(source)
         if not shrunk:
@@ -432,6 +434,8 @@ class MainFrame(NewChatMixin, wx.Frame):
     def _find_online_source(self) -> bool:
         """Asks which YouTube video an older chat came from, as chats did not store the link at first.
         Returns False if the user cancelled."""
+        if not self.current or self._chat_busy():
+            return False
         session = self.current
         link = youtube_link_in_file_name(session.source_path)
         if not link and is_local_file_chat(session.title):
@@ -480,7 +484,7 @@ class MainFrame(NewChatMixin, wx.Frame):
         return True
 
     def on_delete(self, _event: wx.CommandEvent) -> None:
-        if not self.current:
+        if not self.current or self._chat_busy():
             return
         if wx.MessageBox("The conversation history and locally stored video data URL will be deleted.", "Delete this chat?", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
             return
@@ -517,6 +521,18 @@ class MainFrame(NewChatMixin, wx.Frame):
         # Select the newest answer rather than its usage line, so it is what gets read first.
         answers = [index for index, item in enumerate(items) if item.startswith("Model: ")]
         self.chat_list.SetSelection(answers[-1] if answers else len(items) - 1)
+        self._set_chat_mutation_buttons()
+
+    def _chat_busy(self) -> bool:
+        # A closed window's cancelled worker may still be committing local state.
+        return bool(self._request or (self.windows and self.current
+                                     and self.current.id in self.windows.requests))
+
+    def _set_chat_mutation_buttons(self) -> None:
+        busy = self._chat_busy()
+        for button in (self.delete_button, self.setup_button, self.update_path_button):
+            button.Enable(not busy)
+        self.chat_settings_button.Enable(not busy and not getattr(self, '_loading_chat_settings', False))
 
     def on_send(self, _event: wx.CommandEvent | None) -> None:
         if self._request:
@@ -621,8 +637,7 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.pause_button.SetLabel("Pause request")
         self.pause_button.Enable()
         self.pause_button.Show(running)
-        for button in (self.delete_button, self.setup_button, self.chat_settings_button, self.update_path_button):
-            button.Enable(not running)
+        self._set_chat_mutation_buttons()
         self.Layout()
 
     def on_pause(self, _event: wx.CommandEvent | None) -> None:

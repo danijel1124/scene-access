@@ -16,6 +16,41 @@ def _slow_search(*args, **kwargs):
     return []
 
 
+def test_lookup_disables_other_windows_until_it_finishes(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
+    marker, done = tmp_path/'started', tmp_path/'done'
+    monkeypatch.setenv('SCENEACCESS_TEST_LOOKUP_STARTED', str(marker))
+    monkeypatch.setenv('SCENEACCESS_TEST_LOOKUP_DONE', str(done))
+    app = wx.App(False)
+    loop = wx.GUIEventLoop()
+    activator = wx.EventLoopActivator(loop)
+    frame, other = gui.MainFrame(), wx.Frame(None, title='Other chat')
+    frame.Show()
+    other.Show()
+    observations = []
+
+    def observe():
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        if marker.exists():
+            wx.CallAfter(lambda: observations.append(
+                (not done.exists(), frame.IsEnabled(), other.IsEnabled())))
+
+    watcher = threading.Thread(target=observe, daemon=True)
+    watcher.start()
+    try:
+        assert frame._lookup_with_progress(_slow_search, (), '') == []
+        assert observations == [(True, False, False)]
+        assert frame.IsEnabled() and other.IsEnabled()
+    finally:
+        watcher.join(6)
+        other.Destroy()
+        frame.Destroy()
+        del activator, loop
+        app.Destroy()
+
+
 def _post_when_started(marker: Path, done: Path, heartbeat: list) -> None:
     deadline = time.monotonic() + 5
     while not marker.exists() and time.monotonic() < deadline:

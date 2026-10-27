@@ -6,6 +6,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import threading
+from functools import partial
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
@@ -20,7 +21,9 @@ from .prompts import system_prompt
 from .session_store import TRANSCRIPT_PENDING
 from .speech import announce
 from .tools import tool_definitions
-from .request_control import RequestControl
+from .request_control import RequestControl, RequestCancelled
+from .playlist_files import playlist_options
+from . import youtube as youtube_sources
 from .worker_process import run_isolated_task
 from .video_size import (SIZE_LIMIT, ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_video,
                          video_height)
@@ -92,7 +95,14 @@ class NewChatMixin:
             url = dialog.GetValue().strip()
         if not url:
             return
-        start, downloaded, downloaded_height, height = None, None, 0, 0
+        target_dir = self._download_dir()
+        if target_dir is None:
+            return
+        selected = self._choose_youtube_video(url, target_dir)
+        if selected is None:
+            return
+        url, downloaded = selected
+        start, downloaded_height, height = None, 0, 0
         while True:
             asked_height = self.config.youtube_max_height
             start = self._ask_first_question(online=True, previous=start)
@@ -106,6 +116,13 @@ class NewChatMixin:
                 # stepped down stays, e.g. when the user only came back to turn on automatic shrinking.
                 height = self.config.youtube_max_height
             lowering = False
+            if downloaded is not None and not downloaded_height:
+                if downloaded[0].is_file():
+                    # Reuse at the setting under which this file was selected.
+                    # An explicit Advanced change must request the new quality.
+                    downloaded_height = asked_height
+                else:
+                    downloaded = None
             while True:
                 if downloaded is None or downloaded_height != height:
                     # A returned path may be a pre-existing yt-dlp download. Keep the previous
@@ -129,6 +146,57 @@ class NewChatMixin:
             path, title, info = downloaded
             self._start_chat(path, title, *start[:2], source_url=url, video_info=info, sent_video=sent,
                              disable_tools=start[2] if len(start) > 2 else False)
+
+    def _choose_youtube_video(self, url: str, target_dir: Path) -> tuple[str, tuple | None] | None:
+        """List metadata first; select one video and reuse an existing completed file."""
+        lookup = partial(youtube_sources.list_video_choices,
+                         filename_fields=self.config.filename_fields,
+                         max_height=self.config.youtube_max_height)
+        try:
+            listing = self._with_youtube_sign_in(
+                lambda cookies: self._lookup_with_progress(lookup, (url,), cookies))
+        except RequestCancelled:
+            return None
+        except Exception as error:
+            wx.MessageBox(str(error), 'Could not read video or playlist', wx.OK | wx.ICON_ERROR)
+            return None
+        chats = [{'source_path': session.source_path, 'source_url': session.source_url}
+                 for session in self.store.list_sessions(self.owner_id)]
+        entries = playlist_options(listing['entries'], target_dir, chats,
+                                   hide_existing_chats=listing['is_playlist'])
+        if not entries:
+            wx.MessageBox('No videos to choose from. Available videos with a local file and an existing chat '
+                          'are hidden; unavailable playlist entries cannot be selected.',
+                          'Playlist', wx.OK | wx.ICON_INFORMATION)
+            return None
+        entry = entries[0]
+        if listing['is_playlist']:
+            labels = [f"{index}. {item['title']}" +
+                      (' (file present, create chat)' if item['local_path'] else '')
+                      for index, item in enumerate(entries, 1)]
+            with wx.SingleChoiceDialog(self, 'Which playlist video do you want? Videos with a local file '
+                                       'and an existing chat are hidden.',
+                                       listing.get('title') or 'Choose playlist video', labels) as dialog:
+                if dialog.ShowModal() != wx.ID_OK:
+                    return None
+                index = dialog.GetSelection()
+                if not 0 <= index < len(entries):
+                    return None
+                entry = entries[index]
+        existing = None
+        if entry['local_path'] is not None:
+            metadata = entry.get('info', {})
+            try:
+                metadata = self._with_youtube_sign_in(
+                    lambda cookies: self._lookup_with_progress(youtube_sources.fetch_video_info,
+                                                               (entry['url'],), cookies))
+            except RequestCancelled:
+                return None
+            except Exception as error:
+                wx.MessageBox(f'The existing video can still be used, but its full information could not be loaded: {error}',
+                              'Video information unavailable', wx.OK | wx.ICON_WARNING)
+            existing = entry['local_path'], entry['title'], metadata
+        return entry['url'], existing
 
     def _video_to_send(self, source: Path, online: bool, lower_height: int | None = None) -> Path | int | None:
         """The file to send for a new chat: the video itself or a shrunk copy in a temporary folder. Returns
@@ -284,11 +352,15 @@ class NewChatMixin:
         thread.start()
         try:
             with wx.GenericProgressDialog('YouTube lookup', 'Looking up video information…',
-                                          parent=self, style=wx.PD_CAN_ABORT | wx.PD_AUTO_HIDE) as dialog:
+                                          parent=self, style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_AUTO_HIDE) as dialog:
                 while not state['done']:
                     keep_going, _skip = dialog.Pulse()
                     if not keep_going:
                         control.cancel()
+                    # Pulse() does not deliver CallAfter callbacks on every wx port.
+                    # Yield only when not already yielding; the app-modal dialog keeps
+                    # other windows disabled while queued worker updates are handled.
+                    wx.YieldIfNeeded()
                     wx.MilliSleep(20)
         finally:
             control.cancel()

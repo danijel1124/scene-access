@@ -8,6 +8,13 @@ from typing import Any
 _auto: Any = None
 _loaded = False
 
+# Only reader-specific bridges are eligible. A synthesizer being available is
+# not evidence that a screen reader is running; unknown outputs stay silent.
+_SCREEN_READER_OUTPUTS = frozenset({
+    'NVDA', 'Jaws', 'WindowEyes', 'SystemAccess', 'Dolphin',
+    'PCTalker', 'ZDSR', 'VoiceOver',
+})
+
 
 def _point_frozen_lookup_at_bundled_files() -> None:
     # In a frozen app, accessible_output2 looks for its screen reader client DLLs next to the
@@ -31,9 +38,9 @@ def _screen_reader() -> Any:
     if _auto is None:
         return None
     for output in _auto.outputs:
-        # SAPI is the fallback voice without any screen reader; announcing through it would talk
-        # over users who do not run a screen reader at all.
-        if type(output).__name__ == "SAPI5":
+        # Exclude standalone speech engines such as SAPI, ESpeak and
+        # SpeechDispatcher even when their is_active() reports availability.
+        if type(output).__name__ not in _SCREEN_READER_OUTPUTS:
             continue
         try:
             if output.is_active():

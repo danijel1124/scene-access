@@ -12,7 +12,7 @@ def test_download_options_cap_resolution_and_merge_video_with_audio(tmp_path: Pa
     assert "+size" in options["format_sort"]
     assert options["merge_output_format"] == "mp4"
     assert options["noplaylist"] is True
-    assert options["outtmpl"].startswith(str(tmp_path))
+    assert options["paths"]["home"] == str(tmp_path)
     assert "node" in options["js_runtimes"]
 
 
@@ -28,7 +28,8 @@ def test_further_file_name_parts_follow_in_brackets_in_list_order():
 def test_download_options_use_the_chosen_file_name_parts(tmp_path: Path):
     options = youtube.download_options(tmp_path, 480, filename_fields=["title", "uploader"])
 
-    assert options["outtmpl"] == str(tmp_path / "%(title)s [%(uploader)s].%(ext)s")
+    assert options["outtmpl"] == "%(title)s [%(uploader)s].%(ext)s"
+    assert options["paths"]["home"] == str(tmp_path)
     assert options["trim_file_name"] > 0
 
 

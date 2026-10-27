@@ -33,6 +33,7 @@ def test_quality_change_keeps_previous_file_until_replacement_succeeds(tmp_path,
         config=types.SimpleNamespace(youtube_max_height=480),
         _ask_first_question=lambda **kwargs: ('Describe', ''),
         _download_dir=lambda: tmp_path,
+        _choose_youtube_video=lambda url, folder: (url, None),
         _download_with_progress=download,
         _video_to_send=lambda *args, **kwargs: new_chat.SIZE_LOWER,
     )
