@@ -3,10 +3,13 @@ and reading a message."""
 
 from __future__ import annotations
 
+from typing import Collection
+
 import wx
 
 from .dialogs import NO_PROFILE, AddModelDialog, youtube_quality_labels
 from .models import AUTO_ROUTER
+from .tools import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME
 from .video_size import DEFAULT_SHRINK_TARGET_MB, SIZE_LIMIT, base64_size, megabytes
 from .youtube import DEFAULT_MAX_HEIGHT, MAX_HEIGHT_CHOICES
 
@@ -202,10 +205,11 @@ class StartChatDialog(wx.Dialog):
     def __init__(self, parent: wx.Window, profiles: tuple[tuple[str, str], ...], selected: str, *, online: bool = False,
                  max_height: int = DEFAULT_MAX_HEIGHT, auto_shrink: bool = False,
                  shrink_target_mb: int = DEFAULT_SHRINK_TARGET_MB, question: str = "Describe this video.",
-                 disable_tools: bool = False, llama_cpp: bool = False, openrouter_key: bool = False,
-                 extras: tuple[bool, bool] = (False, False)):
-        """llama_cpp shows the OpenRouter extras for a chat on the user's own server; they need openrouter_key.
-        extras preselects web search and transcript."""
+                 tools: Collection[str] | None = None, llama_cpp: bool = False, openrouter_key: bool = False,
+                 transcript: bool = False):
+        """tools preselects the chat's tools by key (None: all). A chat on the user's own llama.cpp server
+        (llama_cpp) searches the web and transcribes through OpenRouter, which needs openrouter_key;
+        transcript preselects that transcription."""
         super().__init__(parent, title="Start a video chat", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.profiles = profiles
         self.online = online
@@ -219,32 +223,42 @@ class StartChatDialog(wx.Dialog):
         text_label = wx.StaticText(self, label="Profile text")
         self.profile_text = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 110))
         note = wx.StaticText(self, label="The profile stays fixed for this chat, so the video can be cached.")
-        self.disable_tools = wx.CheckBox(self, label="Disable all tools for this chat")
-        self.disable_tools.SetValue(disable_tools)
-        # Off by default: this chat's video stays on the user's own server unless an extra is chosen.
-        self.web_search = wx.CheckBox(self, label="Search the web through OpenRouter (sends only search terms)")
+        tools_heading = wx.StaticText(self, label="Tools for this chat")
+        search_label = ("Web search through OpenRouter (sends only search terms; needs an OpenRouter API key)"
+                        if llama_cpp else "Web search (run by OpenRouter)")
+        # In the order of tool_definitions; the YouTube tools exist only for online videos.
+        self.tool_boxes = {key: wx.CheckBox(self, label=label) for key, label in (
+            (ZOOM_FRAME, "Zoom into a frame"), (HD_FRAME, "Load in high resolution (YouTube)"),
+            (VIDEO_INFO, "Read the video information (YouTube)"), (WEB_SEARCH, search_label))}
+        self.available = {ZOOM_FRAME, WEB_SEARCH} | ({HD_FRAME, VIDEO_INFO} if online else set())
+        if llama_cpp and not openrouter_key:
+            self.available.discard(WEB_SEARCH)
+        for key, box in self.tool_boxes.items():
+            box.Show(key in (ZOOM_FRAME, WEB_SEARCH) or online)
+            box.Enable(key in self.available)
+            box.SetValue(key in self.available and (tools is None or key in tools))
+            box.Bind(wx.EVT_CHECKBOX, lambda _event: self._show_toggle())
+        self.toggle_tools = wx.Button(self)
+        self.toggle_tools.Bind(wx.EVT_BUTTON, self._on_toggle_tools)
+        self._show_toggle()
+        # Not a tool: preprocessing. Off by default, so a llama.cpp chat's sound stays private unless chosen.
         self.transcript = wx.CheckBox(self, label="Transcribe the speech through OpenRouter and ElevenLabs "
-                                                  "(sends the video's sound)")
-        extras_note = wx.StaticText(self, label="These extras need an OpenRouter API key in Settings."
-                                    if not openrouter_key else "The video itself always stays on the llama.cpp server.")
-        for box, chosen in zip((self.web_search, self.transcript), extras):
-            box.SetValue(chosen and openrouter_key)
-            box.Enable(openrouter_key)
+                                                  "(sends the video's sound; needs an OpenRouter API key)")
+        self.transcript.SetValue(transcript and openrouter_key)
+        self.transcript.Enable(openrouter_key)
+        self.transcript.Show(llama_cpp)
         advanced = wx.Button(self, label="Advanced…")
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
-        extra_controls = ((self.web_search, 0), (self.transcript, 0), (extras_note, 0)) if llama_cpp else ()
-        if not llama_cpp:
-            for control in (self.web_search, self.transcript, extras_note):
-                control.Hide()
+        shown_boxes = [(box, 0) for box in self.tool_boxes.values() if box.IsShown()]
         for control, proportion in ((question_label, 0), (self.question, 1), (profile_label, 0), (self.profile, 0),
-                                    (text_label, 0), (self.profile_text, 1), (note, 0), (self.disable_tools, 0),
-                                    *extra_controls):
+                                    (text_label, 0), (self.profile_text, 1), (note, 0), (tools_heading, 0),
+                                    *shown_boxes, (self.toggle_tools, 0), *([(self.transcript, 0)] if llama_cpp else [])):
             layout.Add(control, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(advanced, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
         self.SetSizer(layout)
-        self.SetSize((700, 560))
+        self.SetSize((700, 720))
         advanced.Bind(wx.EVT_BUTTON, self._on_advanced)
         self.profile.Bind(wx.EVT_CHOICE, lambda _event: self._show_profile())
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
@@ -257,9 +271,19 @@ class StartChatDialog(wx.Dialog):
         name = self.choices[self.profile.GetSelection()]
         return self.question.GetValue().strip(), "" if name == NO_PROFILE else name
 
-    def extras(self) -> tuple[bool, bool]:
-        """Whether a llama.cpp chat may search the web and transcribe its speech through OpenRouter."""
-        return self.web_search.GetValue(), self.transcript.GetValue()
+    def chosen_tools(self) -> tuple[str, ...]:
+        """The keys of the tools chosen for this chat, see tools.tool_key."""
+        return tuple(key for key, box in self.tool_boxes.items() if key in self.available and box.GetValue())
+
+    def _show_toggle(self) -> None:
+        self.toggle_tools.SetLabel("Deselect all tools" if self.chosen_tools() else "Select all tools")
+        self.toggle_tools.Enable(bool(self.available))
+
+    def _on_toggle_tools(self, _event: wx.CommandEvent | None) -> None:
+        select = not self.chosen_tools()
+        for key in self.available:
+            self.tool_boxes[key].SetValue(select)
+        self._show_toggle()
 
     def _on_advanced(self, _event: wx.CommandEvent) -> None:
         with AdvancedDialog(self, self.online, self.max_height, self.auto_shrink, self.shrink_target_mb) as dialog:

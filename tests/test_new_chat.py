@@ -2,10 +2,11 @@ import wx
 import pytest
 
 from sceneaccess import gui, new_chat
+from sceneaccess.tools import ZOOM_FRAME, tool_key
 
 @pytest.mark.parametrize("online", [False, True])
-@pytest.mark.parametrize("disabled", [False, True])
-def test_new_chat_freezes_disabled_tools_in_saved_session(tmp_path, monkeypatch, online, disabled):
+@pytest.mark.parametrize("chosen", [None, (), (ZOOM_FRAME,)])
+def test_new_chat_freezes_the_chosen_tools_in_saved_session(tmp_path, monkeypatch, online, chosen):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     source = tmp_path / "video.mp4"
     source.write_bytes(b"video")
@@ -14,17 +15,19 @@ def test_new_chat_freezes_disabled_tools_in_saved_session(tmp_path, monkeypatch,
     monkeypatch.setattr(frame, "_send", lambda *args, **kwargs: None)
     try:
         frame._start_chat(source, "Video", "Describe", "", source_url="https://youtube.test/v" if online else "",
-                          disable_tools=disabled)
-        assert bool(frame.current.tools) is not disabled
+                          tools=chosen)
+        keys = [tool_key(tool) for tool in frame.current.tools]
+        if chosen is None:
+            assert ZOOM_FRAME in keys and len(keys) >= 2
+        else:
+            assert keys == list(chosen)
         assert frame.store.list_sessions(frame.owner_id)[0].tools == frame.current.tools
-        if disabled:
-            assert frame.current.tools == []
     finally:
         frame.Destroy()
         app.Destroy()
 
 @pytest.mark.parametrize("online", [False, True])
-def test_disabled_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monkeypatch, online):
+def test_chosen_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monkeypatch, online):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     source = tmp_path / "video.mp4"
     source.write_bytes(b"video")
@@ -35,8 +38,9 @@ def test_disabled_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monk
 
     class Start(original):
         def ShowModal(self):
-            shown.append(self.disable_tools.GetValue())
-            self.disable_tools.SetValue(True)
+            shown.append(self.chosen_tools())
+            if self.chosen_tools():
+                self._on_toggle_tools(None)
             return wx.ID_OK
 
     class Entry:
@@ -60,11 +64,12 @@ def test_disabled_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monk
     monkeypatch.setattr(frame, "_start_chat", lambda *args, **kwargs: started.append(kwargs))
     try:
         (frame.new_from_youtube if online else frame.new_from_local_file)()
-        assert shown == [False, True]
-        assert started[0]["disable_tools"] is True
+        # All tools at first; back from the size question, the deselected tools stay deselected.
+        assert len(shown) == 2 and shown[0] and shown[1] == ()
+        assert started[0]["tools"] == ()
         # This is per chat, not a sticky default for another new chat.
         frame._ask_first_question(online=online)
-        assert shown[-1] is False
+        assert shown[-1] == shown[0]
     finally:
         frame.Destroy()
         app.Destroy()

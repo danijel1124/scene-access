@@ -19,7 +19,8 @@ def test_start_chat_dialog_returns_the_question_and_profile():
         app.Destroy()
 
 
-def test_start_chat_disable_tools_is_opt_in_and_survives_advanced(monkeypatch):
+def test_start_chat_offers_each_tool_with_select_all_and_keeps_the_choice(monkeypatch):
+    from sceneaccess.tools import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME
     app = wx.App(False)
     frame = wx.Frame(None)
     class Advanced:
@@ -31,14 +32,22 @@ def test_start_chat_disable_tools_is_opt_in_and_survives_advanced(monkeypatch):
     monkeypatch.setattr(chat_dialogs, "AdvancedDialog", Advanced)
     try:
         with chat_dialogs.StartChatDialog(frame, (), "") as dialog:
-            assert dialog.disable_tools.GetLabel() == "Disable all tools for this chat"
-            assert not dialog.disable_tools.GetValue()
-            dialog.disable_tools.SetValue(True)
+            # All tools of a local video are on by default; the YouTube tools are not offered.
+            assert dialog.chosen_tools() == (ZOOM_FRAME, WEB_SEARCH)
+            assert not dialog.tool_boxes[HD_FRAME].IsShown()
+            assert dialog.toggle_tools.GetLabel() == "Deselect all tools"
+            dialog._on_toggle_tools(None)
+            assert dialog.chosen_tools() == () and dialog.toggle_tools.GetLabel() == "Select all tools"
+            dialog.tool_boxes[ZOOM_FRAME].SetValue(True)
             dialog._on_advanced(None)
-            assert dialog.disable_tools.GetValue()
+            assert dialog.chosen_tools() == (ZOOM_FRAME,)
             assert dialog.value() == ("Describe this video.", "")
-        with chat_dialogs.StartChatDialog(frame, (), "", disable_tools=True) as dialog:
-            assert dialog.disable_tools.GetValue()
+        with chat_dialogs.StartChatDialog(frame, (), "", online=True, tools=(VIDEO_INFO,)) as dialog:
+            assert dialog.tool_boxes[HD_FRAME].IsShown() and dialog.chosen_tools() == (VIDEO_INFO,)
+            dialog._on_toggle_tools(None)
+            assert dialog.chosen_tools() == ()
+            dialog._on_toggle_tools(None)
+            assert dialog.chosen_tools() == (ZOOM_FRAME, HD_FRAME, VIDEO_INFO, WEB_SEARCH)
     finally:
         frame.Destroy()
         app.Destroy()

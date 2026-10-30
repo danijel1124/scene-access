@@ -3,7 +3,6 @@ import wx
 import pytest
 
 from sceneaccess import gui
-from test_playlist_rejection import video_server
 
 
 @pytest.mark.parametrize('path', ['/index.html', '/one.mp4', '/single.html'])

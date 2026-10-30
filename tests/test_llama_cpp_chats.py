@@ -180,6 +180,41 @@ def test_the_web_search_tool_explains_a_missing_openrouter_key(tmp_path):
     assert found.text == 'about x'
 
 
+def test_an_error_names_the_chats_provider_and_explains_a_too_small_context(frame, monkeypatch):
+    start(frame)
+    shown = []
+    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, title='', *a, **kw: shown.append((title, message)))
+    frame._failed('HTTP 400: request (21969 tokens) exceeds the available context size (16384 tokens)')
+    title, message = shown[-1]
+    assert title == 'Own llama.cpp server error' and 'larger -c' in message
+
+
+@pytest.mark.parametrize('openrouter_key', [False, True])
+def test_a_llama_cpp_chat_offers_search_and_transcript_only_with_an_openrouter_key(frame, openrouter_key):
+    from sceneaccess.chat_dialogs import StartChatDialog
+    from sceneaccess.tools import ZOOM_FRAME
+    dialog = StartChatDialog(frame, (), '', llama_cpp=True, openrouter_key=openrouter_key)
+    try:
+        assert dialog.transcript.IsShown() and dialog.transcript.IsEnabled() is openrouter_key
+        # The transcript is not a tool and off by default; selecting all tools leaves it alone.
+        assert not dialog.transcript.GetValue()
+        assert dialog.chosen_tools() == ((ZOOM_FRAME, WEB_SEARCH) if openrouter_key else (ZOOM_FRAME,))
+        dialog._on_toggle_tools(None)
+        dialog._on_toggle_tools(None)
+        assert not dialog.transcript.GetValue()
+    finally:
+        dialog.Destroy()
+
+
+def test_an_openrouter_chat_has_no_transcript_choice(frame):
+    from sceneaccess.chat_dialogs import StartChatDialog
+    dialog = StartChatDialog(frame, (), '', openrouter_key=True)
+    try:
+        assert not dialog.transcript.IsShown()
+    finally:
+        dialog.Destroy()
+
+
 def test_only_openrouter_gets_its_own_tools():
     tools = tool_definitions(online_video=False)
     assert provider_tools(tools, OPENROUTER) == tools

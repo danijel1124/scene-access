@@ -33,7 +33,7 @@ Während einer Anfrage wird **Send question** zu **Cancel request**. Abbrechen u
 
 **Settings → Maximum tool rounds per answer** akzeptiert jede nichtnegative ganze Zahl, voreingestellt sind 6. Eine Runde kann mehrere lokale Tools enthalten. Nach dem Limit folgt eine letzte Anfrage mit deaktivierter Tool-Auswahl. Null lässt sämtliche Tools einschließlich der integrierten Websuche aus der Anfrage weg. Positive Limits zählen lokale Tool-Runden, nicht die intern bei OpenRouter ausgeführten Suchen.
 
-Im Startdialog deaktiviert **Disable all tools for this chat** lokale Tools und die integrierte Websuche für diesen Chat. Die Wahl wird mit dem Chat gespeichert und nicht auf neue Chats übertragen. Automatische Audiotranskription ist eine Vorverarbeitung, kein vom Modell gewähltes Tool, und bleibt verfügbar. **Change prompt profile and tools** ersetzt die Tool-Einrichtung ausdrücklich und kann Tools wieder einschalten.
+Im Startdialog hat **Tools for this chat** ein Kontrollkästchen pro Tool, alle standardmäßig an; die Tools für hohe Auflösung und Videoinformationen erscheinen nur bei YouTube-Videos. **Deselect all tools** schaltet alle aus und heißt danach **Select all tools**. Die Wahl wird mit dem Chat gespeichert und nicht auf neue Chats übertragen. Automatische Audiotranskription ist eine Vorverarbeitung, kein vom Modell gewähltes Tool, und bleibt verfügbar. **Change prompt profile and tools** ersetzt die Tool-Einrichtung ausdrücklich und kann Tools wieder einschalten.
 
 ## Prompts
 
@@ -76,7 +76,7 @@ Anbieter begrenzen, wie groß eine Anfrage sein darf, und SceneAccess schickt in
 
 Für llama.cpp-Chats die Chat-Completions-Adresse des Servers eintragen, etwa `http://192.168.1.20:8080/v1/chat/completions`, optional einen Modellnamen (ein Server mit einem Modell antwortet unabhängig vom Namen) und optional den Schlüssel von `llama-server --api-key`. Nur dieser Schlüssel geht an den Server, nie der OpenRouter-Key. Der Server braucht ein Vision-Modell mit seiner `--mmproj`-Datei, Video-Unterstützung (llama.cpp ab Juni 2026 mit installiertem ffmpeg und ffprobe; unter Windows ein Build nach dem 24. August 2026) und `--jinja` für die Tools. OpenRouters Routing, Anbieterausschlüsse und die integrierte Websuche werden dafür nicht verwendet.
 
-Im Dialog **Start a video chat** bietet ein llama.cpp-Chat zwei Extras an, beide standardmäßig aus und nur mit OpenRouter-API-Key verfügbar: **Search the web through OpenRouter** schickt nur Suchbegriffe, **Transcribe the speech through OpenRouter and ElevenLabs** schickt den Ton des Videos. **Chat settings** listet die Modelle des eigenen Servers.
+Im Dialog **Start a video chat** nutzt ein llama.cpp-Chat OpenRouter nur für zwei Dinge, beide nur mit OpenRouter-API-Key verfügbar: Das Tool **Web search through OpenRouter** schickt nur Suchbegriffe, und **Transcribe the speech through OpenRouter and ElevenLabs**, kein Tool und standardmäßig aus, schickt den Ton des Videos. **Chat settings** listet die Modelle des eigenen Servers.
 
 ## Videogröße
 
@@ -147,7 +147,7 @@ Der gesamte Code liegt im Paket `sceneaccess`:
 - `config.py`: Einstellungen in `config.json`
 - `speech.py`: Ansagen über den laufenden Screenreader
 
-`SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`: eine Datei pro Modul (`prompts.py` wird in den Tests von Hauptfenster und Dialogen mitgeprüft), weitere Dateien für modulübergreifendes Verhalten (Lebensdauer und Steuerung von Anfragen, llama.cpp-Chats, Downloads und ihr Aufräumen, Arbeitsprozesse, Ein-Instanz-Betrieb, Start) sowie Prüfungen der Doku-Sprache, des Datenbanknamens, des Standardmodells und der Release-Dateien. Unter Windows lässt `tests/conftest.py` alle Tests auf einem eigenen, unsichtbaren Desktop laufen, damit ihre Fenster weder auf dem Bildschirm erscheinen noch beim Screenreader ankommen.
+`SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`: eine Datei pro Modul (`prompts.py` wird in den Tests von Hauptfenster und Dialogen mitgeprüft), weitere Dateien für modulübergreifendes Verhalten (Lebensdauer und Steuerung von Anfragen, llama.cpp-Chats, Downloads und ihr Aufräumen, Arbeitsprozesse, Ein-Instanz-Betrieb, Start) sowie Prüfungen der Doku-Sprache, des Datenbanknamens, des Standardmodells und der Release-Dateien. `tests/conftest.py` enthält Fixtures, die mehrere Dateien teilen, etwa einen lokalen Video-Webserver, und lässt unter Windows alle Tests auf einem eigenen, unsichtbaren Desktop laufen, damit ihre Fenster weder auf dem Bildschirm erscheinen noch beim Screenreader ankommen.
 
 Bekannte Lücken der Tests:
 

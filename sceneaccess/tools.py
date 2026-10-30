@@ -12,7 +12,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Collection, Iterator
 
 from .providers import OPENROUTER
 from .session_store import SESSION_FILE_PREFIX, VideoSession
@@ -39,10 +39,21 @@ def _function(name: str, description: str, properties: dict[str, Any], required:
         "type": "object", "properties": properties, "required": required}}}
 
 
-def tool_definitions(*, online_video: bool, web_search: bool = True,
-                     local_web_search: bool = False) -> list[dict[str, Any]]:
+def tool_definitions(*, online_video: bool, web_search: bool = True, local_web_search: bool = False,
+                     chosen: Collection[str] | None = None) -> list[dict[str, Any]]:
     """The tools of a new chat, in a fixed order so the request stays byte-identical for the cache.
-    web_search is OpenRouter's own search; local_web_search the web_search tool for llama.cpp chats."""
+    web_search is OpenRouter's own search; local_web_search the web_search tool for llama.cpp chats.
+    chosen keeps only the tools with these keys (see tool_key); None keeps all."""
+    tools = _all_tools(online_video, web_search, local_web_search)
+    return tools if chosen is None else [tool for tool in tools if tool_key(tool) in chosen]
+
+
+def tool_key(tool: dict[str, Any]) -> str:
+    """A tool's name for choosing it; both kinds of web search are WEB_SEARCH."""
+    return tool["function"]["name"] if tool.get("type") == "function" else WEB_SEARCH
+
+
+def _all_tools(online_video: bool, web_search: bool, local_web_search: bool) -> list[dict[str, Any]]:
     tools = [_function(
         ZOOM_FRAME,
         "Returns a still image of one moment of the video, optionally only a region of it, enlarged. Use it to "

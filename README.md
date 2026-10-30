@@ -33,7 +33,7 @@ While a request runs, **Send question** becomes **Cancel request**. Cancelling i
 
 **Settings → Maximum tool rounds per answer** accepts any nonnegative whole number, with a default of 6. A round can include several local tools, and the limit is followed by one final answer request with tool selection disabled. Zero omits all tools from the request, including hosted web search. Positive limits count local tool-call rounds, not searches executed internally by OpenRouter.
 
-In **Start a video chat**, **Disable all tools for this chat** omits both local tools and hosted web search. This choice is stored with the chat and does not become the default for other chats. Automatic audio transcription is preprocessing, not a model-selected tool, and remains available. **Change prompt profile and tools** explicitly replaces the chat's tool setup and can enable tools again.
+In **Start a video chat**, **Tools for this chat** has one checkbox per tool, all on by default; the high-resolution and video-information tools appear only for YouTube videos. **Deselect all tools** turns them all off and then becomes **Select all tools**. The choice is stored with the chat and does not become the default for other chats. Automatic audio transcription is preprocessing, not a model-selected tool, and remains available. **Change prompt profile and tools** explicitly replaces the chat's tool setup and can enable tools again.
 
 ## Prompts
 
@@ -76,7 +76,7 @@ Providers limit how large a request may be, and SceneAccess sends the whole vide
 
 For a llama.cpp chat, enter the server's chat-completions URL, for example `http://192.168.1.20:8080/v1/chat/completions`, an optional model name (a server with one model answers whatever the name), and the optional key of `llama-server --api-key`. Only that key is sent to the server, never the OpenRouter key. The server needs a vision model with its `--mmproj` file, video support (llama.cpp from June 2026, with ffmpeg and ffprobe installed; on Windows a build from after 24 August 2026), and `--jinja` for the tools. OpenRouter's routing, provider exclusions and hosted web search are not used for it.
 
-In **Start a video chat**, a llama.cpp chat offers two extras, both off by default and available only with an OpenRouter API key: **Search the web through OpenRouter** sends only search terms, and **Transcribe the speech through OpenRouter and ElevenLabs** sends the video's sound. **Chat settings** lists the models your server offers.
+In **Start a video chat**, a llama.cpp chat uses OpenRouter only for two things, both available only with an OpenRouter API key: the tool **Web search through OpenRouter** sends only search terms, and **Transcribe the speech through OpenRouter and ElevenLabs**, which is not a tool and off by default, sends the video's sound. **Chat settings** lists the models your server offers.
 
 ## Video size
 
@@ -149,7 +149,7 @@ All code is in the `sceneaccess` package:
 - `config.py`: settings in `config.json`
 - `speech.py`: announcements through the running screen reader
 
-`SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`: one file per module (`prompts.py` is covered by the main window and dialog tests), further files for behaviour that spans modules (request lifetime and controls, llama.cpp chats, downloads and their cleanup, worker processes, the single instance, startup), and checks of the documentation language, the database name, the default model and the release files. On Windows, `tests/conftest.py` runs all tests on a separate invisible desktop, so their windows never appear on the screen or reach the screen reader.
+`SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`: one file per module (`prompts.py` is covered by the main window and dialog tests), further files for behaviour that spans modules (request lifetime and controls, llama.cpp chats, downloads and their cleanup, worker processes, the single instance, startup), and checks of the documentation language, the database name, the default model and the release files. `tests/conftest.py` holds fixtures several files share, such as a local video web server, and on Windows runs all tests on a separate invisible desktop, so their windows never appear on the screen or reach the screen reader.
 
 Known gaps in the tests:
 

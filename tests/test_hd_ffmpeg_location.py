@@ -8,7 +8,6 @@ import pytest
 from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
 
 from sceneaccess.youtube import download_section
-from test_playlist_rejection import video_server
 
 
 @pytest.fixture

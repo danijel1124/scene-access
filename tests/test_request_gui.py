@@ -274,7 +274,7 @@ def test_separate_top_level_windows_reuse_same_chat(tmp_path, monkeypatch):
         assert second.config.max_tool_rounds == 12
         monkeypatch.setattr(gui.MainFrame, '_send', lambda *a, **kw: None)
         launcher.pending_size_skip = 'fixture/model'
-        launcher._start_chat(video, 'New', 'Question', '', disable_tools=True)
+        launcher._start_chat(video, 'New', 'Question', '', tools=())
         created = manager.frames[-1]
         assert created is not launcher and launcher.current is None
         assert created.current.tools == []

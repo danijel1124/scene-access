@@ -815,7 +815,11 @@ class MainFrame(NewChatMixin, wx.Frame):
         # Nothing of the failed turn was stored; remove its progress items from the list.
         self.render_current()
         self.status.SetLabel("The request failed. The chat and local video context are preserved.")
-        wx.MessageBox(error, "OpenRouter error", wx.OK | wx.ICON_ERROR)
+        provider = self.current.provider if self.current else OPENROUTER
+        if provider == LLAMA_CPP and "exceeds the available context size" in error:
+            error += ("\n\nThe video does not fit into the llama.cpp server's context. Start the server with a larger "
+                      "-c, a lower --video-fps, or shrink the video in Chat settings.")
+        wx.MessageBox(error, f"{PROVIDER_LABELS.get(provider, provider)} error", wx.OK | wx.ICON_ERROR)
 
 
 def _report_unexpected_error(error_type, error, trace) -> None:

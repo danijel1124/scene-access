@@ -9,7 +9,7 @@ import threading
 from functools import partial
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Collection
 
 import wx
 
@@ -86,8 +86,7 @@ class NewChatMixin:
             if sent != SIZE_BACK:
                 break
         if isinstance(sent, Path):
-            self._start_chat(source, source.name, *start[:2], sent_video=sent,
-                             disable_tools=start[2] if len(start) > 2 else False)
+            self._start_chat(source, source.name, *start[:2], sent_video=sent, tools=start[2] if len(start) > 2 else None)
 
     def new_from_youtube(self) -> None:
         with wx.TextEntryDialog(self, "YouTube link:", "Start chat from YouTube", url_from_clipboard()) as dialog:
@@ -146,7 +145,7 @@ class NewChatMixin:
         if isinstance(sent, Path):
             path, title, info = downloaded
             self._start_chat(path, title, *start[:2], source_url=url, video_info=info, sent_video=sent,
-                             disable_tools=start[2] if len(start) > 2 else False)
+                             tools=start[2] if len(start) > 2 else None)
 
     def _choose_youtube_video(self, url: str, target_dir: Path) -> tuple[str, tuple | None] | None:
         """List metadata first; select one video and reuse an existing completed file."""
@@ -393,38 +392,40 @@ class NewChatMixin:
         save_config(self.config_path, self.config)
         return True
 
-    def _ask_first_question(self, online: bool, previous: tuple[str, str] | tuple[str, str, bool] | None = None
-                            ) -> tuple[str, str, bool] | None:
-        """Returns the question, profile name and disable-tools flag, or None if cancelled. previous refills
-        the dialog when the user came back from the size question."""
+    def _ask_first_question(self, online: bool, previous: tuple[str, str] | tuple[str, str, tuple[str, ...]] | None = None
+                            ) -> tuple[str, str, tuple[str, ...]] | None:
+        """Returns the question, profile name and the keys of the chosen tools, or None if cancelled. previous
+        refills the dialog when the user came back from the size question."""
         question, profile = previous[:2] if previous else ("Describe this video.", self.config.profile)
-        disable_tools = previous[2] if previous and len(previous) > 2 else False
-        # A new chat starts without OpenRouter extras; coming back from the size question keeps the choice.
-        extras = getattr(self, "chat_extras", (False, False)) if previous else (False, False)
+        # A new chat starts with all tools and without transcription through OpenRouter; coming back from
+        # the size question keeps the choices.
+        tools = previous[2] if previous and len(previous) > 2 else None
+        transcript = getattr(self, "chat_transcript", False) if previous else False
         config = self.config
         with StartChatDialog(self, config.profiles, profile or NO_PROFILE, online=online, max_height=config.youtube_max_height,
                              auto_shrink=config.auto_shrink, shrink_target_mb=config.shrink_target_mb,
-                             question=question, disable_tools=disable_tools, llama_cpp=config.provider == LLAMA_CPP,
-                             openrouter_key=bool(self.openrouter_key()), extras=extras) as dialog:
+                             question=question, tools=tools, llama_cpp=config.provider == LLAMA_CPP,
+                             openrouter_key=bool(self.openrouter_key()), transcript=transcript) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return None
             question, profile = dialog.value()
-            disable_tools = dialog.disable_tools.GetValue()
-            self.chat_extras = dialog.extras() if config.provider == LLAMA_CPP else (False, False)
+            tools = dialog.chosen_tools()
+            self.chat_transcript = config.provider == LLAMA_CPP and dialog.transcript.GetValue()
             # The profile and the advanced settings are preselected next time.
             chosen = replace(config, profile=profile or NO_PROFILE, youtube_max_height=dialog.max_height,
                              auto_shrink=dialog.auto_shrink, shrink_target_mb=dialog.shrink_target_mb)
         if chosen != config:
             self.config = chosen
             save_config(self.config_path, self.config)
-        return (question, profile, disable_tools) if question else None
+        return (question, profile, tools) if question else None
 
     def _start_chat(self, source: Path, title: str, question: str, profile: str, *, source_url: str = "",
                     video_info: dict[str, Any] | None = None, sent_video: Path | None = None,
-                    disable_tools: bool = False) -> None:
+                    tools: Collection[str] | None = None) -> None:
+        """tools holds the keys of the chosen tools (see tools.tool_key); None chooses all."""
         skip_model, self.pending_size_skip = self.pending_size_skip, ""
         provider = self.config.provider
-        web_search, openrouter_transcript = getattr(self, "chat_extras", (False, False))
+        openrouter_transcript = getattr(self, "chat_transcript", False)
         try:
             # Reading a large video can take a while, and one that does not fit into memory fails here.
             with wx.BusyCursor():
@@ -433,9 +434,8 @@ class NewChatMixin:
                     owner_id=self.owner_id, source_path=source, title=title, model="", initial_question=question,
                     # Frozen for this chat: they precede the video in every request (see VideoSession).
                     system_prompt=system_prompt(self.config.profile_text(profile)),
-                    tools=[] if disable_tools else tool_definitions(
-                        online_video=bool(source_url), web_search=provider == OPENROUTER,
-                        local_web_search=provider == LLAMA_CPP and web_search),
+                    tools=tool_definitions(online_video=bool(source_url), web_search=provider == OPENROUTER,
+                                           local_web_search=provider == LLAMA_CPP, chosen=tools),
                     source_url=source_url, video_info=video_info,
                     # The first request decides whether this model needs a transcript of the sound.
                     transcript_state=TRANSCRIPT_PENDING, audio_only=self.config.audio_only_auto, sent_video=sent_video,
