@@ -15,6 +15,8 @@ SceneAccess opens with its main window, the list of **Recent video chats**. **En
 
 The **Chat history** list contains one item per message. **Enter** on an item opens it in a read-only text field for reading line by line. Below every answer, a usage line shows the model that actually answered (useful with `openrouter/auto`), the prompt tokens read from the cache (hit), not served from the cache (miss) and written to the cache, and, when tools were used, the number of requests.
 
+The context menu of the Chat history (Applications key, Shift+F10 or a right click) works on an answer's round: its question, its tool steps with their images, and the answer. **Hide this answer from the model** keeps the round in the history, marked "[hidden from model]", but no longer sends it; **Show this answer to the model again** undoes that. **Delete this answer from the history** removes the round and its images after asking. Both are useful to compare the answers of different models to the same question, and both make the provider read the conversation from that point uncached once. The first question and the transcript belong to the video and stay. While the chat is answering, its history cannot be changed.
+
 When a running screen reader such as NVDA is detected, SceneAccess announces that an answer is being generated, announces every tool the model runs on this computer, and moves the focus to the new answer when it arrives in the active chat window.
 
 Direct announcements use only recognised screen-reader bridges. Available standalone synthesizers such as SAPI, ESpeak or Speech Dispatcher do not trigger speech; unknown output backends remain silent. No direct Orca announcement integration is included.

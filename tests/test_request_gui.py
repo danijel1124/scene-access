@@ -2,6 +2,7 @@ import pytest
 import wx
 
 from sceneaccess import gui
+from sceneaccess.chat_history import chat_history_entries
 from sceneaccess.openrouter import Completion, Turn
 
 
@@ -120,7 +121,7 @@ def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
     saved = frame.store.get_session(frame.current.id,gui.OWNER_ID)
     assert saved.transcript_state == TRANSCRIPT_FAILED
     assert 'excluded' in saved.transcript.lower() and 'elevenlabs' in saved.transcript.lower()
-    entries = gui.chat_history_entries(saved.initial_question,saved.history,saved.transcript_state,saved.transcript)
+    entries = chat_history_entries(saved.initial_question,saved.history,saved.transcript_state,saved.transcript)
     assert any('excluded' in text.lower() for text, _ in entries)
 
 

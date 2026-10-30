@@ -15,7 +15,7 @@ from urllib.request import urlopen
 import wx
 
 from .app_window import AppWindow, open_store, resolve_openrouter_key
-from .chat_history import chat_history_entries, transcript_entry
+from .chat_history import ANSWER, NOTE, chat_history_rows, transcript_entry
 from .chat_list import ChatListFrame
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
 from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
@@ -27,7 +27,8 @@ from .openrouter import OpenRouterClient
 from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .request_control import RequestControl, RequestCancelled
 from .prompts import system_prompt
-from .session_store import TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession, VideoSessionStore, SessionNotFound
+from .session_store import (EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING,
+                            VideoSession, VideoSessionStore, SessionNotFound)
 from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
@@ -232,6 +233,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         # What the Chat history shows, and what Enter opens in the reader (longer for the transcript).
         self.history_items: list[str] = []
         self.reader_texts: list[str] = []
+        self.history_rows: list[tuple[int | None, str]] = []
         # "Don't show this dialog again" for a model: chosen in the size dialog, kept once the answer arrives.
         self.pending_size_skip = ""
         self.size_skip_after_answer: tuple[str, str] | None = None
@@ -293,6 +295,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.send_button.Bind(wx.EVT_BUTTON, self.on_send)
         self.pause_button.Bind(wx.EVT_BUTTON, self.on_pause)
         self.chat_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda _event: self.open_selected_message())
+        self.chat_list.Bind(wx.EVT_CONTEXT_MENU, self.on_history_menu)
         # Enter is handled before the panel's keyboard navigation can consume it.
         self.Bind(wx.EVT_CHAR_HOOK, self.on_char_hook)
 
@@ -540,15 +543,80 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         model = session.model or f"{self.config.model_for(session.provider)} (from Settings)"
         self.status.SetLabel(f"{session.title} | {model} via {PROVIDER_LABELS.get(session.provider, session.provider)}"
                              f"\n{context} {source}")
-        entries = chat_history_entries(session.initial_question, session.history, session.transcript_state, session.transcript)
-        items = [shown for shown, _full in entries]
+        rows = chat_history_rows(session.initial_question, session.history, session.transcript_state, session.transcript)
+        items = [shown for shown, _full, _index, _kind in rows]
         self.history_items = items
-        self.reader_texts = [full for _shown, full in entries]
+        self.reader_texts = [full for _shown, full, _index, _kind in rows]
+        # Which stored entry each item shows, and what it is: for the context menu and the selection.
+        self.history_rows = [(index, kind) for _shown, _full, index, kind in rows]
         self.chat_list.Set(items)
         # Select the newest answer rather than its usage line, so it is what gets read first.
-        answers = [index for index, item in enumerate(items) if item.startswith("Model: ")]
+        answers = [position for position, (_index, kind) in enumerate(self.history_rows) if kind == ANSWER]
         self.chat_list.SetSelection(answers[-1] if answers else len(items) - 1)
         self._set_chat_mutation_buttons()
+
+    def on_history_menu(self, event: wx.ContextMenuEvent) -> None:
+        """The context menu of the Chat history: a round can be taken out of the context or deleted."""
+        position = event.GetPosition()
+        if position != wx.DefaultPosition:
+            # A right click: the list does not select what was clicked, so select it first. The keyboard
+            # (Applications key, Shift+F10) gives no position and means the selected item.
+            clicked = self.chat_list.HitTest(self.chat_list.ScreenToClient(position))
+            if clicked != wx.NOT_FOUND:
+                self.chat_list.SetSelection(clicked)
+        self.show_history_menu(self.chat_list.GetSelection())
+
+    def show_history_menu(self, position: int) -> None:
+        if not self.current or not 0 <= position < len(self.history_rows):
+            return
+        index = self.history_rows[position][0]
+        if index is None:
+            return  # The first question and the transcript belong to the video, not to a round.
+        if self._chat_busy():
+            self.status.SetLabel("The chat is answering. Its history can be changed once the answer is complete.")
+            announce("The chat is still answering.")
+            return
+        in_context = not self.current.history[index].get(EXCLUDED)
+        menu = wx.Menu()
+        toggle = menu.Append(wx.ID_ANY, "Hide this answer from the model (cache miss from here on)" if in_context
+                             else "Show this answer to the model again (cache miss from here on)").GetId()
+        delete = menu.Append(wx.ID_ANY, "Delete this answer from the history (cache miss from here on)").GetId()
+        chosen = self.chat_list.GetPopupMenuSelectionFromUser(menu)
+        menu.Destroy()
+        if chosen == toggle:
+            self.set_answer_in_context(index, not in_context)
+        elif chosen == delete:
+            self.delete_answer(index)
+
+    def set_answer_in_context(self, index: int, in_context: bool) -> None:
+        """Takes the answer's round (its question, tool steps and the answer) out of the context or puts it back."""
+        if not self.current or self._chat_busy():
+            return
+        self.store.set_round_in_context(self.current.id, OWNER_ID, index, in_context)
+        self._history_changed(index, "The model sees this answer again." if in_context else
+                              "The answer and its question are hidden from the model; they stay in the history.")
+
+    def delete_answer(self, index: int) -> None:
+        """Deletes the answer's round, with its question, tool steps and images, from the history and the context."""
+        if not self.current or self._chat_busy():
+            return
+        if wx.MessageBox("This answer, its question and its tool steps will be deleted from the chat, and the "
+                         "model will no longer see them.", "Delete this answer?", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
+            return
+        self.store.delete_round(self.current.id, OWNER_ID, index)
+        self._history_changed(index, "The answer was deleted.")
+
+    def _history_changed(self, index: int, message: str) -> None:
+        self.current = self.store.get_session(self.current.id, OWNER_ID)
+        self.render_current()
+        # Stay where the change happened rather than jumping to the newest answer.
+        positions = [position for position, (row_index, _kind) in enumerate(self.history_rows)
+                     if row_index is not None and row_index >= index]
+        if positions:
+            self.chat_list.SetSelection(positions[0])
+        self.status.SetLabel(self.status.GetLabel() + f"\n{message}")
+        announce(message)
+        self.chat_list.SetFocus()
 
     def _chat_busy(self) -> bool:
         # A closed window's cancelled worker may still be committing local state.
@@ -765,6 +833,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             return
         self.history_items.append(item)
         self.reader_texts.append(item if full is None else full)
+        self.history_rows.append((None, NOTE))  # Not stored yet, so not part of a round.
         self.chat_list.Append(item)
         if announce_it:
             announce(item, interrupt=False)

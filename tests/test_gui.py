@@ -7,6 +7,61 @@ from sceneaccess.openrouter import Completion, Turn
 from sceneaccess.prompts import BASE_SYSTEM_PROMPT
 
 
+def test_the_history_menu_hides_shows_and_deletes_an_answer_round(tmp_path, monkeypatch):
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gui.wx, "MessageBox", lambda *args, **kwargs: wx.YES)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    app = wx.App(False)
+    frame = gui.ChatFrame()
+    try:
+        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+                                                   initial_question="First?")
+        for question, answer in ((None, "First answer."), ("Second?", "Second answer.")):
+            entries = ([{"role": "user", "content": question}] if question else []) + [
+                {"role": "assistant", "content": answer}]
+            frame.store.record_turn(frame.current.id, gui.OWNER_ID, entries)
+        frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        frame.render_current()
+        choices = []
+
+        def choose(position):
+            def popup(menu, *args):
+                choices.append(menu.FindItemByPosition(position).GetItemLabelText())
+                return menu.FindItemByPosition(position).GetId()
+            monkeypatch.setattr(frame.chat_list, "GetPopupMenuSelectionFromUser", popup)
+
+        second = frame.history_items.index("You: Second?")
+        frame.chat_list.SetSelection(second)
+        choose(0)
+
+        class KeyboardEvent:  # The Applications key: no position, the selected item is meant.
+            def GetPosition(self): return wx.DefaultPosition
+
+        frame.on_history_menu(KeyboardEvent())
+        assert choices[-1].startswith("Hide this answer from the model")
+        assert frame.history_items[second] == "[hidden from model] You: Second?"
+        assert "[hidden from model] Model: Second answer." in frame.history_items
+        assert frame.chat_list.GetSelection() == second and "Second answer." not in json.dumps(frame.current.messages)
+        frame.show_history_menu(second)
+        assert choices[-1].startswith("Show this answer to the model again")
+        assert "Second answer." in json.dumps(frame.current.messages)
+        choose(1)
+        frame.show_history_menu(frame.history_items.index("Model: First answer."))
+        assert choices[-1].startswith("Delete this answer from the history")
+        assert [entry["content"] for entry in frame.current.history] == ["Second?", "Second answer."]
+        # The first question belongs to the video, and a busy chat keeps its history.
+        frame.show_history_menu(0)
+        frame._request = gui.RequestControl()
+        frame.show_history_menu(frame.history_items.index("Model: Second answer."))
+        assert len(choices) == 3 and "answering" in frame.status.GetLabel()
+        frame._request = None
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
 def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     app = wx.App(False)

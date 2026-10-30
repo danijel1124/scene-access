@@ -36,6 +36,46 @@ ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url",
 TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED = "pending", "none", "done", "failed"
 TRANSCRIPT_INTRO = ("You cannot hear this video, so here is an automatic transcript of its speech. Speech "
                     "recognition may contain errors; times are mm:ss from the start of the video.\n\n")
+# A stored entry marked like this stays in the Chat history but is not sent to the model.
+EXCLUDED = "excluded"
+
+
+def is_question(message: dict[str, Any]) -> bool:
+    """A follow-up question; images the model asked for are user messages too, with a list as content."""
+    return message.get("role") == "user" and isinstance(message.get("content"), str)
+
+
+def is_answer(message: dict[str, Any]) -> bool:
+    return message.get("role") == "assistant" and not message.get("tool_calls")
+
+
+def round_bounds(history: list[dict[str, Any]], index: int) -> tuple[int, int]:
+    """The first and last history index of the round history[index] belongs to: from its question (or the
+    chat's start for the first round) through tool calls, results and images to its answer."""
+    start = index
+    while start > 0 and not is_question(history[start]):
+        start -= 1
+    end = index
+    while end < len(history) - 1 and not is_answer(history[end]) and not is_question(history[end + 1]):
+        end += 1
+    return start, end
+
+
+def _merge_user_runs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Joins user messages that follow each other, e.g. after the first answer was taken out of the context:
+    some chat templates, such as Gemma's and Mistral's, refuse roles that do not alternate."""
+    merged: list[dict[str, Any]] = []
+    for message in messages:
+        if merged and message.get("role") == "user" and merged[-1].get("role") == "user":
+            parts = [part for item in (merged[-1], message) for part in _content_parts(item["content"])]
+            merged[-1] = {**merged[-1], "content": parts}
+        else:
+            merged.append(message)
+    return merged
+
+
+def _content_parts(content: Any) -> list[dict[str, Any]]:
+    return list(content) if isinstance(content, list) else [{"type": "text", "text": str(content)}]
 
 
 @dataclass
@@ -91,14 +131,14 @@ class VideoSession:
         system = [{"role": "system", "content": self.system_prompt}] if self.system_prompt else []
         # The transcript comes before the video's cache breakpoint, so it is cached together with the video.
         transcript = [{"type": "text", "text": TRANSCRIPT_INTRO + self.transcript}] if self.transcript else []
-        return [*system, {
+        return _merge_user_runs([*system, {
             "role": "user",
             "content": [
                 {"type": "text", "text": self.initial_question},
                 *transcript,
                 {"type": "video_url", "video_url": {"url": self.video_data_url}, "cache_control": {"type": "ephemeral"}},
             ],
-        }, *(self.wire_message(message) for message in self.history)]
+        }, *(self.wire_message(message) for message in self.history if not message.get(EXCLUDED))])
 
     def wire_message(self, message: dict[str, Any]) -> dict[str, Any]:
         """Returns a stored message as sent to the provider: protocol fields only, images inlined."""
@@ -332,4 +372,43 @@ class VideoSessionStore:
 
     def build_follow_up_messages(self, session_id: str, owner_id: str, question: str) -> list[dict[str, Any]]:
         session = self.get_session(session_id, owner_id)
-        return [*session.messages, {"role": "user", "content": question}]
+        return _merge_user_runs([*session.messages, {"role": "user", "content": question}])
+
+    def set_round_in_context(self, session_id: str, owner_id: str, index: int, in_context: bool) -> None:
+        """Takes the round of history[index] out of what is sent to the model, or puts it back; the Chat
+        history keeps showing it. The round is found again in the stored history, inside the transaction."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            history = self._locked_history(conn, session_id, owner_id)
+            start, end = round_bounds(history, index)
+            for entry in history[start:end + 1]:
+                if in_context:
+                    entry.pop(EXCLUDED, None)
+                else:
+                    entry[EXCLUDED] = True
+            conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
+                         (json.dumps(history), session_id, owner_id))
+
+    def delete_round(self, session_id: str, owner_id: str, index: int) -> None:
+        """Deletes the round of history[index] from the chat, with the images the model asked for in it."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            history = self._locked_history(conn, session_id, owner_id)
+            start, end = round_bounds(history, index)
+            images = [Path(part["image_url"]["url"][len(SESSION_FILE_PREFIX):]).name
+                      for entry in history[start:end + 1] if isinstance(entry.get("content"), list)
+                      for part in entry["content"] if part.get("type") == "image_url"
+                      and str((part.get("image_url") or {}).get("url", "")).startswith(SESSION_FILE_PREFIX)]
+            conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
+                         (json.dumps(history[:start] + history[end + 1:]), session_id, owner_id))
+        # Only once the history no longer refers to them.
+        for name in images:
+            (self.sessions_dir / session_id / name).unlink(missing_ok=True)
+
+    @staticmethod
+    def _locked_history(conn: sqlite3.Connection, session_id: str, owner_id: str) -> list[dict[str, Any]]:
+        row = conn.execute("SELECT history_json FROM sessions WHERE id = ? AND owner_id = ?",
+                           (session_id, owner_id)).fetchone()
+        if row is None:
+            raise SessionNotFound(session_id)
+        return json.loads(row[0])

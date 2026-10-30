@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from sceneaccess.session_store import SessionNotFound, VideoSessionStore
+from sceneaccess.session_store import SessionNotFound, VideoSessionStore, round_bounds
 
 
 def test_chats_from_the_first_release_still_open_after_the_new_columns_are_added(tmp_path: Path):
@@ -383,6 +383,69 @@ def test_chat_settings_change_the_model_and_decide_about_the_transcript_again(tm
     store.update_chat_settings(session.id, "local", "", True)
     kept = store.get_session(session.id, "local")
     assert (kept.model, kept.audio_only, kept.transcript_state, kept.transcript) == ("", True, "done", "[00:01] Hello")
+
+
+def chat_with_two_rounds(tmp_path: Path):
+    """History: 0 tool call, 1 tool result, 2 image, 3 first answer, 4 second question, 5 second answer."""
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="o", source_path=video, title="T", model="", initial_question="First?")
+    (store.sessions_dir / session.id / "frame_a.jpg").write_bytes(b"jpg")
+    call = {"id": "c1", "type": "function", "function": {"name": "zoom_frame", "arguments": "{}"}}
+    store.record_turn(session.id, "o", [
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "c1", "content": "Image follows."},
+        {"role": "user", "content": [{"type": "text", "text": "Image of 00:01"},
+                                     {"type": "image_url", "image_url": {"url": "session-file:frame_a.jpg"}}]},
+        {"role": "assistant", "content": "First answer."}])
+    store.record_turn(session.id, "o", [{"role": "user", "content": "Second?"},
+                                        {"role": "assistant", "content": "Second answer."}])
+    return store, session
+
+
+def texts(messages):
+    return [part.get("text") if isinstance(part, dict) else part for message in messages
+            for part in (message["content"] if isinstance(message["content"], list) else [message["content"]])]
+
+
+def test_a_round_reaches_from_its_question_to_its_answer(tmp_path: Path):
+    store, session = chat_with_two_rounds(tmp_path)
+    history = store.get_session(session.id, "o").history
+    # The first round has no question of its own: it starts with the chat.
+    assert [round_bounds(history, index) for index in range(6)] == [(0, 3)] * 4 + [(4, 5)] * 2
+
+
+def test_a_round_out_of_the_context_stays_in_the_history_and_can_come_back(tmp_path: Path):
+    store, session = chat_with_two_rounds(tmp_path)
+    store.set_round_in_context(session.id, "o", 5, False)
+    out = store.get_session(session.id, "o")
+    assert len(out.history) == 6 and [entry.get("excluded") for entry in out.history[4:]] == [True, True]
+    sent = texts(store.build_follow_up_messages(session.id, "o", "Third?"))
+    assert "Second?" not in sent and "Second answer." not in sent and "First answer." in sent
+    assert sent[-1] == "Third?"
+    store.set_round_in_context(session.id, "o", 4, True)
+    assert "Second answer." in texts(store.get_session(session.id, "o").messages)
+
+
+def test_without_the_first_answer_the_video_and_the_next_question_become_one_message(tmp_path: Path):
+    store, session = chat_with_two_rounds(tmp_path)
+    store.set_round_in_context(session.id, "o", 3, False)
+    messages = store.get_session(session.id, "o").messages
+    # Roles still alternate, which chat templates such as Gemma's require.
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert [part["type"] for part in messages[0]["content"]] == ["text", "video_url", "text"]
+    assert messages[0]["content"][-1]["text"] == "Second?"
+
+
+def test_deleting_a_round_removes_its_entries_and_images(tmp_path: Path):
+    store, session = chat_with_two_rounds(tmp_path)
+    image = store.sessions_dir / session.id / "frame_a.jpg"
+    store.delete_round(session.id, "o", 1)
+    kept = store.get_session(session.id, "o")
+    assert [entry["content"] for entry in kept.history] == ["Second?", "Second answer."]
+    assert not image.exists()
+    assert "First answer." not in texts(kept.messages)
 
 
 def test_moving_a_chat_to_another_provider_stores_it_and_retries_a_skipped_transcript(tmp_path: Path):
