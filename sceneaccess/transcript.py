@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import AUTO_ROUTER, ModelCatalog
+from .providers import LLAMA_CPP
 from .session_store import VideoSession
 from .tools import format_time, local_video, run_ffmpeg
 from .request_control import RequestControl
@@ -20,6 +21,9 @@ MAX_LINE_SECONDS = 15.0
 
 def needs_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
     """True unless the chat's model is known to hear the video's sound."""
+    if session.provider == LLAMA_CPP:
+        # llama.cpp reads only the pictures of a video, even for models that can hear.
+        return True
     if session.audio_only and session.model == AUTO_ROUTER:
         return False
     # Unknown models, and openrouter/auto without the audio-only setting, may not hear; a transcript is safe.

@@ -1,12 +1,12 @@
 # SceneAccess
 
-SceneAccess is a native, accessible tool for conversations about videos, made for blind and visually impaired people. It sends a local or YouTube video to a vision model through OpenRouter, keeps the video context locally, continues follow-up questions with a stable OpenRouter session ID, and lets the model look closer with tools.
+SceneAccess is a native, accessible tool for conversations about videos, made for blind and visually impaired people. It sends a local or YouTube video to a vision model through OpenRouter or to your own llama.cpp server, keeps the video context locally, continues follow-up questions with a stable OpenRouter session ID, and lets the model look closer with tools.
 
 [German translation](README.de.md)
 
 ## Usage
 
-1. Open **Settings** and enter a model, base URL, and optionally an API key.
+1. Open **Settings**, choose the **provider for new chats**, and enter the OpenRouter model and API key, or the URL of your own llama.cpp server (see [Own llama.cpp server](#own-llamacpp-server)).
 2. Choose **New video chat**, then **Start chat from local file** to select a local `.mp4`, `.webm`, or `.mov` file, or **Start chat from YouTube** to enter a link. A copied link is suggested automatically.
 3. Enter the first question and choose a **prompt profile**. **Enter** starts the chat, **Shift+Enter** inserts a line break.
 4. Ask follow-up questions in the question field. **Enter** sends the question, **Shift+Enter** inserts a line break.
@@ -48,7 +48,7 @@ The model decides itself when to use a tool. Every call and result of the tools 
 - **Zoom into a frame**: a still image of one moment, optionally of a region, enlarged. From the original file, or from the stored copy if it was moved.
 - **Load in high resolution** (YouTube chats): loads one second at that moment in up to 2160p and zooms into it. Useful because the chat video is downloaded in a lower resolution.
 - **Read the video information** (YouTube chats): title, channel, upload date, description, tags and chapters, saved during the download.
-- **Web search**: run by OpenRouter within the same request, so it is not shown or announced while it runs; the sources are listed below the answer. OpenRouter charges each search in addition to the tokens.
+- **Web search**: run by OpenRouter within the same request, so it is not shown or announced while it runs; the sources are listed below the answer. OpenRouter charges each search in addition to the tokens. A llama.cpp chat gets it only if chosen when the chat starts: it is then a tool on this computer, shown and announced like the others, that asks the OpenRouter model from Settings to search; only the search terms leave this computer.
 
 Images are sent as a user message after the tool result, because many providers accept images only from the user. Models without tool support answer without tools; the status line then says so.
 
@@ -62,11 +62,21 @@ Not every model hears a video's sound: Gemini models do, many others such as GLM
 
 **Settings → Sound: With openrouter/auto, use only models that hear the video's sound** (off by default) limits `openrouter/auto` to models that take video with sound and support tools. New chats then need no transcript.
 
+llama.cpp reads only the pictures of a video, even with a model that can hear. A llama.cpp chat therefore gets a transcript only if **Transcribe the speech through OpenRouter and ElevenLabs** was chosen when it started; this sends the video's sound, never the picture, to OpenRouter. Otherwise its history records that the sound stayed private and the model cannot hear it.
+
 ## Providers and models
 
 **Settings → Providers and models** opens a dialog with two lists. Providers checked in the first list (**Space** toggles one) never answer, whatever the model; the list comes from OpenRouter. The second list holds models that `openrouter/auto` never picks: **Add model…** finds one by typing part of its ID, and a pattern with `*` such as `google/*` excludes a whole family. A model chosen in **Settings → Model** is always used, but its excluded providers still don't answer.
 
 Providers limit how large a request may be, and SceneAccess sends the whole video in every request. Tested in October 2026 through OpenRouter: Google AI Studio rejects requests of more than 20,000,000 bytes, so a video of more than about 19 MB once Base64-encoded (a file of about 14 MB), often with nothing more than "HTTP 400: Invalid content". Google Vertex rejected 29.8 MB Base64 and more; nothing between that and 0.1 MB was tested. Qwen allows 20 MiB Base64, Xiaomi MiMo took 30 MB Base64, and Meta's Muse Wonder takes files of up to 50 MiB (before Base64).
+
+## Own llama.cpp server
+
+**Settings → Provider for new chats** chooses between OpenRouter and your own [llama.cpp](https://github.com/ggml-org/llama.cpp) server. Each chat keeps the provider it started with, so a chat started on your server never sends its video to OpenRouter, even after Settings change. The status line names the chat's provider.
+
+For a llama.cpp chat, enter the server's chat-completions URL, for example `http://192.168.1.20:8080/v1/chat/completions`, an optional model name (a server with one model answers whatever the name), and the optional key of `llama-server --api-key`. Only that key is sent to the server, never the OpenRouter key. The server needs a vision model with its `--mmproj` file, video support (llama.cpp from June 2026, with ffmpeg and ffprobe installed; on Windows a build from after 24 August 2026), and `--jinja` for the tools. OpenRouter's routing, provider exclusions and hosted web search are not used for it.
+
+In **Start a video chat**, a llama.cpp chat offers two extras, both off by default and available only with an OpenRouter API key: **Search the web through OpenRouter** sends only search terms, and **Transcribe the speech through OpenRouter and ElevenLabs** sends the video's sound. **Chat settings** lists the models your server offers.
 
 ## Video size
 
@@ -100,14 +110,14 @@ When YouTube asks to "confirm you're not a bot", SceneAccess asks where you are 
 
 SceneAccess uses `wx.StandardPaths.GetUserDataDir()` and therefore the native per-user application-data directory of the operating system. No Linux, Windows, or Hermes paths are hard-coded.
 
-The API base URL must be a complete HTTP(S) chat-completions endpoint, such as `https://openrouter.ai/api/v1/chat/completions`; a trailing slash is accepted. Model, provider and audio-transcription endpoints are derived only from that same API origin and prefix. Ambiguous addresses, URL credentials, queries and fragments are rejected. There is no automatic fallback to another API provider; a custom endpoint must support the requested API.
+OpenRouter is always reached at `https://openrouter.ai/api/v1/chat/completions`. The llama.cpp server URL must be a complete HTTP(S) chat-completions endpoint; a trailing slash is accepted. Its model list is derived only from that same origin and prefix. Ambiguous addresses, URL credentials, queries and fragments are rejected. There is no automatic fallback from one provider to the other.
 
 `config.json` must contain a JSON object. Invalid JSON or a non-object root stops startup with an error showing the file path. The file is left unchanged; SceneAccess does not silently reset your settings or overwrite it.
 
 That directory contains:
 
-- `config.json`: settings, prompt profiles, and optionally the API key
-- `chats/sceneaccess.db`: titles, models, paths, prompts, tools, video information, transcripts, and conversation histories
+- `config.json`: settings, prompt profiles, and optionally the API keys
+- `chats/sceneaccess.db`: titles, providers, models, paths, prompts, tools, video information, transcripts, and conversation histories
 - `chats/sessions/<id>/context.data-url`: a complete reconstructable video copy as a Base64 data URL
 - `chats/sessions/<id>/frame_*.jpg`: the images the model asked for
 - `error.log`: unexpected errors, which are also shown in a message
@@ -124,7 +134,8 @@ All code is in the `sceneaccess` package:
 - `dialogs.py`: Settings with its File name, Prompt profiles and Providers and models sub-dialogs
 - `chat_dialogs.py`: the start-chat dialog with Advanced…, the video size questions, Chat settings, and the message reader
 - `chat_history.py`: the lines of the Chat history list and the usage line
-- `openrouter.py`: requests to OpenRouter and the tool-call loop
+- `openrouter.py`: requests to OpenRouter or a llama.cpp server, the tool-call loop, and the web search for llama.cpp chats
+- `providers.py`: the two providers and OpenRouter's fixed address
 - `request_control.py`: cancellation and pause/resume boundaries
 - `single_instance.py`: process locking and the fixed-message local window-activation channel
 - `worker_process.py`: interruptible network/media worker processes and child-process cleanup
@@ -138,11 +149,11 @@ All code is in the `sceneaccess` package:
 - `config.py`: settings in `config.json`
 - `speech.py`: announcements through the running screen reader
 
-`SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`: one file per module (`prompts.py` is covered by the main window and dialog tests), further files for behaviour that spans modules (request lifetime and controls, downloads and their cleanup, worker processes, the single instance, startup), and checks of the documentation language, the database name, the default model and the release files.
+`SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`: one file per module (`prompts.py` is covered by the main window and dialog tests), further files for behaviour that spans modules (request lifetime and controls, llama.cpp chats, downloads and their cleanup, worker processes, the single instance, startup), and checks of the documentation language, the database name, the default model and the release files. On Windows, `tests/conftest.py` runs all tests on a separate invisible desktop, so their windows never appear on the screen or reach the screen reader.
 
 Known gaps in the tests:
 
-- Real OpenRouter requests are not part of the tests, because they are billed; they are checked by hand. The tests use local HTTP servers and recorded responses instead.
+- Real OpenRouter requests are not part of the tests, because they are billed; they are checked by hand. The tests use local HTTP servers and recorded responses instead. Requests to a real llama.cpp server are also checked by hand only.
 - Loading a moment in high resolution from YouTube (`download_section`) needs the internet and has no test.
 - Announcements through a real screen reader are tested with fakes only and checked by hand with NVDA.
 - Private file permissions for `config.json` and the chat files are a Linux and macOS feature; on Windows these tests are skipped, and the files rely on the permissions of the user profile.

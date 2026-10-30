@@ -7,6 +7,7 @@ from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
+from .providers import OPENROUTER_URL
 from .session_store import VideoSession
 from .request_control import RequestControl
 from .worker_process import run_isolated_task
@@ -74,7 +75,8 @@ def _request_json(url: str, body: bytes, headers: dict[str, str]) -> tuple[int |
 
 
 class OpenRouterClient:
-    endpoint = "https://openrouter.ai/api/v1/chat/completions"
+    """Chat completions with OpenRouter, or with a llama.cpp server at another endpoint."""
+    endpoint = OPENROUTER_URL
 
     def __init__(self, api_key: str, base_url: str | None = None, opener: Callable[..., Any] = urlopen,
                  control: RequestControl | None = None, ignored_providers: tuple[str, ...] = ()):
@@ -91,11 +93,11 @@ class OpenRouterClient:
     def _post(self, payload: dict[str, Any], url: str | None = None) -> dict[str, Any]:
         if self.control:
             self.control.check_cancelled()
-        request = Request(
-            url or self.endpoint, data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            # A llama.cpp server without --api-key needs none.
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        request = Request(url or self.endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
         try:
             if self.control and self.opener is urlopen:
                 data = self._controlled_post(request)
@@ -130,6 +132,16 @@ class OpenRouterClient:
         payload = {"model": model, "input_audio": {"data": base64.b64encode(audio).decode("ascii"), "format": audio_format},
                    "response_format": "verbose_json", "timestamp_granularities": ["word", "segment"]}
         return self._post(payload, api_url(self.endpoint, "audio/transcriptions"))
+
+    def web_search(self, query: str, model: str, routing: dict[str, Any] | None = None) -> tuple[str, list[dict[str, str]]]:
+        """Searches the web with OpenRouter's search for a model elsewhere: only the query is sent.
+        routing holds the exclusions, see models.routing. Returns the findings and their sources."""
+        payload = {"model": model, "messages": [{"role": "user", "content": (
+            "Search the web for the following and report the relevant findings briefly, each with its source URL. "
+            f"Do not answer from memory.\n\n{query}")}],
+            "tools": [{"type": "openrouter:web_search", "parameters": {"max_results": 5}}], **(routing or {})}
+        message = self._post(payload)["choices"][0]["message"]
+        return message.get("content") or "", _sources(message)
 
     def run_turn(self, session: VideoSession, messages: list[dict[str, Any]], run_tool: Callable[[str, str], Any],
                  on_event: EventHandler | None = None, routing: dict[str, Any] | None = None,

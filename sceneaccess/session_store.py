@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .providers import OPENROUTER
+
 
 class SessionNotFound(KeyError):
     """The requested private session does not exist for this owner."""
@@ -21,11 +23,13 @@ SESSION_FILE_PREFIX = "session-file:"
 
 COLUMNS = ("id", "owner_id", "title", "source_path", "model", "initial_question", "history_json",
            "system_prompt", "tools_json", "source_url", "video_info_json", "transcript", "transcript_state", "audio_only",
-           "size_confirmed")
+           "size_confirmed", "provider", "openrouter_transcript")
 # Columns added after the first release, with the value older chats get. Older chats get no transcript,
-# so opening them does not change what is sent and their cache stays valid.
+# so opening them does not change what is sent and their cache stays valid. Chats from before llama.cpp
+# support were all answered by OpenRouter.
 ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url", "''"), ("video_info_json", "''"),
-                 ("transcript", "''"), ("transcript_state", "'none'"), ("audio_only", "'0'"), ("size_confirmed", "'0'"))
+                 ("transcript", "''"), ("transcript_state", "'none'"), ("audio_only", "'0'"), ("size_confirmed", "'0'"),
+                 ("provider", f"'{OPENROUTER}'"), ("openrouter_transcript", "'0'"))
 
 # transcript_state: "pending" until the first request decides whether the model needs a transcript,
 # "none" if it hears the video itself, "done" (text may be empty: no speech), or "failed".
@@ -59,6 +63,10 @@ class VideoSession:
     # A question with the too large stored video was answered, so the chat stops asking about its size
     # until its video or its Chat settings change.
     size_confirmed: bool = False
+    # Fixed when the chat starts, so its video never goes to another provider than the one chosen for it.
+    provider: str = OPENROUTER
+    # A llama.cpp chat may send its sound to OpenRouter's speech recognition only if the user allowed it.
+    openrouter_transcript: bool = False
 
     @property
     def directory(self) -> Path:
@@ -131,7 +139,8 @@ class VideoSessionStore:
     def create_session(self, *, owner_id: str, source_path: Path, title: str, model: str, initial_question: str,
                        system_prompt: str = "", tools: list[dict[str, Any]] | None = None, source_url: str = "",
                        video_info: dict[str, Any] | None = None, transcript_state: str = TRANSCRIPT_NONE,
-                       audio_only: bool = False, sent_video: Path | None = None) -> VideoSession:
+                       audio_only: bool = False, sent_video: Path | None = None, provider: str = OPENROUTER,
+                       openrouter_transcript: bool = False) -> VideoSession:
         """sent_video is a smaller copy to send instead of source_path, e.g. shrunk for a provider's size limit."""
         source_path = Path(source_path).resolve()
         sent = Path(sent_video) if sent_video else source_path
@@ -144,7 +153,8 @@ class VideoSessionStore:
         directory = self.sessions_dir / session_id
         values = (session_id, owner_id, title, str(source_path), model, initial_question, "[]", system_prompt,
                   json.dumps(tools or []), source_url, json.dumps(video_info) if video_info else "",
-                  "", transcript_state, "1" if audio_only else "0", "0")
+                  "", transcript_state, "1" if audio_only else "0", "0", provider,
+                  "1" if openrouter_transcript else "0")
         # A collision must never authorize cleanup of an existing directory or file.
         directory.mkdir(mode=0o700)
         data_url_path = directory / "context.data-url"
@@ -180,6 +190,7 @@ class VideoSessionStore:
             video_info=json.loads(values["video_info_json"]) if values["video_info_json"] else None,
             transcript=values["transcript"], transcript_state=values["transcript_state"],
             audio_only=values["audio_only"] == "1", size_confirmed=values["size_confirmed"] == "1",
+            provider=values["provider"], openrouter_transcript=values["openrouter_transcript"] == "1",
         )
 
     def list_sessions(self, owner_id: str) -> list[VideoSession]:

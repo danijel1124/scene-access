@@ -6,6 +6,7 @@ import pytest
 from sceneaccess import gui, dialogs
 from sceneaccess.config import AppConfig
 from sceneaccess.models import api_url
+from sceneaccess.providers import OPENROUTER_URL
 
 
 @pytest.mark.parametrize('which', ['chat', 'exclusions'])
@@ -19,7 +20,7 @@ def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which
     queried, proceed, completed = threading.Event(), threading.Event(), threading.Event()
     threads = []
     class Catalog:
-        url = api_url(AppConfig.base_url, 'models')
+        url = api_url(OPENROUTER_URL, 'models')
         def model_ids(self):
             threads.append(wx.IsMainThread())
             queried.set()
@@ -27,7 +28,7 @@ def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which
             return ['fixture']
         def providers(self): return []
     class ResultDialog:
-        def __init__(self, *args): completed.set()
+        def __init__(self, *args, **kwargs): completed.set()
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def ShowModal(self): return wx.ID_CANCEL

@@ -12,8 +12,9 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
+from .providers import OPENROUTER
 from .session_store import SESSION_FILE_PREFIX, VideoSession
 from .request_control import RequestControl, RequestCancelled
 from .worker_process import run_isolated_task
@@ -21,6 +22,8 @@ from .worker_process import run_isolated_task
 ZOOM_FRAME = "zoom_frame"
 HD_FRAME = "high_resolution_frame"
 VIDEO_INFO = "video_information"
+# For llama.cpp chats: a search this computer runs through OpenRouter; only the search terms leave it.
+WEB_SEARCH = "web_search"
 
 _REGION_PROPERTIES = {
     "x": {"type": "number", "description": "Left edge of the region, 0 to 1 of the frame width. Default 0."},
@@ -36,8 +39,10 @@ def _function(name: str, description: str, properties: dict[str, Any], required:
         "type": "object", "properties": properties, "required": required}}}
 
 
-def tool_definitions(*, online_video: bool, web_search: bool = True) -> list[dict[str, Any]]:
-    """The tools of a new chat, in a fixed order so the request stays byte-identical for the cache."""
+def tool_definitions(*, online_video: bool, web_search: bool = True,
+                     local_web_search: bool = False) -> list[dict[str, Any]]:
+    """The tools of a new chat, in a fixed order so the request stays byte-identical for the cache.
+    web_search is OpenRouter's own search; local_web_search the web_search tool for llama.cpp chats."""
     tools = [_function(
         ZOOM_FRAME,
         "Returns a still image of one moment of the video, optionally only a region of it, enlarged. Use it to "
@@ -60,11 +65,26 @@ def tool_definitions(*, online_video: bool, web_search: bool = True) -> list[dic
     if web_search:
         # Run by OpenRouter within the same request; the model decides whether and how often to search.
         tools.append({"type": "openrouter:web_search", "parameters": {"max_results": 5}})
+    if local_web_search:
+        tools.append(_function(
+            WEB_SEARCH,
+            "Searches the web and returns the findings with their sources. Only the query leaves this computer, "
+            "never the video. Use it when it helps to identify something you have found.",
+            {"query": {"type": "string", "description": "What to search for."}}, ["query"],
+        ))
     return tools
 
 
 def function_tool_names(tools: list[dict[str, Any]]) -> list[str]:
     return [tool["function"]["name"] for tool in tools if tool.get("type") == "function"]
+
+
+def provider_tools(tools: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
+    """The tools a provider can be sent: other servers reject OpenRouter's own tools, and a rejection
+    would make the request drop all tools."""
+    if provider == OPENROUTER:
+        return tools
+    return [tool for tool in tools if not str(tool.get("type", "")).startswith("openrouter:")]
 
 
 @dataclass(frozen=True)
@@ -188,10 +208,13 @@ def extract_frame(source: Path, seconds: float, region: tuple[float, float, floa
 class ToolRunner:
     """Runs the model's tool calls for one chat. Errors become text, so the model can react to them."""
 
-    def __init__(self, session: VideoSession, youtube_cookies: str = "", control: RequestControl | None = None):
+    def __init__(self, session: VideoSession, youtube_cookies: str = "", control: RequestControl | None = None,
+                 web_search: Callable[[str], ToolResult] | None = None):
         self.session = session
         self.youtube_cookies = youtube_cookies
         self.control = control
+        # Runs the web_search tool; None if no OpenRouter key is available to run it with.
+        self.web_search = web_search
         self._created_images: set[Path] = set()
 
     def commit_files(self) -> None:
@@ -222,6 +245,8 @@ class ToolRunner:
                 return self._high_resolution_frame(arguments)
             if name == VIDEO_INFO:
                 return self._video_information()
+            if name == WEB_SEARCH:
+                return self._web_search(arguments)
             raise ValueError(f"The tool {name} is not available.")
         except RequestCancelled:
             raise
@@ -280,6 +305,14 @@ class ToolRunner:
         return ToolResult(json.dumps(self.session.video_info, ensure_ascii=False, indent=1),
                           caption="Video information read")
 
+    def _web_search(self, arguments: dict[str, Any]) -> ToolResult:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            raise ValueError("The search needs a query.")
+        if self.web_search is None:
+            raise ValueError("The web search needs an OpenRouter API key, and none is configured.")
+        return self.web_search(query)
+
 
 def describe_call(name: str, arguments_json: str) -> str:
     """A readable line for a tool call, for the chat history and the screen reader."""
@@ -292,6 +325,8 @@ def describe_call(name: str, arguments_json: str) -> str:
             return f"{action} {format_time(parse_time(arguments.get('time', 0)))}{where}"
         if name == VIDEO_INFO:
             return "Read the video information"
+        if name == WEB_SEARCH:
+            return f"Search the web through OpenRouter for {arguments.get('query', '')}"
     except Exception:
         pass
     return f"{name} {arguments_json}"

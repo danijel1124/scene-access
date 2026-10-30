@@ -352,7 +352,6 @@ def download_video(url: str, target_dir: Path, max_height: int = DEFAULT_MAX_HEI
                    filename_fields: tuple[str, ...] | list[str] = DEFAULT_FILENAME_FIELDS,
                    cookies: str = "", *, files: DownloadFiles | None = None,
                    _job_id: str = "") -> tuple[Path, str, dict[str, Any]]:
-    import yt_dlp
     target_dir.mkdir(parents=True, exist_ok=True)
     files = files if files is not None else DownloadFiles(target_dir)
     def tracked_progress(update: dict[str, Any]) -> None:

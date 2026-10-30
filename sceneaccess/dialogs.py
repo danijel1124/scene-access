@@ -9,8 +9,9 @@ import threading
 import wx
 
 from .config import AppConfig
-from .models import ModelCatalog, api_url
+from .models import ModelCatalog
 from .prompts import BASE_SYSTEM_PROMPT, DEFAULT_PROFILES
+from .providers import OPENROUTER_URL, PROVIDER_LABELS, PROVIDERS
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import (DEFAULT_FILENAME_FIELDS, DEFAULT_MAX_HEIGHT, FILENAME_FIELD_NAMES, FILENAME_FIELDS,
                       MAX_HEIGHT_CHOICES, output_template)
@@ -326,11 +327,15 @@ class SettingsDialog(wx.Dialog):
         # buttons to the dialog, and wx asserts if a sizer manages windows of a different parent.
         self.config = config
         self.catalog = catalog
-        form = wx.FlexGridSizer(12, 2, 8, 8)
+        form = wx.FlexGridSizer(0, 2, 8, 8)
         form.AddGrowableCol(1, 1)
+        self.provider = wx.Choice(self, choices=[PROVIDER_LABELS[provider] for provider in PROVIDERS])
+        self.provider.SetSelection(PROVIDERS.index(config.provider))
         self.model = wx.TextCtrl(self, value=config.model)
-        self.base_url = wx.TextCtrl(self, value=config.base_url)
         self.api_key = wx.TextCtrl(self, value=config.api_key, style=wx.TE_PASSWORD)
+        self.llama_cpp_url = wx.TextCtrl(self, value=config.llama_cpp_url)
+        self.llama_cpp_model = wx.TextCtrl(self, value=config.llama_cpp_model)
+        self.llama_cpp_api_key = wx.TextCtrl(self, value=config.llama_cpp_api_key, style=wx.TE_PASSWORD)
         tool_rounds_label = "Maximum tool rounds per answer (0 disables tools)"
         # A text field avoids the platform-dependent upper bound of a native spin control.
         self.max_tool_rounds = wx.TextCtrl(self, value=str(config.max_tool_rounds), name=tool_rounds_label)
@@ -366,7 +371,11 @@ class SettingsDialog(wx.Dialog):
         size_row = wx.BoxSizer(wx.VERTICAL)
         size_row.Add(self.check_size, 0, wx.BOTTOM, 4)
         size_row.Add(self.reset_skipped, 0)
-        for label, control in (("Model", self.model), ("Base URL", self.base_url), ("API key", self.api_key),
+        for label, control in (("Provider for new chats", self.provider), ("OpenRouter model", self.model),
+                               ("OpenRouter API key", self.api_key),
+                               ("llama.cpp server URL, e.g. http://host:8080/v1/chat/completions", self.llama_cpp_url),
+                               ("llama.cpp model (optional)", self.llama_cpp_model),
+                               ("llama.cpp API key (optional)", self.llama_cpp_api_key),
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
                                ("Downloaded file name", self.filename_button), ("YouTube sign-in", self.cookies_button),
                                ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only),
@@ -374,7 +383,10 @@ class SettingsDialog(wx.Dialog):
                                (tool_rounds_label, self.max_tool_rounds)):
             form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
             form.Add(control, 1, wx.EXPAND)
-        help_text = wx.StaticText(self, label="The key is stored in the local application configuration. OPENROUTER_API_KEY takes precedence.")
+        help_text = wx.StaticText(self, label="The keys are stored in the local application configuration. "
+                                              "OPENROUTER_API_KEY takes precedence. Each chat keeps the provider it "
+                                              "started with; the OpenRouter key is never sent to the llama.cpp server.")
+        help_text.Wrap(600)
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
         layout.Add(form, 1, wx.EXPAND | wx.ALL, 12)
@@ -391,8 +403,10 @@ class SettingsDialog(wx.Dialog):
             raise ValueError("Tool rounds cannot be negative")
         download_dir = self.download_dir.GetPath().strip()
         # replace keeps settings this dialog does not show, such as the profile chosen last.
-        return replace(self.config, model=self.model.GetValue().strip(), base_url=self.base_url.GetValue().strip(),
-                       api_key=self.api_key.GetValue().strip(),
+        return replace(self.config, provider=PROVIDERS[self.provider.GetSelection()], model=self.model.GetValue().strip(),
+                       api_key=self.api_key.GetValue().strip(), llama_cpp_url=self.llama_cpp_url.GetValue().strip(),
+                       llama_cpp_model=self.llama_cpp_model.GetValue().strip(),
+                       llama_cpp_api_key=self.llama_cpp_api_key.GetValue().strip(),
                        youtube_max_height=self.heights[self.youtube_quality.GetSelection()],
                        # Keep "default" as empty, so it keeps following the Videos folder.
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,
@@ -430,14 +444,8 @@ class SettingsDialog(wx.Dialog):
     def _on_exclusions(self, _event: wx.CommandEvent) -> None:
         if getattr(self, '_loading_exclusions', False):
             return
-        # The base URL may have been changed in this dialog, so ask the API it now names.
-        base_url, catalog = self.base_url.GetValue().strip(), self.catalog
-        try:
-            if catalog is None or catalog.url != api_url(base_url, "models"):
-                catalog = ModelCatalog(base_url)
-        except ValueError as error:
-            wx.MessageBox(str(error), "Invalid API URL", wx.OK | wx.ICON_ERROR, self)
-            return
+        # Exclusions are OpenRouter's routing; a llama.cpp server has neither providers nor a router.
+        catalog = self.catalog or ModelCatalog(OPENROUTER_URL)
         self._loading_exclusions = True
         self.exclusions_button.Disable()
         self.exclusions_button.SetLabel("Loading providers and models…")
@@ -448,18 +456,16 @@ class SettingsDialog(wx.Dialog):
             except Exception:
                 providers, models = [], []
             if wx.GetApp():
-                wx.CallAfter(self._exclusions_loaded, base_url, providers, models)
+                wx.CallAfter(self._exclusions_loaded, providers, models)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _exclusions_loaded(self, base_url: str, providers: list, models: list[str]) -> None:
+    def _exclusions_loaded(self, providers: list, models: list[str]) -> None:
         if not self:
             return
         self._loading_exclusions = False
         self.exclusions_button.Enable()
         self._show_exclusions()
-        if self.base_url.GetValue().strip() != base_url:
-            return  # The user changed providers while the old catalogue was loading.
         with ExclusionsDialog(self, providers, self.ignored_providers, models, self.excluded_models) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
                 self.ignored_providers, self.excluded_models = dialog.value()

@@ -143,7 +143,8 @@ class ChatSettingsDialog(wx.Dialog):
     """The open chat's own model, whether openrouter/auto may pick only hearing models, and shrinking its video."""
 
     def __init__(self, parent: wx.Window, model: str, settings_model: str, audio_only: bool, sent_size: int,
-                 shrink_target_mb: int, models: list[str] | None = None):
+                 shrink_target_mb: int, models: list[str] | None = None, openrouter: bool = True):
+        """openrouter is False for a llama.cpp chat, which has no openrouter/auto to limit."""
         super().__init__(parent, title="Chat settings")
         self.models = models or []
         self.use_default = wx.CheckBox(self, label=f"Use the model from Settings ({settings_model})")
@@ -153,6 +154,7 @@ class ChatSettingsDialog(wx.Dialog):
         self.find = wx.Button(self, label="Find model…")
         self.audio_only = wx.CheckBox(self, label="With openrouter/auto, use only models that hear the video's sound")
         self.audio_only.SetValue(audio_only)
+        self.audio_only.Show(openrouter)
         self.shrink = wx.CheckBox(self, label=f"Shrink the stored video ({megabytes(sent_size)} once sent) to at most "
                                               f"{shrink_target_mb} MB")
         note = wx.StaticText(self, label="A new model or a shrunk video makes the next question send the video "
@@ -200,7 +202,10 @@ class StartChatDialog(wx.Dialog):
     def __init__(self, parent: wx.Window, profiles: tuple[tuple[str, str], ...], selected: str, *, online: bool = False,
                  max_height: int = DEFAULT_MAX_HEIGHT, auto_shrink: bool = False,
                  shrink_target_mb: int = DEFAULT_SHRINK_TARGET_MB, question: str = "Describe this video.",
-                 disable_tools: bool = False):
+                 disable_tools: bool = False, llama_cpp: bool = False, openrouter_key: bool = False,
+                 extras: tuple[bool, bool] = (False, False)):
+        """llama_cpp shows the OpenRouter extras for a chat on the user's own server; they need openrouter_key.
+        extras preselects web search and transcript."""
         super().__init__(parent, title="Start a video chat", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.profiles = profiles
         self.online = online
@@ -216,11 +221,25 @@ class StartChatDialog(wx.Dialog):
         note = wx.StaticText(self, label="The profile stays fixed for this chat, so the video can be cached.")
         self.disable_tools = wx.CheckBox(self, label="Disable all tools for this chat")
         self.disable_tools.SetValue(disable_tools)
+        # Off by default: this chat's video stays on the user's own server unless an extra is chosen.
+        self.web_search = wx.CheckBox(self, label="Search the web through OpenRouter (sends only search terms)")
+        self.transcript = wx.CheckBox(self, label="Transcribe the speech through OpenRouter and ElevenLabs "
+                                                  "(sends the video's sound)")
+        extras_note = wx.StaticText(self, label="These extras need an OpenRouter API key in Settings."
+                                    if not openrouter_key else "The video itself always stays on the llama.cpp server.")
+        for box, chosen in zip((self.web_search, self.transcript), extras):
+            box.SetValue(chosen and openrouter_key)
+            box.Enable(openrouter_key)
         advanced = wx.Button(self, label="Advanced…")
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
+        extra_controls = ((self.web_search, 0), (self.transcript, 0), (extras_note, 0)) if llama_cpp else ()
+        if not llama_cpp:
+            for control in (self.web_search, self.transcript, extras_note):
+                control.Hide()
         for control, proportion in ((question_label, 0), (self.question, 1), (profile_label, 0), (self.profile, 0),
-                                    (text_label, 0), (self.profile_text, 1), (note, 0), (self.disable_tools, 0)):
+                                    (text_label, 0), (self.profile_text, 1), (note, 0), (self.disable_tools, 0),
+                                    *extra_controls):
             layout.Add(control, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(advanced, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
@@ -237,6 +256,10 @@ class StartChatDialog(wx.Dialog):
         """The question and the chosen profile's name, empty for no profile."""
         name = self.choices[self.profile.GetSelection()]
         return self.question.GetValue().strip(), "" if name == NO_PROFILE else name
+
+    def extras(self) -> tuple[bool, bool]:
+        """Whether a llama.cpp chat may search the web and transcribe its speech through OpenRouter."""
+        return self.web_search.GetValue(), self.transcript.GetValue()
 
     def _on_advanced(self, _event: wx.CommandEvent) -> None:
         with AdvancedDialog(self, self.online, self.max_height, self.auto_shrink, self.shrink_target_mb) as dialog:

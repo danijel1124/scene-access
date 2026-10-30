@@ -161,7 +161,9 @@ def test_settings_tool_round_limit_accepts_zero_and_unbounded_integers(monkeypat
 def test_settings_dialog_can_be_constructed_and_returns_its_values():
     app = wx.App(False)
     frame = wx.Frame(None)
-    expected = AppConfig(model="openrouter/auto", base_url="https://router.example/api", api_key="secret-for-test-only")
+    expected = AppConfig(model="openrouter/auto", api_key="secret-for-test-only", provider="llama.cpp",
+                         llama_cpp_url="http://192.0.2.1:8080/v1/chat/completions", llama_cpp_model="fixture.gguf",
+                         llama_cpp_api_key="llama-secret-for-test-only")
     try:
         dialog = SettingsDialog(frame, expected)
         assert dialog.value() == expected

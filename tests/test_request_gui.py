@@ -222,16 +222,16 @@ def test_a_failed_question_comes_back_only_into_an_empty_field(frame):
     assert frame.question.GetValue() == 'Failed question'
 
 
-def test_shared_settings_replace_catalog_in_every_window(tmp_path, monkeypatch):
+def test_every_window_shares_openrouters_catalog_whatever_the_settings(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     app = wx.App(False)
     manager = gui.ChatWindows()
     try:
         first, second = manager.new_window(), manager.new_window()
         old_catalog = second.catalog
-        first.config = gui.replace(first.config, base_url='https://fixture.example/api/chat/completions')
-        assert second.catalog.url == 'https://fixture.example/api/models'
-        assert first.catalog is second.catalog
+        first.config = gui.replace(first.config, provider='llama.cpp',
+                                   llama_cpp_url='http://fixture.example:8080/v1/chat/completions')
+        assert first.catalog is second.catalog is old_catalog
         assert old_catalog.url == 'https://openrouter.ai/api/v1/models'
     finally:
         for window in list(manager.frames): window.Destroy()

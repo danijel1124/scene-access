@@ -18,6 +18,7 @@ from .chat_dialogs import SIZE_BACK, SIZE_LOWER, SIZE_SEND, SIZE_SHRINK, SizeDia
 from .dialogs import NO_PROFILE, ask_youtube_sign_in, cookies_description, default_download_dir
 from .models import AUTO_ROUTER
 from .prompts import system_prompt
+from .providers import LLAMA_CPP, OPENROUTER
 from .session_store import TRANSCRIPT_PENDING
 from .speech import announce
 from .tools import tool_definitions
@@ -205,7 +206,7 @@ class NewChatMixin:
         size = source.stat().st_size
         if self.config.auto_shrink:
             return self._shrink_with_progress(source) if base64_size(size) > self._shrink_target() else source
-        model = self.config.model
+        model = self.config.model_for(self.config.provider)
         if (base64_size(size) <= SIZE_LIMIT or not self.config.check_video_size
                 or (model != AUTO_ROUTER and model in self.config.size_check_skipped_models)):
             return source
@@ -398,14 +399,18 @@ class NewChatMixin:
         the dialog when the user came back from the size question."""
         question, profile = previous[:2] if previous else ("Describe this video.", self.config.profile)
         disable_tools = previous[2] if previous and len(previous) > 2 else False
+        # A new chat starts without OpenRouter extras; coming back from the size question keeps the choice.
+        extras = getattr(self, "chat_extras", (False, False)) if previous else (False, False)
         config = self.config
         with StartChatDialog(self, config.profiles, profile or NO_PROFILE, online=online, max_height=config.youtube_max_height,
                              auto_shrink=config.auto_shrink, shrink_target_mb=config.shrink_target_mb,
-                             question=question, disable_tools=disable_tools) as dialog:
+                             question=question, disable_tools=disable_tools, llama_cpp=config.provider == LLAMA_CPP,
+                             openrouter_key=bool(self.openrouter_key()), extras=extras) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return None
             question, profile = dialog.value()
             disable_tools = dialog.disable_tools.GetValue()
+            self.chat_extras = dialog.extras() if config.provider == LLAMA_CPP else (False, False)
             # The profile and the advanced settings are preselected next time.
             chosen = replace(config, profile=profile or NO_PROFILE, youtube_max_height=dialog.max_height,
                              auto_shrink=dialog.auto_shrink, shrink_target_mb=dialog.shrink_target_mb)
@@ -418,6 +423,8 @@ class NewChatMixin:
                     video_info: dict[str, Any] | None = None, sent_video: Path | None = None,
                     disable_tools: bool = False) -> None:
         skip_model, self.pending_size_skip = self.pending_size_skip, ""
+        provider = self.config.provider
+        web_search, openrouter_transcript = getattr(self, "chat_extras", (False, False))
         try:
             # Reading a large video can take a while, and one that does not fit into memory fails here.
             with wx.BusyCursor():
@@ -426,10 +433,13 @@ class NewChatMixin:
                     owner_id=self.owner_id, source_path=source, title=title, model="", initial_question=question,
                     # Frozen for this chat: they precede the video in every request (see VideoSession).
                     system_prompt=system_prompt(self.config.profile_text(profile)),
-                    tools=[] if disable_tools else tool_definitions(online_video=bool(source_url)),
+                    tools=[] if disable_tools else tool_definitions(
+                        online_video=bool(source_url), web_search=provider == OPENROUTER,
+                        local_web_search=provider == LLAMA_CPP and web_search),
                     source_url=source_url, video_info=video_info,
                     # The first request decides whether this model needs a transcript of the sound.
-                    transcript_state=TRANSCRIPT_PENDING, audio_only=self.config.audio_only_auto, sent_video=sent_video)
+                    transcript_state=TRANSCRIPT_PENDING, audio_only=self.config.audio_only_auto, sent_video=sent_video,
+                    provider=provider, openrouter_transcript=provider == LLAMA_CPP and openrouter_transcript)
         except (OSError, MemoryError) as error:
             wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded", wx.OK | wx.ICON_ERROR)
             return

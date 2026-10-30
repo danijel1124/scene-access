@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .prompts import DEFAULT_PROFILE, DEFAULT_PROFILES
+from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, PROVIDERS
 from .video_size import DEFAULT_SHRINK_TARGET_MB
 from .youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
 
@@ -17,8 +18,13 @@ class InvalidConfigError(ValueError):
 @dataclass(frozen=True)
 class AppConfig:
     model: str = "google/gemini-2.5-flash"
-    base_url: str = "https://openrouter.ai/api/v1/chat/completions"
     api_key: str = ""
+    # Who answers new chats; each chat keeps the provider it started with.
+    provider: str = OPENROUTER
+    # The user's own llama.cpp server: its chat-completions URL, an optional model name and its optional key.
+    llama_cpp_url: str = ""
+    llama_cpp_model: str = ""
+    llama_cpp_api_key: str = ""
     # Highest video height downloaded from YouTube; enough to recognize details without HD sizes.
     youtube_max_height: int = 480
     # Folder for downloaded videos; empty means the default <Videos>/scene-access.
@@ -50,6 +56,10 @@ class AppConfig:
     def profile_text(self, name: str) -> str:
         return dict(self.profiles).get(name, "")
 
+    def model_for(self, provider: str) -> str:
+        """The model in Settings for a provider, used by its chats that have no model of their own."""
+        return (self.llama_cpp_model or LLAMA_CPP_DEFAULT_MODEL) if provider == LLAMA_CPP else self.model
+
 
 def config_path_from_standard_paths(standard_paths: object) -> Path:
     return Path(standard_paths.GetUserDataDir()) / "config.json"
@@ -72,8 +82,11 @@ def load_config(path: Path) -> AppConfig:
         )
     return AppConfig(
         model=str(values.get("model", AppConfig.model)),
-        base_url=str(values.get("base_url", AppConfig.base_url)),
         api_key=str(values.get("api_key", "")),
+        provider=values["provider"] if values.get("provider") in PROVIDERS else OPENROUTER,
+        llama_cpp_url=str(values.get("llama_cpp_url", "")),
+        llama_cpp_model=str(values.get("llama_cpp_model", "")),
+        llama_cpp_api_key=str(values.get("llama_cpp_api_key", "")),
         youtube_max_height=_positive_int(values.get("youtube_max_height"), AppConfig.youtube_max_height),
         download_dir=str(values.get("download_dir", "")),
         filename_fields=_filename_fields(values.get("filename_fields")),
@@ -132,8 +145,11 @@ def save_config(path: Path, config: AppConfig) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     content = json.dumps({
         "model": config.model,
-        "base_url": config.base_url,
         "api_key": config.api_key,
+        "provider": config.provider,
+        "llama_cpp_url": config.llama_cpp_url,
+        "llama_cpp_model": config.llama_cpp_model,
+        "llama_cpp_api_key": config.llama_cpp_api_key,
         "youtube_max_height": config.youtube_max_height,
         "download_dir": config.download_dir,
         "filename_fields": list(config.filename_fields),

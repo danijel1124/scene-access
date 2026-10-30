@@ -8,6 +8,7 @@ import sys
 import threading
 import traceback
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 import wx
@@ -20,13 +21,15 @@ from .dialogs import NO_PROFILE, SettingsDialog
 from .models import AUTO_ROUTER, ModelCatalog, routing
 from .new_chat import NewChatMixin, url_from_clipboard
 from .openrouter import OpenRouterClient
+from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .request_control import RequestControl, RequestCancelled
 from .prompts import system_prompt
 from .session_store import TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession, VideoSessionStore, SessionNotFound
 from .speech import announce
 from .single_instance import SingleInstance
 from .models import api_url
-from .tools import ToolRunner, format_time, local_video, tool_definitions
+from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
+                    provider_tools, tool_definitions)
 from .transcript import make_transcript, needs_transcript
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
@@ -60,6 +63,17 @@ LEGACY_OWNER_ID = "local:" + os.environ.get("USER", "user")
 
 def resolve_openrouter_key(config: AppConfig) -> str | None:
     return os.environ.get("OPENROUTER_API_KEY") or config.api_key or None
+
+
+def _search_through_openrouter(client: OpenRouterClient, model: str, options: dict, query: str) -> ToolResult:
+    """The web_search tool of a llama.cpp chat: OpenRouter's search, given only the query. options holds
+    the provider and model exclusions from Settings."""
+    text, sources = client.web_search(query, model, options)
+    if sources:
+        text += "\n\nSources:\n" + "\n".join(f"- {source['title']}: {source['url']}" for source in sources)
+    count = len(sources)
+    return ToolResult(text or "The search found nothing.",
+                      caption=f"Searched the web for {query}: {count} source{'' if count == 1 else 's'}")
 
 
 class ChatWindows:
@@ -130,9 +144,6 @@ class MainFrame(NewChatMixin, wx.Frame):
 
     @config.setter
     def config(self, value: AppConfig) -> None:
-        previous = self.windows.config if self.windows else getattr(self, "_config", None)
-        if previous and previous.base_url != value.base_url:
-            self.catalog = ModelCatalog(value.base_url)
         self._config = value
         if self.windows:
             self.windows.config = value
@@ -160,7 +171,8 @@ class MainFrame(NewChatMixin, wx.Frame):
         if LEGACY_OWNER_ID != OWNER_ID:
             self.store.reassign_owner(LEGACY_OWNER_ID, OWNER_ID)
         if not windows or windows.catalog is None:
-            self.catalog = ModelCatalog(self.config.base_url)
+            # OpenRouter's models: which hear, routing and exclusions. llama.cpp chats ask their server.
+            self.catalog = ModelCatalog(OPENROUTER_URL)
         self.current: VideoSession | None = None
         # What the Chat history shows, and what Enter opens in the reader (longer for the transcript).
         self.history_items: list[str] = []
@@ -286,8 +298,11 @@ class MainFrame(NewChatMixin, wx.Frame):
             candidate = dialog.value()
             try:
                 if not candidate.model:
-                    raise ValueError("A model is required.")
-                api_url(candidate.base_url, "models")
+                    raise ValueError("An OpenRouter model is required.")
+                if candidate.provider == LLAMA_CPP and not candidate.llama_cpp_url:
+                    raise ValueError("New chats use the llama.cpp server, so its URL is required.")
+                if candidate.llama_cpp_url:
+                    api_url(candidate.llama_cpp_url, "models")
             except ValueError as error:
                 wx.MessageBox(str(error), "Invalid settings", wx.OK | wx.ICON_ERROR)
             else:
@@ -326,7 +341,8 @@ class MainFrame(NewChatMixin, wx.Frame):
         if not self.current.source_url and not self._find_online_source():
             return
         names = [NO_PROFILE, *(name for name, _text in self.config.profiles)]
-        tools = "zoom and web search" + (", high resolution and video information" if self.current.source_url else "")
+        search = " and web search" if self.current.provider == OPENROUTER or self._local_web_search() else ""
+        tools = "zoom" + search + (", high resolution and video information" if self.current.source_url else "")
         message = (f"Choose the prompt profile for this chat. It also gets the current base prompt and the tools "
                    f"({tools}), and a transcript if the model cannot hear. The next question sends the video "
                    "uncached once, so it costs more.")
@@ -341,29 +357,45 @@ class MainFrame(NewChatMixin, wx.Frame):
     def apply_setup(self, profile: str) -> None:
         if not self.current or self._chat_busy():
             return
+        openrouter = self.current.provider == OPENROUTER
         self.store.update_setup(self.current.id, OWNER_ID, system_prompt(self.config.profile_text(profile)),
-                                tool_definitions(online_video=bool(self.current.source_url)),
+                                tool_definitions(online_video=bool(self.current.source_url), web_search=openrouter,
+                                                 # A llama.cpp chat keeps the extras chosen when it started.
+                                                 local_web_search=not openrouter and self._local_web_search()),
                                 # The chat keeps its own choice from Chat settings.
                                 audio_only=self.current.audio_only)
         self.current = self.store.get_session(self.current.id, OWNER_ID)
         self.render_current()
         self.status.SetLabel(self.status.GetLabel() + f"\nPrompt profile set to {profile or NO_PROFILE}; tools enabled.")
 
+    def _local_web_search(self) -> bool:
+        """Whether the open llama.cpp chat was started with web search through OpenRouter."""
+        return bool(self.current) and WEB_SEARCH in function_tool_names(self.current.tools)
+
+    def openrouter_key(self) -> str | None:
+        return resolve_openrouter_key(self.config)
+
     def chat_model(self, session: VideoSession) -> str:
-        """The model a chat uses: its own, or the one in Settings if it has none ("default")."""
-        return session.model or self.config.model
+        """The model a chat uses: its own, or the one in Settings for its provider if it has none ("default")."""
+        return session.model or self.config.model_for(session.provider)
 
     def change_chat_settings(self) -> None:
         if not self.current or self._chat_busy() or getattr(self, '_loading_chat_settings', False):
             return
         session_id, catalog = self.current.id, self.catalog
+        if self.current.provider == LLAMA_CPP:
+            # The models the user's own server offers, never OpenRouter's.
+            try:
+                catalog = ModelCatalog(self.config.llama_cpp_url)
+            except ValueError:
+                catalog = None
         self._loading_chat_settings = True
         self.chat_settings_button.Disable()
         self.status.SetLabel("Loading the model list. Other chat windows remain available.")
 
         def worker() -> None:
             try:
-                models = catalog.model_ids()
+                models = catalog.model_ids() if catalog else []
             except Exception:
                 models = []  # Manual model entry remains available when the list fails.
             if wx.GetApp():
@@ -379,8 +411,9 @@ class MainFrame(NewChatMixin, wx.Frame):
         if not self.current or self.current.id != session_id or self._chat_busy():
             return
         session = self.current
-        with ChatSettingsDialog(self, session.model, self.config.model, session.audio_only, session.sent_video_size,
-                                self.config.shrink_target_mb, models) as dialog:
+        with ChatSettingsDialog(self, session.model, self.config.model_for(session.provider), session.audio_only,
+                                session.sent_video_size, self.config.shrink_target_mb, models,
+                                openrouter=session.provider == OPENROUTER) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
             model, audio_only, shrink = dialog.value()
@@ -511,8 +544,9 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.SetTitle(f"{session.title} - SceneAccess")
         context = "The local video context is stored; the original file is not required."
         source = "The original file is no longer available." if session.source_missing else "The original file is still available."
-        model = session.model or f"{self.config.model} (from Settings)"
-        self.status.SetLabel(f"{session.title} | {model}\n{context} {source}")
+        model = session.model or f"{self.config.model_for(session.provider)} (from Settings)"
+        self.status.SetLabel(f"{session.title} | {model} via {PROVIDER_LABELS.get(session.provider, session.provider)}"
+                             f"\n{context} {source}")
         entries = chat_history_entries(session.initial_question, session.history, session.transcript_state, session.transcript)
         items = [shown for shown, _full in entries]
         self.history_items = items
@@ -558,8 +592,14 @@ class MainFrame(NewChatMixin, wx.Frame):
             wx.MessageBox("The previous request for this chat is still finishing. Please retry shortly.",
                           "Previous request is stopping", wx.OK | wx.ICON_INFORMATION)
             return
-        api_key = resolve_openrouter_key(self.config)
-        if not api_key:
+        openrouter_key = resolve_openrouter_key(self.config)
+        llama_cpp = self.current.provider == LLAMA_CPP
+        if llama_cpp and not self.config.llama_cpp_url:
+            self.question.SetValue(question)
+            wx.MessageBox("This chat runs on your own llama.cpp server. Enter its URL in Settings.",
+                          "llama.cpp server URL required", wx.OK | wx.ICON_ERROR)
+            return
+        if not llama_cpp and not openrouter_key:
             self.question.SetValue(question)
             wx.MessageBox("No API key is configured. Enter one in Settings or set OPENROUTER_API_KEY.", "OpenRouter API key required", wx.OK | wx.ICON_ERROR)
             return
@@ -589,26 +629,38 @@ class MainFrame(NewChatMixin, wx.Frame):
         def worker() -> None:
             runner = None
             try:
-                client = OpenRouterClient(api_key, base_url=config.base_url, control=control,
-                                          ignored_providers=config.ignored_providers)
+                # OpenRouter for the extras of a llama.cpp chat; never given the chat's video.
+                openrouter = (OpenRouterClient(openrouter_key, control=control, ignored_providers=config.ignored_providers)
+                              if openrouter_key else None)
+                if llama_cpp:
+                    # Only the llama.cpp key goes to the user's server, never the OpenRouter key.
+                    client = OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url, control=control)
+                else:
+                    client = openrouter
                 # A chat on "default" asks the model that is in Settings now.
                 session = self.store.get_session(session_id, OWNER_ID)
                 follows_settings = not session.model
-                session = replace(session, model=session.model or config.model)
-                # Reject impossible routing before any potentially billable preprocessing.
-                options = routing(session.model, session.audio_only, catalog, config.ignored_providers,
-                                  config.excluded_models)
+                session = replace(session, model=session.model or config.model_for(session.provider))
+                # Reject impossible routing before any potentially billable preprocessing. A llama.cpp
+                # server has no providers or router to choose from.
+                options = {} if llama_cpp else routing(session.model, session.audio_only, catalog,
+                                                       config.ignored_providers, config.excluded_models)
                 if follows_settings and session.transcript_state == TRANSCRIPT_NONE and needs_transcript(session, catalog):
                     # Settings now name a model that cannot hear, so this chat needs a transcript after all.
                     session = replace(session, transcript_state=TRANSCRIPT_PENDING)
                 if session.transcript_state == TRANSCRIPT_PENDING:
-                    self._prepare_transcript(session, client, catalog)
+                    self._prepare_transcript(session, openrouter if llama_cpp else client, catalog)
                     session = self.store.get_session(session_id, OWNER_ID)
-                    session = replace(session, model=session.model or config.model)
+                    session = replace(session, model=session.model or config.model_for(session.provider))
                 messages = session.messages if initial else self.store.build_follow_up_messages(session_id, OWNER_ID, question)
-                runner = ToolRunner(session, config.youtube_cookies, control=control)
-                turn = client.run_turn(session, messages, runner.run, on_event, options,
-                                       max_tool_rounds=config.max_tool_rounds)
+                # Excluded providers never answer, the search included.
+                search_options = (routing(config.model, False, catalog, config.ignored_providers, config.excluded_models)
+                                  if openrouter else {})
+                runner = ToolRunner(session, config.youtube_cookies, control=control,
+                                    web_search=(partial(_search_through_openrouter, openrouter, config.model,
+                                                        search_options) if openrouter else None))
+                turn = client.run_turn(replace(session, tools=provider_tools(session.tools, session.provider)), messages,
+                                       runner.run, on_event, options, max_tool_rounds=config.max_tool_rounds)
                 control.check_cancelled()
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)
@@ -675,17 +727,28 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.status.SetLabel("Request cancelled. Completed chat history is preserved; provider charges may still apply.")
         announce("Request cancelled.")
 
-    def _prepare_transcript(self, session: VideoSession, client: OpenRouterClient,
+    def _prepare_transcript(self, session: VideoSession, client: OpenRouterClient | None,
                             catalog: ModelCatalog | None = None) -> None:
         """Runs in the request thread: transcribes the sound once if the chat's model cannot hear it.
-        A failure never stops the answer; the chat remembers it, so it is not paid for on every question."""
+        A failure never stops the answer; the chat remembers it, so it is not paid for on every question.
+        client is OpenRouter, also for a llama.cpp chat; None if no OpenRouter key is configured."""
         if not needs_transcript(session, catalog or self.catalog):
             self.store.update_transcript(session.id, OWNER_ID, TRANSCRIPT_NONE)
             return
-        if not client.transcription_allowed():
+        reason = ""
+        if session.provider == LLAMA_CPP and not session.openrouter_transcript:
+            reason = ('No transcript: this chat runs on your own llama.cpp server, which sees only the pictures, and '
+                      'transcription through OpenRouter was not chosen when the chat started, so the sound stays '
+                      'private. The model cannot hear the video.')
+        elif client is None:
+            reason = ('Speech recognition skipped because no OpenRouter API key is configured. The model answers '
+                      'without a transcript and cannot hear the video. After entering a key, Change prompt profile '
+                      'and tools tries again.')
+        elif not client.transcription_allowed():
             reason = ('Speech recognition skipped because ElevenLabs is excluded. '
                       'The model answers without a transcript and cannot hear the video. '
                       'After changing the exclusion, Change prompt profile and tools tries again.')
+        if reason:
             self.store.update_transcript(session.id, OWNER_ID, TRANSCRIPT_FAILED, reason)
             shown, full = transcript_entry(TRANSCRIPT_FAILED, reason)
             wx.CallAfter(self._show_progress_item, session.id, shown, full=full)
