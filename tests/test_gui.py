@@ -1,5 +1,6 @@
 import json
 
+import pytest
 import wx
 
 from sceneaccess import gui
@@ -24,39 +25,100 @@ def test_the_history_menu_hides_shows_and_deletes_an_answer_round(tmp_path, monk
             frame.store.record_turn(frame.current.id, gui.OWNER_ID, entries)
         frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
         frame.render_current()
-        choices = []
+        menus = []
 
         def choose(position):
             def popup(menu, *args):
-                choices.append(menu.FindItemByPosition(position).GetItemLabelText())
+                menus.append([(item.GetItemLabelText(), item.IsEnabled()) for item in menu.GetMenuItems()])
                 return menu.FindItemByPosition(position).GetId()
             monkeypatch.setattr(frame.chat_list, "GetPopupMenuSelectionFromUser", popup)
 
         second = frame.history_items.index("You: Second?")
-        frame.chat_list.SetSelection(second)
-        choose(0)
+        frame.select_history_item(second)
+        choose(1)
 
-        class KeyboardEvent:  # The Applications key: no position, the selected item is meant.
+        class KeyboardEvent:  # The Applications key: no position, the selection is meant.
             def GetPosition(self): return wx.DefaultPosition
 
         frame.on_history_menu(KeyboardEvent())
-        assert choices[-1].startswith("Hide this answer from the model")
+        assert [label for label, _enabled in menus[-1]] == [
+            "Copy to clipboard", "Hide this answer from the model (cache miss from here on)",
+            "Delete this answer from the history (cache miss from here on)"]
         assert frame.history_items[second] == "[hidden from model] You: Second?"
         assert "[hidden from model] Model: Second answer." in frame.history_items
-        assert frame.chat_list.GetSelection() == second and "Second answer." not in json.dumps(frame.current.messages)
-        frame.show_history_menu(second)
-        assert choices[-1].startswith("Show this answer to the model again")
+        assert frame.history_caret() == second and "Second answer." not in json.dumps(frame.current.messages)
+        frame.show_history_menu([second])
+        assert menus[-1][1][0].startswith("Show this answer to the model again")
         assert "Second answer." in json.dumps(frame.current.messages)
-        choose(1)
-        frame.show_history_menu(frame.history_items.index("Model: First answer."))
-        assert choices[-1].startswith("Delete this answer from the history")
+        # Several items: both answers' rounds are hidden together.
+        answers = [frame.history_items.index("Model: First answer."), frame.history_items.index("Model: Second answer.")]
+        frame.show_history_menu(answers)
+        assert menus[-1][1][0] == "Hide these 2 answers from the model (cache miss from here on)"
+        assert all(entry.get("excluded") for entry in frame.current.history)
+        frame.show_history_menu(answers)
+
+        class Clipboard:  # The real one belongs to the user's whole session, even on the test desktop.
+            text = None
+            def Open(self): return True
+            def Close(self): pass
+            def SetData(self, data): Clipboard.text = data.GetText()
+
+        monkeypatch.setattr(gui.wx, "TheClipboard", Clipboard())
+        choose(0)
+        frame.show_history_menu([0, frame.history_items.index("Model: Second answer.")])
+        assert menus[-1][0][0] == "Copy 2 items to clipboard"
+        assert Clipboard.text == "You: First?\n\nModel: Second answer."
+        choose(2)
+        frame.show_history_menu([frame.history_items.index("Model: First answer.")])
         assert [entry["content"] for entry in frame.current.history] == ["Second?", "Second answer."]
-        # The first question belongs to the video, and a busy chat keeps its history.
-        frame.show_history_menu(0)
+        # The first question belongs to the video: it can only be copied.
+        choose(0)
+        frame.show_history_menu([0])
+        assert [label for label, _enabled in menus[-1]] == ["Copy to clipboard"]
+        # A busy chat keeps its history: hiding and deleting are shown, but unavailable.
         frame._request = gui.RequestControl()
-        frame.show_history_menu(frame.history_items.index("Model: Second answer."))
-        assert len(choices) == 3 and "answering" in frame.status.GetLabel()
+        choose(0)
+        frame.show_history_menu([frame.history_items.index("Model: Second answer.")])
+        assert [enabled for _label, enabled in menus[-1]] == [True, False, False]
         frame._request = None
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_a_transcript_is_added_at_the_end_without_asking_the_model(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gui.wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
+    asked = []
+    monkeypatch.setattr(gui.wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or wx.YES)
+    monkeypatch.setattr(gui, "make_transcript", lambda session, client: "[00:01] Hello")
+    monkeypatch.setattr(gui.OpenRouterClient, "run_turn", lambda *a, **kw: pytest.fail("the model was asked"))
+
+    class InlineThread:
+        def __init__(self, target, **kw): self.target = target
+        def start(self): self.target()
+
+    monkeypatch.setattr(gui.threading, "Thread", InlineThread)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    app = wx.App(False)
+    frame = gui.ChatFrame()
+    try:
+        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+                                                   initial_question="First?", provider="llama.cpp")
+        frame.render_current()
+        frame.add_transcript()
+        assert asked and "OpenRouter API key" in asked[-1] and not frame.current.history
+        frame.config = gui.replace(frame.config, api_key="openrouter-secret")
+        frame.add_transcript()
+        # A llama.cpp chat sends its sound only after asking.
+        assert "sends the video's sound" in asked[-1]
+        assert frame.current.history[-1]["content"].endswith("[00:01] Hello")
+        assert frame.history_items[-1].startswith("Transcript added later: 1 lines")
+        assert frame.reader_texts[-1].endswith("[00:01] Hello") and frame.history_caret() == len(frame.history_items) - 1
+        assert frame._request is None and frame.send_button.GetLabel() == "Send question"
     finally:
         frame.Destroy()
         app.Destroy()

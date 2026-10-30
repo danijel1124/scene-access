@@ -5,10 +5,11 @@ import json
 import os
 import sqlite3
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from .prompts import sound_blocks
 from .providers import OPENROUTER
 
 
@@ -32,12 +33,18 @@ ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url",
                  ("provider", f"'{OPENROUTER}'"), ("openrouter_transcript", "'0'"))
 
 # transcript_state: "pending" until the first request decides whether the model needs a transcript,
-# "none" if it hears the video itself, "done" (text may be empty: no speech), or "failed".
-TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED = "pending", "none", "done", "failed"
+# "none" if it hears the video itself, "done" (text may be empty: no speech), "failed", or "appended": added
+# later at the end of the chat as a history entry, so the cached video and history before it stay valid.
+TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_APPENDED = (
+    "pending", "none", "done", "failed", "appended")
 TRANSCRIPT_INTRO = ("You cannot hear this video, so here is an automatic transcript of its speech. Speech "
                     "recognition may contain errors; times are mm:ss from the start of the video.\n\n")
+TRANSCRIPT_LATER_INTRO = ("Here is an automatic transcript of the video's speech, added after the video. Speech "
+                          "recognition may contain errors; times are mm:ss from the start of the video.\n\n")
 # A stored entry marked like this stays in the Chat history but is not sent to the model.
 EXCLUDED = "excluded"
+# Marks the history entry of a transcript added later; it is sent as a user message.
+TRANSCRIPT_ENTRY = "transcript"
 
 
 def is_question(message: dict[str, Any]) -> bool:
@@ -59,6 +66,16 @@ def round_bounds(history: list[dict[str, Any]], index: int) -> tuple[int, int]:
     while end < len(history) - 1 and not is_answer(history[end]) and not is_question(history[end + 1]):
         end += 1
     return start, end
+
+
+def _round_positions(history: list[dict[str, Any]], indices: list[int]) -> set[int]:
+    """Every history position in the rounds of the entries at indices; indices past the end are ignored."""
+    positions: set[int] = set()
+    for index in indices:
+        if 0 <= index < len(history):
+            start, end = round_bounds(history, index)
+            positions.update(range(start, end + 1))
+    return positions
 
 
 def _merge_user_runs(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -107,6 +124,8 @@ class VideoSession:
     provider: str = OPENROUTER
     # A llama.cpp chat may send its sound to OpenRouter's speech recognition only if the user allowed it.
     openrouter_transcript: bool = False
+    # Not stored: whether the model answering now hears the video's sound, set before each request.
+    hears_sound: bool = False
 
     @property
     def directory(self) -> Path:
@@ -127,10 +146,16 @@ class VideoSession:
 
     @property
     def messages(self) -> list[dict[str, Any]]:
-        # OpenRouter reads explicit cache breakpoints from content parts, not from the message.
-        system = [{"role": "system", "content": self.system_prompt}] if self.system_prompt else []
+        # OpenRouter reads explicit cache breakpoints from content parts, not from the message. The blocks about
+        # the sound go only to a model that takes it in, by hearing or from the transcript.
+        # A failed or skipped transcript keeps its reason in the same field; that is no transcript.
+        has_transcript = self.transcript_state == TRANSCRIPT_DONE and bool(self.transcript)
+        added_later = any(entry.get(TRANSCRIPT_ENTRY) and not entry.get(EXCLUDED) for entry in self.history)
+        blocks = sound_blocks(gets_speech=self.hears_sound or has_transcript or added_later, hears=self.hears_sound)
+        prompt = f"{self.system_prompt}\n\n{blocks}" if self.system_prompt and blocks else self.system_prompt
+        system = [{"role": "system", "content": prompt}] if prompt else []
         # The transcript comes before the video's cache breakpoint, so it is cached together with the video.
-        transcript = [{"type": "text", "text": TRANSCRIPT_INTRO + self.transcript}] if self.transcript else []
+        transcript = [{"type": "text", "text": TRANSCRIPT_INTRO + self.transcript}] if has_transcript else []
         return _merge_user_runs([*system, {
             "role": "user",
             "content": [
@@ -329,6 +354,16 @@ class VideoSessionStore:
             conn.execute("UPDATE sessions SET transcript = ?, transcript_state = ? WHERE id = ? AND owner_id = ?",
                          (transcript, state, session_id, owner_id))
 
+    def append_transcript(self, session_id: str, owner_id: str, transcript: str) -> None:
+        """Adds a transcript made after the chat started at its end, so what is cached before it stays valid.
+        No speech is noted like a transcript with no speech."""
+        if not transcript:
+            self.update_transcript(session_id, owner_id, TRANSCRIPT_DONE, "")
+            return
+        self.record_turn(session_id, owner_id, [{"role": "user", "content": TRANSCRIPT_LATER_INTRO + transcript,
+                                                 TRANSCRIPT_ENTRY: True}])
+        self.update_transcript(session_id, owner_id, TRANSCRIPT_APPENDED)
+
     def update_source(self, session_id: str, owner_id: str, source_url: str, video_info: dict[str, Any] | None) -> None:
         """Records the online source of a chat that was started before links were stored."""
         self.get_session(session_id, owner_id)
@@ -370,37 +405,39 @@ class VideoSessionStore:
             except FileNotFoundError:
                 pass
 
-    def build_follow_up_messages(self, session_id: str, owner_id: str, question: str) -> list[dict[str, Any]]:
-        session = self.get_session(session_id, owner_id)
+    def build_follow_up_messages(self, session_id: str, owner_id: str, question: str,
+                                 hears_sound: bool = False) -> list[dict[str, Any]]:
+        session = replace(self.get_session(session_id, owner_id), hears_sound=hears_sound)
         return _merge_user_runs([*session.messages, {"role": "user", "content": question}])
 
-    def set_round_in_context(self, session_id: str, owner_id: str, index: int, in_context: bool) -> None:
-        """Takes the round of history[index] out of what is sent to the model, or puts it back; the Chat
-        history keeps showing it. The round is found again in the stored history, inside the transaction."""
+    def set_rounds_in_context(self, session_id: str, owner_id: str, indices: list[int], in_context: bool) -> None:
+        """Takes the rounds of the history entries at indices out of what is sent to the model, or puts them
+        back; the Chat history keeps showing them. The rounds are found again in the stored history, inside
+        the transaction."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             history = self._locked_history(conn, session_id, owner_id)
-            start, end = round_bounds(history, index)
-            for entry in history[start:end + 1]:
+            for position in _round_positions(history, indices):
                 if in_context:
-                    entry.pop(EXCLUDED, None)
+                    history[position].pop(EXCLUDED, None)
                 else:
-                    entry[EXCLUDED] = True
+                    history[position][EXCLUDED] = True
             conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
                          (json.dumps(history), session_id, owner_id))
 
-    def delete_round(self, session_id: str, owner_id: str, index: int) -> None:
-        """Deletes the round of history[index] from the chat, with the images the model asked for in it."""
+    def delete_rounds(self, session_id: str, owner_id: str, indices: list[int]) -> None:
+        """Deletes the rounds of the history entries at indices, with the images the model asked for in them."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             history = self._locked_history(conn, session_id, owner_id)
-            start, end = round_bounds(history, index)
+            deleted = _round_positions(history, indices)
             images = [Path(part["image_url"]["url"][len(SESSION_FILE_PREFIX):]).name
-                      for entry in history[start:end + 1] if isinstance(entry.get("content"), list)
-                      for part in entry["content"] if part.get("type") == "image_url"
+                      for position in deleted if isinstance(history[position].get("content"), list)
+                      for part in history[position]["content"] if part.get("type") == "image_url"
                       and str((part.get("image_url") or {}).get("url", "")).startswith(SESSION_FILE_PREFIX)]
+            kept = [entry for position, entry in enumerate(history) if position not in deleted]
             conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
-                         (json.dumps(history[:start] + history[end + 1:]), session_id, owner_id))
+                         (json.dumps(kept), session_id, owner_id))
         # Only once the history no longer refers to them.
         for name in images:
             (self.sessions_dir / session_id / name).unlink(missing_ok=True)

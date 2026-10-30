@@ -61,6 +61,17 @@ def test_config_path_uses_wx_user_data_directory_not_a_posix_home_path(tmp_path:
     assert path == tmp_path / "Windows-like-AppData" / "config.json"
 
 
+def test_a_profile_with_an_earlier_default_text_gets_the_current_one(tmp_path: Path):
+    from sceneaccess.prompts import AUDIO_DESCRIPTION, UPGRADED_PROFILE_TEXTS
+    [old] = UPGRADED_PROFILE_TEXTS
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"profiles": [{"name": "Audio description", "text": old},
+                                             {"name": "Mine", "text": old + " Also count the cats."}]}),
+                    encoding="utf-8")
+    assert load_config(path).profiles == (("Audio description", AUDIO_DESCRIPTION),
+                                          ("Mine", old + " Also count the cats."))
+
+
 def test_configuration_round_trip_keeps_provider_models_endpoint_and_api_keys(tmp_path: Path):
     path = tmp_path / "config.json"
     expected = AppConfig(

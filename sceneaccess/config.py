@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .prompts import DEFAULT_PROFILE, DEFAULT_PROFILES
+from .prompts import DEFAULT_PROFILE, DEFAULT_PROFILES, UPGRADED_PROFILE_TEXTS
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, PROVIDERS
 from .video_size import DEFAULT_SHRINK_TARGET_MB
 from .youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
@@ -120,7 +120,9 @@ def _profiles(value: object) -> tuple[tuple[str, str], ...]:
     for entry in value:
         if isinstance(entry, dict) and str(entry.get("name", "")).strip() and str(entry["name"]).strip() not in names:
             names.add(str(entry["name"]).strip())
-            profiles.append((str(entry["name"]).strip(), str(entry.get("text", ""))))
+            text = str(entry.get("text", ""))
+            # A profile still holding an earlier default text gets the current one; edited profiles stay.
+            profiles.append((str(entry["name"]).strip(), UPGRADED_PROFILE_TEXTS.get(text, text)))
     # An empty list is a valid choice: chats then use only the base prompt.
     return tuple(profiles)
 

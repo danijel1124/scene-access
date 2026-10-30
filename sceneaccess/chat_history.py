@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .session_store import EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE
+from .session_store import EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_ENTRY, TRANSCRIPT_FAILED, TRANSCRIPT_NONE
 from .tools import describe_call
 
 # Said first for every item of a round hidden from the model, so the screen reader reads it.
@@ -73,28 +73,37 @@ def chat_history_rows(initial_question: str, history: list[dict[str, Any]], tran
         rows.append((*note, None, TRANSCRIPT))
     for index, message in enumerate(history):
         marker = HIDDEN_FROM_MODEL if message.get(EXCLUDED) else ""
-        rows += [(marker + text, marker + text, index, kind) for text, kind in _message_items(message)]
+        rows += [(marker + shown, marker + full, index, kind) for shown, full, kind in _message_items(message)]
     return rows
 
 
-def _message_items(message: dict[str, Any]) -> list[tuple[str, str]]:
-    """The items of one stored message, with their kind."""
+def _message_items(message: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """The items of one stored message: shown text, text for the reader and kind."""
     content = message.get("content")
+    if message.get(TRANSCRIPT_ENTRY):
+        lines = content.count("\n") - 1
+        return [(f"Transcript added later: {lines} lines of automatic speech recognition, sent after the video. It "
+                 "may contain errors; Enter shows it.", content, TRANSCRIPT)]
     if message["role"] == "user":
         if isinstance(content, list):
             # An image the model asked for; show its description, not the image data.
             text = " ".join(part.get("text", "") for part in content if part.get("type") == "text")
-            return [(f"Image: {text}", IMAGE)]
-        return [(f"You: {content}", QUESTION)]
+            return [_same(f"Image: {text}", IMAGE)]
+        return [_same(f"You: {content}", QUESTION)]
     if message["role"] == "tool":
-        return [(f"Tool result: {message.get('caption') or content}", TOOL)]
+        return [_same(f"Tool result: {message.get('caption') or content}", TOOL)]
     if message.get("tool_calls"):
         # Text the model wrote before calling tools; the final answer is the last "Model:" item.
-        items = [(f"Model note: {content}", NOTE)] if content else []
+        items = [_same(f"Model note: {content}", NOTE)] if content else []
         for call in message["tool_calls"]:
             function = call.get("function") or {}
-            items.append((f"Tool call: {describe_call(function.get('name', ''), function.get('arguments') or '')}", TOOL))
+            items.append(_same(f"Tool call: {describe_call(function.get('name', ''), function.get('arguments') or '')}",
+                               TOOL))
         return items
     sources = "".join(f"\n- {source['title']}: {source['url']}" for source in message.get("sources") or [])
-    return [(f"Model: {content}" + (f"\n\nSources:{sources}" if sources else ""), ANSWER),
-            (usage_text(message.get("usage")), USAGE)]
+    return [_same(f"Model: {content}" + (f"\n\nSources:{sources}" if sources else ""), ANSWER),
+            _same(usage_text(message.get("usage")), USAGE)]
+
+
+def _same(text: str, kind: str) -> tuple[str, str, str]:
+    return text, text, kind

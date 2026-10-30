@@ -418,19 +418,19 @@ def test_a_round_reaches_from_its_question_to_its_answer(tmp_path: Path):
 
 def test_a_round_out_of_the_context_stays_in_the_history_and_can_come_back(tmp_path: Path):
     store, session = chat_with_two_rounds(tmp_path)
-    store.set_round_in_context(session.id, "o", 5, False)
+    store.set_rounds_in_context(session.id, "o", [5], False)
     out = store.get_session(session.id, "o")
     assert len(out.history) == 6 and [entry.get("excluded") for entry in out.history[4:]] == [True, True]
     sent = texts(store.build_follow_up_messages(session.id, "o", "Third?"))
     assert "Second?" not in sent and "Second answer." not in sent and "First answer." in sent
     assert sent[-1] == "Third?"
-    store.set_round_in_context(session.id, "o", 4, True)
+    store.set_rounds_in_context(session.id, "o", [4], True)
     assert "Second answer." in texts(store.get_session(session.id, "o").messages)
 
 
 def test_without_the_first_answer_the_video_and_the_next_question_become_one_message(tmp_path: Path):
     store, session = chat_with_two_rounds(tmp_path)
-    store.set_round_in_context(session.id, "o", 3, False)
+    store.set_rounds_in_context(session.id, "o", [3], False)
     messages = store.get_session(session.id, "o").messages
     # Roles still alternate, which chat templates such as Gemma's require.
     assert [message["role"] for message in messages] == ["user", "assistant"]
@@ -441,11 +441,56 @@ def test_without_the_first_answer_the_video_and_the_next_question_become_one_mes
 def test_deleting_a_round_removes_its_entries_and_images(tmp_path: Path):
     store, session = chat_with_two_rounds(tmp_path)
     image = store.sessions_dir / session.id / "frame_a.jpg"
-    store.delete_round(session.id, "o", 1)
+    store.delete_rounds(session.id, "o", [1])
     kept = store.get_session(session.id, "o")
     assert [entry["content"] for entry in kept.history] == ["Second?", "Second answer."]
     assert not image.exists()
     assert "First answer." not in texts(kept.messages)
+
+
+def test_several_rounds_are_hidden_and_deleted_together(tmp_path: Path):
+    store, session = chat_with_two_rounds(tmp_path)
+    store.set_rounds_in_context(session.id, "o", [2, 5, 99], False)
+    assert all(entry.get("excluded") for entry in store.get_session(session.id, "o").history)
+    store.delete_rounds(session.id, "o", [0, 4])
+    assert store.get_session(session.id, "o").history == []
+
+
+def test_a_transcript_added_later_goes_at_the_end_and_its_speech_block_with_it(tmp_path: Path):
+    store, session = chat_with_two_rounds(tmp_path)
+    store.update_chat_settings(session.id, "o", "", False)
+    before = store.get_session(session.id, "o")
+    store.update_transcript(session.id, "o", "failed", "Skipped: the sound stays private.")
+    skipped = store.get_session(session.id, "o")
+    # A skipped transcript keeps its reason in the same field; it is not sent as a transcript.
+    assert "Skipped" not in json.dumps(skipped.messages)
+    store.append_transcript(session.id, "o", "[00:01] Hello")
+    added = store.get_session(session.id, "o")
+    assert added.transcript_state == "appended" and added.history[-1]["transcript"] is True
+    # Everything before it stays the same, so it stays cached.
+    assert added.messages[:-1] == before.messages
+    assert added.messages[-1]["role"] == "user" and added.messages[-1]["content"].endswith("[00:01] Hello")
+    with_question = store.build_follow_up_messages(session.id, "o", "What is said?")
+    assert [message["role"] for message in with_question][-2:] == ["assistant", "user"]
+    assert texts(with_question)[-1] == "What is said?"
+    store.append_transcript(session.id, "o", "")
+    assert store.get_session(session.id, "o").transcript_state == "done"
+
+
+def test_the_speech_blocks_go_only_to_a_model_that_takes_in_the_speech(tmp_path: Path):
+    from dataclasses import replace
+    from sceneaccess.prompts import SOUND_PROMPT, SPEECH_PROMPT, system_prompt
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="o", source_path=video, title="T", model="", initial_question="?",
+                                   system_prompt=system_prompt(""))
+    def prompt(session): return session.messages[0]["content"]
+    assert SPEECH_PROMPT not in prompt(session) and SOUND_PROMPT not in prompt(session)
+    assert prompt(replace(session, hears_sound=True)).endswith(f"{SPEECH_PROMPT}\n{SOUND_PROMPT}")
+    store.update_transcript(session.id, "o", "done", "[00:01] Hello")
+    transcribed = store.get_session(session.id, "o")
+    assert SPEECH_PROMPT in prompt(transcribed) and SOUND_PROMPT not in prompt(transcribed)
 
 
 def test_moving_a_chat_to_another_provider_stores_it_and_retries_a_skipped_transcript(tmp_path: Path):

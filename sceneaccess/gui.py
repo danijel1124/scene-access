@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import getpass
 import os
 import re
@@ -28,7 +29,7 @@ from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .request_control import RequestControl, RequestCancelled
 from .prompts import system_prompt
 from .session_store import (EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING,
-                            VideoSession, VideoSessionStore, SessionNotFound)
+                            VideoSession, VideoSessionStore, SessionNotFound, round_bounds)
 from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
@@ -37,6 +38,8 @@ from .transcript import make_transcript, needs_transcript
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
 
+# Windows list box messages for the item the keyboard is on, which a multiple-selection list keeps apart.
+LB_SETCARETINDEX, LB_GETCARETINDEX = 0x019E, 0x019F
 # yt-dlp's default file name ends with the video ID in brackets: "Title [jNQXAC9IVRw].mp4".
 YOUTUBE_ID_IN_NAME = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
 
@@ -267,7 +270,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.status = wx.StaticText(panel, label="")
         # The label directly before the list gives it its accessible name for screen readers.
         history_label = wx.StaticText(panel, label="Chat history")
-        self.chat_list = wx.ListBox(panel)
+        # Several items can be selected (Shift+arrows, Ctrl+Space) to copy, hide or delete them together.
+        self.chat_list = wx.ListBox(panel, style=wx.LB_EXTENDED)
         self.question = wx.TextCtrl(panel, style=wx.TE_MULTILINE)
         self.send_button = wx.Button(panel, label="Send question")
         self.pause_button = wx.Button(panel, label="Pause request")
@@ -275,6 +279,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.chat_settings_button = wx.Button(panel, label="Chat settings")
         self.setup_button = wx.Button(panel, label="Change prompt profile and tools")
         self.update_path_button = wx.Button(panel, label="Update original file path")
+        self.transcript_button = wx.Button(panel, label="Add a transcript of the speech")
         layout.Add(self.status, 0, wx.EXPAND | wx.ALL, 8)
         layout.Add(history_label, 0, wx.LEFT | wx.RIGHT, 8)
         layout.Add(self.chat_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
@@ -285,13 +290,14 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         requests.Add(self.pause_button, 0)
         layout.Add(requests, 0, wx.ALIGN_RIGHT | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         chat = wx.BoxSizer(wx.HORIZONTAL)
-        for button in (self.chat_settings_button, self.setup_button, self.update_path_button):
+        for button in (self.chat_settings_button, self.setup_button, self.transcript_button, self.update_path_button):
             chat.Add(button, 0, wx.RIGHT, 8)
         layout.Add(chat, 0, wx.ALL, 8)
         panel.SetSizer(layout)
         self.update_path_button.Bind(wx.EVT_BUTTON, self.on_update_path)
         self.setup_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_setup())
         self.chat_settings_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_chat_settings())
+        self.transcript_button.Bind(wx.EVT_BUTTON, lambda _event: self.add_transcript())
         self.send_button.Bind(wx.EVT_BUTTON, self.on_send)
         self.pause_button.Bind(wx.EVT_BUTTON, self.on_pause)
         self.chat_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda _event: self.open_selected_message())
@@ -316,8 +322,27 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             return True
         return False
 
+    def history_caret(self) -> int:
+        """The history item the keyboard is on. The list can select several items, so this is not always the
+        selection, and it is what the screen reader reads."""
+        if sys.platform == "win32":
+            caret = ctypes.windll.user32.SendMessageW(self.chat_list.GetHandle(), LB_GETCARETINDEX, 0, 0)
+            if 0 <= caret < self.chat_list.GetCount():
+                return caret
+        selections = self.chat_list.GetSelections()
+        return selections[0] if selections else wx.NOT_FOUND
+
+    def select_history_item(self, position: int) -> None:
+        """Selects only this item and puts the keyboard on it, so the screen reader reads it."""
+        for selected in self.chat_list.GetSelections():
+            self.chat_list.Deselect(selected)
+        if 0 <= position < self.chat_list.GetCount():
+            self.chat_list.SetSelection(position)
+            if sys.platform == "win32":
+                ctypes.windll.user32.SendMessageW(self.chat_list.GetHandle(), LB_SETCARETINDEX, position, 0)
+
     def open_selected_message(self) -> None:
-        index = self.chat_list.GetSelection()
+        index = self.history_caret()
         if index == wx.NOT_FOUND or index >= len(self.reader_texts):
             return
         with MessageReaderDialog(self, self.reader_texts[index]) as dialog:
@@ -552,59 +577,146 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.chat_list.Set(items)
         # Select the newest answer rather than its usage line, so it is what gets read first.
         answers = [position for position, (_index, kind) in enumerate(self.history_rows) if kind == ANSWER]
-        self.chat_list.SetSelection(answers[-1] if answers else len(items) - 1)
+        self.select_history_item(answers[-1] if answers else len(items) - 1)
         self._set_chat_mutation_buttons()
 
     def on_history_menu(self, event: wx.ContextMenuEvent) -> None:
-        """The context menu of the Chat history: a round can be taken out of the context or deleted."""
+        """The context menu of the Chat history, for the selected items."""
         position = event.GetPosition()
         if position != wx.DefaultPosition:
-            # A right click: the list does not select what was clicked, so select it first. The keyboard
-            # (Applications key, Shift+F10) gives no position and means the selected item.
+            # A right click: the list does not select what was clicked, so select it first, unless it is part
+            # of the selection. The keyboard (Applications key, Shift+F10) gives no position and means the selection.
             clicked = self.chat_list.HitTest(self.chat_list.ScreenToClient(position))
-            if clicked != wx.NOT_FOUND:
-                self.chat_list.SetSelection(clicked)
-        self.show_history_menu(self.chat_list.GetSelection())
+            if clicked != wx.NOT_FOUND and clicked not in self.chat_list.GetSelections():
+                self.select_history_item(clicked)
+        selected = list(self.chat_list.GetSelections())
+        caret = self.history_caret()
+        self.show_history_menu(selected or ([caret] if caret != wx.NOT_FOUND else []))
 
-    def show_history_menu(self, position: int) -> None:
-        if not self.current or not 0 <= position < len(self.history_rows):
+    def show_history_menu(self, positions: list[int]) -> None:
+        """Copying works for any items; hiding and deleting for the answers' rounds among them. The first question
+        and the transcript sent with the video belong to the video, not to a round."""
+        positions = sorted(position for position in positions if 0 <= position < len(self.history_rows))
+        if not self.current or not positions:
             return
-        index = self.history_rows[position][0]
-        if index is None:
-            return  # The first question and the transcript belong to the video, not to a round.
-        if self._chat_busy():
-            self.status.SetLabel("The chat is answering. Its history can be changed once the answer is complete.")
-            announce("The chat is still answering.")
-            return
-        in_context = not self.current.history[index].get(EXCLUDED)
+        indices = sorted({self.history_rows[position][0] for position in positions
+                          if self.history_rows[position][0] is not None})
         menu = wx.Menu()
-        toggle = menu.Append(wx.ID_ANY, "Hide this answer from the model (cache miss from here on)" if in_context
-                             else "Show this answer to the model again (cache miss from here on)").GetId()
-        delete = menu.Append(wx.ID_ANY, "Delete this answer from the history (cache miss from here on)").GetId()
+        copy = menu.Append(wx.ID_ANY, "Copy to clipboard" if len(positions) == 1
+                           else f"Copy {len(positions)} items to clipboard").GetId()
+        toggle = delete = None
+        hidden, rounds = False, 0
+        if indices:
+            rounds = len({round_bounds(self.current.history, index)[0] for index in indices})
+            what = "this answer" if rounds == 1 else f"these {rounds} answers"
+            hidden = all(self.current.history[index].get(EXCLUDED) for index in indices)
+            toggle = menu.Append(wx.ID_ANY, f"Show {what} to the model again (cache miss from here on)" if hidden
+                                 else f"Hide {what} from the model (cache miss from here on)").GetId()
+            delete = menu.Append(wx.ID_ANY, f"Delete {what} from the history (cache miss from here on)").GetId()
+            if self._chat_busy():
+                # Shown but unavailable, so the screen reader says why nothing happens.
+                menu.Enable(toggle, False)
+                menu.Enable(delete, False)
         chosen = self.chat_list.GetPopupMenuSelectionFromUser(menu)
         menu.Destroy()
-        if chosen == toggle:
-            self.set_answer_in_context(index, not in_context)
+        if chosen == copy:
+            self.copy_history_items(positions)
+        elif chosen == toggle:
+            self.set_answers_in_context(indices, hidden)
         elif chosen == delete:
-            self.delete_answer(index)
+            self.delete_answers(indices, rounds)
 
-    def set_answer_in_context(self, index: int, in_context: bool) -> None:
-        """Takes the answer's round (its question, tool steps and the answer) out of the context or puts it back."""
+    def copy_history_items(self, positions: list[int]) -> None:
+        """Copies the full text of the items, as the reader shows it, separated by blank lines."""
+        text = "\n\n".join(self.reader_texts[position] for position in positions)
+        if not wx.TheClipboard.Open():
+            self.status.SetLabel("The clipboard is in use by another program. Please try again.")
+            return
+        try:
+            wx.TheClipboard.SetData(wx.TextDataObject(text))
+        finally:
+            wx.TheClipboard.Close()
+        message = "Copied." if len(positions) == 1 else f"Copied {len(positions)} items."
+        self.status.SetLabel(self.status.GetLabel().split("\n")[0] + f"\n{message}")
+        announce(message)
+
+    def set_answers_in_context(self, indices: list[int], in_context: bool) -> None:
+        """Hides the answers' rounds (their questions, tool steps and answers) from the model, or shows them again."""
         if not self.current or self._chat_busy():
             return
-        self.store.set_round_in_context(self.current.id, OWNER_ID, index, in_context)
-        self._history_changed(index, "The model sees this answer again." if in_context else
-                              "The answer and its question are hidden from the model; they stay in the history.")
+        self.store.set_rounds_in_context(self.current.id, OWNER_ID, indices, in_context)
+        self._history_changed(min(indices), "The model sees these answers again." if in_context else
+                              "Hidden from the model; the answers stay in the history.")
 
-    def delete_answer(self, index: int) -> None:
-        """Deletes the answer's round, with its question, tool steps and images, from the history and the context."""
+    def delete_answers(self, indices: list[int], rounds: int) -> None:
+        """Deletes the answers' rounds, with their questions, tool steps and images, from the history and the context."""
         if not self.current or self._chat_busy():
             return
-        if wx.MessageBox("This answer, its question and its tool steps will be deleted from the chat, and the "
-                         "model will no longer see them.", "Delete this answer?", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
+        what = "This answer, its question and its tool steps" if rounds == 1 else \
+            f"These {rounds} answers, their questions and their tool steps"
+        if wx.MessageBox(f"{what} will be deleted from the chat, and the model will no longer see them.",
+                         "Delete from the history?", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
             return
-        self.store.delete_round(self.current.id, OWNER_ID, index)
-        self._history_changed(index, "The answer was deleted.")
+        self.store.delete_rounds(self.current.id, OWNER_ID, indices)
+        self._history_changed(min(indices), "Deleted from the history.")
+
+    def add_transcript(self) -> None:
+        """Transcribes the chat's speech through OpenRouter and adds it at the end of the chat, so the cached video
+        and history before it stay valid. Asks the model nothing: that happens with the next question."""
+        if not self.current or self._chat_busy():
+            return
+        session = self.current
+        key = self.openrouter_key()
+        if not key:
+            wx.MessageBox("A transcript is made through OpenRouter. Enter an OpenRouter API key in Settings.",
+                          "OpenRouter API key required", wx.OK | wx.ICON_ERROR)
+            return
+        control = RequestControl()
+        client = OpenRouterClient(key, control=control, ignored_providers=self.config.ignored_providers)
+        if not client.transcription_allowed():
+            wx.MessageBox("ElevenLabs, which makes the transcript, is excluded in Settings, Providers and models.",
+                          "Speech recognition excluded", wx.OK | wx.ICON_ERROR)
+            return
+        if session.provider == LLAMA_CPP and not session.openrouter_transcript and wx.MessageBox(
+                "This chat runs on your own llama.cpp server. A transcript sends the video's sound, not the picture, "
+                "to OpenRouter and ElevenLabs. Make a transcript?", "Send the sound?",
+                wx.YES_NO | wx.ICON_WARNING) != wx.YES:
+            return
+        self._request = control
+        if self.windows:
+            self.windows.requests[session.id] = control
+        self._set_request_buttons(True)
+        self.status.SetLabel("Transcribing the speech. It is added at the end of the chat; nothing is sent to the "
+                             "model until you ask a question.")
+        announce("Transcribing the speech…")
+
+        def worker() -> None:
+            try:
+                text = make_transcript(session, client)
+                control.check_cancelled()
+                self.store.append_transcript(session.id, OWNER_ID, text)
+                wx.CallAfter(self._request_callback, control, self._transcript_added, bool(text))
+            except RequestCancelled:
+                wx.CallAfter(self._request_callback, control, self._cancelled)
+            except Exception as error:
+                wx.CallAfter(self._request_callback, control, self._failed, f"The speech could not be transcribed: {error}")
+            finally:
+                if self.windows:
+                    wx.CallAfter(self.windows.request_finished, session.id, control)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _transcript_added(self, found_speech: bool) -> None:
+        self._finish_request()
+        self.current = self.store.get_session(self.current.id, OWNER_ID)
+        self.render_current()
+        if found_speech:
+            self.select_history_item(len(self.history_items) - 1)
+        message = ("The transcript was added at the end of the chat; the next question sends it." if found_speech
+                   else "No speech was detected in the video.")
+        self.status.SetLabel(self.status.GetLabel() + f"\n{message}")
+        announce(message)
+        self.chat_list.SetFocus()
 
     def _history_changed(self, index: int, message: str) -> None:
         self.current = self.store.get_session(self.current.id, OWNER_ID)
@@ -613,7 +725,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         positions = [position for position, (row_index, _kind) in enumerate(self.history_rows)
                      if row_index is not None and row_index >= index]
         if positions:
-            self.chat_list.SetSelection(positions[0])
+            self.select_history_item(positions[0])
         self.status.SetLabel(self.status.GetLabel() + f"\n{message}")
         announce(message)
         self.chat_list.SetFocus()
@@ -625,7 +737,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
 
     def _set_chat_mutation_buttons(self) -> None:
         busy = self._chat_busy()
-        for button in (self.setup_button, self.update_path_button):
+        for button in (self.setup_button, self.update_path_button, self.transcript_button):
             button.Enable(not busy)
         self.chat_settings_button.Enable(not busy and not getattr(self, '_loading_chat_settings', False))
 
@@ -713,7 +825,13 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                     self._prepare_transcript(session, openrouter if llama_cpp else client, catalog)
                     session = self.store.get_session(session_id, OWNER_ID)
                     session = replace(session, model=session.model or config.model_for(session.provider))
-                messages = session.messages if initial else self.store.build_follow_up_messages(session_id, OWNER_ID, question)
+                # Only a model that takes in the sound gets the prompt's blocks about it; llama.cpp reads only
+                # the pictures of a video.
+                hears = not llama_cpp and (catalog.hears_audio(session.model) is True
+                                           or (session.model == AUTO_ROUTER and session.audio_only))
+                session = replace(session, hears_sound=hears)
+                messages = (session.messages if initial else
+                            self.store.build_follow_up_messages(session_id, OWNER_ID, question, hears_sound=hears))
                 # Excluded providers never answer, the search included.
                 search_options = (routing(config.model, False, catalog, config.ignored_providers, config.excluded_models)
                                   if openrouter else {})
@@ -865,7 +983,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         if not self.IsActive():
             return  # A background answer must not steal focus from another chat or application.
         if list_had_focus:
-            announce(self.history_items[self.chat_list.GetSelection()])
+            announce(self.history_items[self.history_caret()])
         else:
             self.chat_list.SetFocus()
 

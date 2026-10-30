@@ -197,7 +197,8 @@ def test_the_newest_answer_is_selected_not_its_usage_line(frame):
         {'role': 'assistant', 'content': 'Second', 'usage': {'model': 'm', 'prompt_tokens': 2}}])
     frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
     frame.render_current()
-    assert frame.chat_list.GetStringSelection() == 'Model: Second'
+    assert list(frame.chat_list.GetSelections()) == [frame.history_caret()]
+    assert frame.history_items[frame.history_caret()] == 'Model: Second'
     assert frame.chat_list.GetString(frame.chat_list.GetCount() - 1).startswith('Usage:')
 
 
