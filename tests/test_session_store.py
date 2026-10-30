@@ -383,3 +383,22 @@ def test_chat_settings_change_the_model_and_decide_about_the_transcript_again(tm
     store.update_chat_settings(session.id, "local", "", True)
     kept = store.get_session(session.id, "local")
     assert (kept.model, kept.audio_only, kept.transcript_state, kept.transcript) == ("", True, "done", "[00:01] Hello")
+
+
+def test_moving_a_chat_to_another_provider_stores_it_and_retries_a_skipped_transcript(tmp_path: Path):
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="local", source_path=video, title="T", model="", initial_question="?",
+                                   provider="llama.cpp")
+    store.update_transcript(session.id, "local", "failed", "Skipped: the sound stays private.")
+    tools = [{"type": "function", "function": {"name": "zoom_frame"}}]
+    store.update_chat_settings(session.id, "local", "", False, provider="openrouter", tools=tools)
+    moved = store.get_session(session.id, "local")
+    assert (moved.provider, moved.tools, moved.transcript_state, moved.transcript) == ("openrouter", tools, "pending", "")
+    store.update_transcript(session.id, "local", "done", "[00:01] Hello")
+    store.update_chat_settings(session.id, "local", "", False, provider="llama.cpp", openrouter_transcript=True)
+    back = store.get_session(session.id, "local")
+    # A transcript that exists stays; the tools stay as they were when none are given.
+    assert (back.provider, back.openrouter_transcript, back.transcript, back.tools) == (
+        "llama.cpp", True, "[00:01] Hello", tools)

@@ -10,6 +10,7 @@ import traceback
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
+from urllib.request import urlopen
 
 import wx
 
@@ -30,7 +31,7 @@ from .session_store import TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, 
 from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
-                    provider_tools, tool_definitions)
+                    provider_tools, tool_definitions, tool_key, tools_for_provider)
 from .transcript import make_transcript, needs_transcript
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
@@ -379,28 +380,34 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
     def change_chat_settings(self) -> None:
         if not self.current or self._chat_busy() or getattr(self, '_loading_chat_settings', False):
             return
-        session_id, catalog = self.current.id, self.catalog
-        if self.current.provider == LLAMA_CPP:
-            # The models the user's own server offers, never OpenRouter's.
+        session_id = self.current.id
+        # Both providers' models, as the chat may move to the other one.
+        catalogs = {OPENROUTER: self.catalog, LLAMA_CPP: None}
+        if self.config.llama_cpp_url:
             try:
-                catalog = ModelCatalog(self.config.llama_cpp_url)
+                # A switched-off server must not hold up the dialog for long.
+                catalogs[LLAMA_CPP] = ModelCatalog(self.config.llama_cpp_url,
+                                                   opener=lambda request, timeout: urlopen(request, timeout=5))
             except ValueError:
-                catalog = None
+                pass
         self._loading_chat_settings = True
         self.chat_settings_button.Disable()
-        self.status.SetLabel("Loading the model list. Other chat windows remain available.")
+        self.status.SetLabel("Loading the model lists. Other chat windows remain available.")
+
+        def model_ids(catalog: ModelCatalog | None) -> list[str]:
+            try:
+                return catalog.model_ids() if catalog else []
+            except Exception:
+                return []  # Manual model entry remains available when a list fails.
 
         def worker() -> None:
-            try:
-                models = catalog.model_ids() if catalog else []
-            except Exception:
-                models = []  # Manual model entry remains available when the list fails.
+            models = {provider: model_ids(catalog) for provider, catalog in catalogs.items()}
             if wx.GetApp():
                 wx.CallAfter(self._chat_settings_loaded, session_id, models)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _chat_settings_loaded(self, session_id: str, models: list[str]) -> None:
+    def _chat_settings_loaded(self, session_id: str, models: dict[str, list[str]]) -> None:
         if not self or self._closing:
             return
         self._loading_chat_settings = False
@@ -408,14 +415,24 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         if not self.current or self.current.id != session_id or self._chat_busy():
             return
         session = self.current
-        with ChatSettingsDialog(self, session.model, self.config.model_for(session.provider), session.audio_only,
-                                session.sent_video_size, self.config.shrink_target_mb, models,
-                                openrouter=session.provider == OPENROUTER) as dialog:
+        settings_models = {provider: self.config.model_for(provider) for provider in PROVIDER_LABELS}
+        with ChatSettingsDialog(self, session.model, settings_models, session.audio_only, session.sent_video_size,
+                                self.config.shrink_target_mb, models, provider=session.provider,
+                                openrouter_transcript=session.openrouter_transcript,
+                                openrouter_key=bool(self.openrouter_key())) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
             model, audio_only, shrink = dialog.value()
-        if (model, audio_only) != (session.model, session.audio_only):
-            self.store.update_chat_settings(session.id, OWNER_ID, model, audio_only)
+            provider, openrouter_transcript = dialog.provider_value()
+        if (model, audio_only, provider, openrouter_transcript) != (
+                session.model, session.audio_only, session.provider, session.openrouter_transcript):
+            # Moving to the other provider keeps the chosen tools, with that provider's web search; a
+            # llama.cpp chat searches through OpenRouter, so without its key it gets no search, as when starting.
+            tools = tools_for_provider(session.tools, provider) if provider != session.provider else None
+            if tools is not None and provider == LLAMA_CPP and not self.openrouter_key():
+                tools = [tool for tool in tools if tool_key(tool) != WEB_SEARCH]
+            self.store.update_chat_settings(session.id, OWNER_ID, model, audio_only, provider=provider,
+                                            openrouter_transcript=openrouter_transcript, tools=tools)
         if shrink:
             self.shrink_stored_video()
         self.current = self.store.get_session(session.id, OWNER_ID)

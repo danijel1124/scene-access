@@ -9,6 +9,7 @@ import wx
 
 from .dialogs import NO_PROFILE, AddModelDialog, youtube_quality_labels
 from .models import AUTO_ROUTER
+from .providers import LLAMA_CPP, OPENROUTER, PROVIDER_LABELS, PROVIDERS
 from .tools import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME
 from .video_size import DEFAULT_SHRINK_TARGET_MB, SIZE_LIMIT, base64_size, megabytes
 from .youtube import DEFAULT_MAX_HEIGHT, MAX_HEIGHT_CHOICES
@@ -143,35 +144,48 @@ class StoredSizeDialog(wx.Dialog):
 
 
 class ChatSettingsDialog(wx.Dialog):
-    """The open chat's own model, whether openrouter/auto may pick only hearing models, and shrinking its video."""
+    """The open chat's provider and own model, whether openrouter/auto may pick only hearing models, whether a
+    llama.cpp chat may transcribe through OpenRouter, and shrinking its video."""
 
-    def __init__(self, parent: wx.Window, model: str, settings_model: str, audio_only: bool, sent_size: int,
-                 shrink_target_mb: int, models: list[str] | None = None, openrouter: bool = True):
-        """openrouter is False for a llama.cpp chat, which has no openrouter/auto to limit."""
+    def __init__(self, parent: wx.Window, model: str, settings_models: dict[str, str], audio_only: bool,
+                 sent_size: int, shrink_target_mb: int, models: dict[str, list[str]] | None = None, *,
+                 provider: str = OPENROUTER, openrouter_transcript: bool = False, openrouter_key: bool = False):
+        """settings_models and models hold per provider the model in Settings and the models to find. provider
+        is the chat's provider; choosing another one here moves the chat to it."""
         super().__init__(parent, title="Chat settings")
-        self.models = models or []
-        self.use_default = wx.CheckBox(self, label=f"Use the model from Settings ({settings_model})")
+        self.settings_models, self.models = settings_models, models or {}
+        self.chat_provider = self.shown_provider = provider
+        self.openrouter_key = openrouter_key
+        provider_label = wx.StaticText(self, label="Provider of this chat")
+        self.provider = wx.Choice(self, choices=[PROVIDER_LABELS[name] for name in PROVIDERS])
+        self.provider.SetSelection(PROVIDERS.index(provider))
+        self.provider_note = wx.StaticText(self, label="")
+        self.use_default = wx.CheckBox(self)
         self.use_default.SetValue(not model)
         model_label = wx.StaticText(self, label="Model for this chat")
-        self.model = wx.TextCtrl(self, value=model or settings_model)
+        self.model = wx.TextCtrl(self, value=model or settings_models.get(provider, ""))
         self.find = wx.Button(self, label="Find model…")
         self.audio_only = wx.CheckBox(self, label="With openrouter/auto, use only models that hear the video's sound")
         self.audio_only.SetValue(audio_only)
-        self.audio_only.Show(openrouter)
+        self.transcript = wx.CheckBox(self, label="Transcribe the speech through OpenRouter and ElevenLabs "
+                                                  "(sends the video's sound; needs an OpenRouter API key)")
+        self.transcript.SetValue(openrouter_transcript)
         self.shrink = wx.CheckBox(self, label=f"Shrink the stored video ({megabytes(sent_size)} once sent) to at most "
                                               f"{shrink_target_mb} MB")
-        note = wx.StaticText(self, label="A new model or a shrunk video makes the next question send the video "
-                                         "uncached once, so it costs more. If the model may then be one that cannot "
-                                         "hear, that question first transcribes the speech (about $0.11 per hour of sound).")
+        note = wx.StaticText(self, label="A new provider, a new model or a shrunk video makes the next question send "
+                                         "the video uncached once, so it costs more. If the model may then be one that "
+                                         "cannot hear, that question first transcribes the speech, if allowed (about "
+                                         "$0.11 per hour of sound).")
         note.Wrap(580)
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
-        for control in (self.use_default, model_label, self.model, self.find, self.audio_only, self.shrink, note):
+        for control in (provider_label, self.provider, self.provider_note, self.use_default, model_label, self.model,
+                        self.find, self.audio_only, self.transcript, self.shrink, note):
             layout.Add(control, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
         self.SetSizer(layout)
         self.SetMinSize((620, -1))
-        layout.Fit(self)
+        self.provider.Bind(wx.EVT_CHOICE, lambda _event: self._on_provider())
         self.use_default.Bind(wx.EVT_CHECKBOX, lambda _event: self._update())
         self.find.Bind(wx.EVT_BUTTON, self._on_find)
         self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
@@ -182,12 +196,42 @@ class ChatSettingsDialog(wx.Dialog):
         model = "" if self.use_default.GetValue() else self.model.GetValue().strip()
         return model, self.audio_only.GetValue(), self.shrink.GetValue()
 
+    def provider_value(self) -> tuple[str, bool]:
+        """The chat's provider, and whether a llama.cpp chat may transcribe its speech through OpenRouter."""
+        provider = PROVIDERS[self.provider.GetSelection()]
+        return provider, provider == LLAMA_CPP and self.transcript.GetValue()
+
+    def _on_provider(self) -> None:
+        provider = PROVIDERS[self.provider.GetSelection()]
+        if provider != self.shown_provider:
+            # A model name belongs to one provider, so the new one starts with its model from Settings.
+            self.shown_provider = provider
+            self.use_default.SetValue(True)
+            self.model.SetValue(self.settings_models.get(provider, ""))
+        self._update()
+
     def _update(self) -> None:
+        provider = self.shown_provider
+        self.use_default.SetLabel(f"Use the model from Settings ({self.settings_models.get(provider, '')})")
         for control in (self.model, self.find):
             control.Enable(not self.use_default.GetValue())
+        self.audio_only.Show(provider == OPENROUTER)
+        self.transcript.Show(provider == LLAMA_CPP)
+        self.transcript.Enable(self.openrouter_key)
+        if provider == self.chat_provider:
+            text = ""
+        elif provider == OPENROUTER:
+            text = ("From the next question on, this chat's video is sent to OpenRouter, and its sound to "
+                    "ElevenLabs if the model cannot hear.")
+        else:
+            text = "From the next question on, this chat goes to your own llama.cpp server."
+        self.provider_note.SetLabel(text)
+        self.provider_note.Wrap(580)
+        self.GetSizer().Fit(self)
 
     def _on_find(self, _event: wx.CommandEvent) -> None:
-        with AddModelDialog(self, self.models, title="Choose a model for this chat", allow_patterns=False) as dialog:
+        with AddModelDialog(self, self.models.get(self.shown_provider, []), title="Choose a model for this chat",
+                            allow_patterns=False) as dialog:
             if dialog.ShowModal() == wx.ID_OK:
                 self.model.SetValue(dialog.value())
         self.model.SetFocus()
@@ -195,6 +239,12 @@ class ChatSettingsDialog(wx.Dialog):
     def _on_ok(self, event: wx.CommandEvent) -> None:
         if not self.use_default.GetValue() and not self.model.GetValue().strip():
             wx.MessageBox("Enter a model or use the model from Settings.", "No model", wx.OK | wx.ICON_ERROR, self)
+            return
+        if self.chat_provider == LLAMA_CPP and self.shown_provider == OPENROUTER and wx.MessageBox(
+                "This chat ran on your own llama.cpp server. From the next question on, its video is sent to "
+                "OpenRouter and the model provider, and, if the model cannot hear, its sound to ElevenLabs for a "
+                "transcript. Move the chat to OpenRouter?", "Send the video to OpenRouter?",
+                wx.YES_NO | wx.ICON_WARNING, self) != wx.YES:
             return
         event.Skip()
 

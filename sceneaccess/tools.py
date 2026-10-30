@@ -90,6 +90,13 @@ def function_tool_names(tools: list[dict[str, Any]]) -> list[str]:
     return [tool["function"]["name"] for tool in tools if tool.get("type") == "function"]
 
 
+def tools_for_provider(tools: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
+    """A chat's tools after it moved to another provider: the same choice, with that provider's web search."""
+    keys = [tool_key(tool) for tool in tools]
+    return tool_definitions(online_video=HD_FRAME in keys or VIDEO_INFO in keys, web_search=provider == OPENROUTER,
+                            local_web_search=provider != OPENROUTER, chosen=keys)
+
+
 def provider_tools(tools: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
     """The tools a provider can be sent: other servers reject OpenRouter's own tools, and a rejection
     would make the request drop all tools."""

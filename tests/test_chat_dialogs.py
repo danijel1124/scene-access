@@ -1,3 +1,4 @@
+import pytest
 import wx
 
 from sceneaccess import chat_dialogs, dialogs
@@ -100,13 +101,18 @@ def test_start_chat_dialog_keeps_the_advanced_settings_and_a_previous_question()
         app.Destroy()
 
 
+SETTINGS_MODELS = {"openrouter": "openrouter/auto", "llama.cpp": "default"}
+
+
 def test_chat_settings_follow_settings_by_default_or_keep_an_own_model():
     app = wx.App(False)
     frame = wx.Frame(None)
     try:
-        dialog = chat_dialogs.ChatSettingsDialog(frame, "", "openrouter/auto", True, 61_000_000, 16, ["z-ai/glm-flash"])
+        dialog = chat_dialogs.ChatSettingsDialog(frame, "", SETTINGS_MODELS, True, 61_000_000, 16,
+                                                 {"openrouter": ["z-ai/glm-flash"]})
         assert dialog.use_default.GetLabel() == "Use the model from Settings (openrouter/auto)"
         assert dialog.value() == ("", True, False) and not dialog.model.IsEnabled()
+        assert dialog.provider_value() == ("openrouter", False) and dialog.provider_note.GetLabel() == ""
         assert "61.0 MB once sent" in dialog.shrink.GetLabel()
         dialog.use_default.SetValue(False)
         dialog._update()
@@ -115,9 +121,56 @@ def test_chat_settings_follow_settings_by_default_or_keep_an_own_model():
         dialog.shrink.SetValue(True)
         assert dialog.model.IsEnabled() and dialog.value() == ("z-ai/glm-flash", False, True)
         dialog.Destroy()
-        own = chat_dialogs.ChatSettingsDialog(frame, "a/one", "openrouter/auto", False, 1_000, 16)
+        own = chat_dialogs.ChatSettingsDialog(frame, "a/one", SETTINGS_MODELS, False, 1_000, 16)
         assert own.value() == ("a/one", False, False) and own.model.IsEnabled()
         own.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+def test_chat_settings_move_a_chat_to_the_other_provider(monkeypatch):
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    try:
+        dialog = chat_dialogs.ChatSettingsDialog(frame, "a/one", SETTINGS_MODELS, False, 1_000, 16,
+                                                 provider="openrouter", openrouter_key=True)
+        assert dialog.audio_only.IsShown() and not dialog.transcript.IsShown()
+        dialog.provider.SetSelection(1)
+        dialog._on_provider()
+        # A model name belongs to one provider: the chat starts with the other one's model from Settings.
+        assert dialog.value() == ("", False, False) and dialog.model.GetValue() == "default"
+        assert dialog.use_default.GetLabel() == "Use the model from Settings (default)"
+        assert not dialog.audio_only.IsShown() and dialog.transcript.IsShown() and dialog.transcript.IsEnabled()
+        assert "llama.cpp server" in dialog.provider_note.GetLabel()
+        dialog.transcript.SetValue(True)
+        assert dialog.provider_value() == ("llama.cpp", True)
+        dialog.Destroy()
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+@pytest.mark.parametrize("answer", [wx.YES, wx.NO])
+def test_moving_a_llama_cpp_chat_to_openrouter_asks_first(monkeypatch, answer):
+    app = wx.App(False)
+    frame = wx.Frame(None)
+    asked, skipped = [], []
+    monkeypatch.setattr(chat_dialogs.wx, "MessageBox", lambda message, *a, **kw: asked.append(message) or answer)
+    class Event:
+        def Skip(self): skipped.append(True)
+    try:
+        dialog = chat_dialogs.ChatSettingsDialog(frame, "", SETTINGS_MODELS, False, 1_000, 16, provider="llama.cpp")
+        assert not dialog.transcript.IsEnabled()  # Transcription through OpenRouter needs its key.
+        dialog._on_ok(Event())
+        assert asked == [] and skipped == [True]  # Staying on the own server asks nothing.
+        dialog.provider.SetSelection(0)
+        dialog._on_provider()
+        assert "sent to OpenRouter" in dialog.provider_note.GetLabel()
+        dialog._on_ok(Event())
+        assert len(asked) == 1 and "OpenRouter" in asked[0]
+        assert skipped == ([True, True] if answer == wx.YES else [True])
+        dialog.Destroy()
     finally:
         frame.Destroy()
         app.Destroy()

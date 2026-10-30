@@ -215,6 +215,63 @@ def test_an_openrouter_chat_has_no_transcript_choice(frame):
         dialog.Destroy()
 
 
+def test_chat_settings_move_a_chat_with_its_tools_to_the_other_provider(frame, monkeypatch):
+    from sceneaccess.tools import ZOOM_FRAME, tool_key
+    start(frame, web_search=True)
+
+    class Dialog:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def ShowModal(self): return wx.ID_OK
+        def value(self): return '', False, False
+        def provider_value(self): return OPENROUTER, False
+
+    monkeypatch.setattr(gui, 'ChatSettingsDialog', Dialog)
+    frame._chat_settings_loaded(frame.current.id, {OPENROUTER: [], LLAMA_CPP: []})
+    moved = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    assert moved.provider == OPENROUTER
+    # Same tools, now with OpenRouter's own web search instead of the one through OpenRouter.
+    assert [tool_key(tool) for tool in moved.tools] == [ZOOM_FRAME, WEB_SEARCH]
+    assert any(tool.get('type') == 'openrouter:web_search' for tool in moved.tools)
+    assert 'via OpenRouter' in frame.status.GetLabel()
+
+
+def test_moving_to_llama_cpp_without_an_openrouter_key_drops_the_web_search(frame, monkeypatch):
+    from sceneaccess.tools import ZOOM_FRAME, tool_key
+    frame.config = gui.replace(frame.config, api_key='')
+    frame.current = frame.store.create_session(
+        owner_id=gui.OWNER_ID, source_path=frame.video, title='B', model='', initial_question='?',
+        tools=tool_definitions(online_video=False))
+
+    class Dialog:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def ShowModal(self): return wx.ID_OK
+        def value(self): return '', False, False
+        def provider_value(self): return LLAMA_CPP, False
+
+    monkeypatch.setattr(gui, 'ChatSettingsDialog', Dialog)
+    frame._chat_settings_loaded(frame.current.id, {OPENROUTER: [], LLAMA_CPP: []})
+    moved = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    assert moved.provider == LLAMA_CPP and [tool_key(tool) for tool in moved.tools] == [ZOOM_FRAME]
+
+
+def test_chat_settings_wait_only_briefly_for_the_llama_cpp_model_list(frame, monkeypatch):
+    start(frame)
+    timeouts, loaded = [], []
+    def unreachable(request, timeout):
+        timeouts.append(timeout)
+        raise OSError('fixture: server switched off')
+    monkeypatch.setattr(gui, 'urlopen', unreachable)
+    monkeypatch.setattr(frame.catalog, 'model_ids', lambda: ['openrouter/model'])
+    monkeypatch.setattr(frame, '_chat_settings_loaded', lambda session_id, models: loaded.append(models))
+    frame.change_chat_settings()
+    assert timeouts == [5]
+    assert loaded == [{OPENROUTER: ['openrouter/model'], LLAMA_CPP: []}]
+
+
 def test_only_openrouter_gets_its_own_tools():
     tools = tool_definitions(online_video=False)
     assert provider_tools(tools, OPENROUTER) == tools

@@ -241,14 +241,29 @@ class VideoSessionStore:
                          (system_prompt, json.dumps(tools), "1" if audio_only else "0", TRANSCRIPT_PENDING,
                           session_id, owner_id))
 
-    def update_chat_settings(self, session_id: str, owner_id: str, model: str, audio_only: bool) -> None:
+    def update_chat_settings(self, session_id: str, owner_id: str, model: str, audio_only: bool, *,
+                             provider: str | None = None, openrouter_transcript: bool | None = None,
+                             tools: list[dict[str, Any]] | None = None) -> None:
         """Sets the chat's own model ("" follows Settings) and whether openrouter/auto may pick only hearing
-        models. A chat without a transcript decides again on its next question whether it needs one."""
+        models; optionally its provider, whether a llama.cpp chat may transcribe through OpenRouter, and the
+        tools fitting the new provider. A chat without a transcript decides again on its next question whether
+        it needs one; so does one whose transcript was skipped, if its provider changed or transcription
+        through OpenRouter was just allowed."""
         session = self.get_session(session_id, owner_id)
-        state = TRANSCRIPT_PENDING if session.transcript_state == TRANSCRIPT_NONE else session.transcript_state
+        provider = provider or session.provider
+        if openrouter_transcript is None:
+            openrouter_transcript = session.openrouter_transcript
+        state, transcript = session.transcript_state, session.transcript
+        retry = provider != session.provider or (openrouter_transcript and not session.openrouter_transcript)
+        if state == TRANSCRIPT_NONE or (retry and state == TRANSCRIPT_FAILED):
+            state, transcript = TRANSCRIPT_PENDING, ""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE sessions SET model = ?, audio_only = ?, transcript_state = ?, size_confirmed = '0' "
-                         "WHERE id = ? AND owner_id = ?", (model, "1" if audio_only else "0", state, session_id, owner_id))
+            conn.execute("UPDATE sessions SET model = ?, audio_only = ?, transcript_state = ?, transcript = ?, "
+                         "size_confirmed = '0', provider = ?, openrouter_transcript = ?, tools_json = ? "
+                         "WHERE id = ? AND owner_id = ?",
+                         (model, "1" if audio_only else "0", state, transcript, provider,
+                          "1" if openrouter_transcript else "0",
+                          json.dumps(session.tools if tools is None else tools), session_id, owner_id))
 
     def confirm_size(self, session_id: str, owner_id: str) -> None:
         """Remembers that a question with the stored video was answered, so its size is not asked about again."""

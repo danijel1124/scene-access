@@ -174,7 +174,7 @@ def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reope
         monkeypatch.setattr(gui, 'local_video', forbidden)
         monkeypatch.setattr(frame, '_with_youtube_sign_in', forbidden)
         args = {'apply_setup': ('General description',), 'on_update_path': (None,),
-                '_chat_settings_loaded': (sid, [])}.get(handler, ())
+                '_chat_settings_loaded': (sid, {})}.get(handler, ())
         getattr(frame, handler)(*args)
         assert frame.store.get_session(sid, gui.OWNER_ID) == before
         for button in (frame.setup_button, frame.chat_settings_button, frame.update_path_button):
@@ -230,9 +230,10 @@ def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_ch
             def __exit__(self, *a): pass
             def ShowModal(self): return wx.ID_OK
             def value(self): return 'changed/model', True, False
+            def provider_value(self): return 'openrouter', False
 
         monkeypatch.setattr(gui, 'ChatSettingsDialog', SettingsDialog)
-        frame._chat_settings_loaded(session.id, ['changed/model'])
+        frame._chat_settings_loaded(session.id, {'openrouter': ['changed/model'], 'llama.cpp': []})
         assert frame.chat_settings_button.IsEnabled()
         assert frame.current.model == 'changed/model'
         assert frame.current.audio_only
