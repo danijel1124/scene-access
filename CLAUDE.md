@@ -12,7 +12,7 @@ bleibt (oder der Fehler wirklich einer ist), danach die komplette Testsuite lauf
 
 ## Tests nie auf dem sichtbaren Desktop laufen lassen (Nutzer-Vorgabe 30.10.2026)
 
-Viele Tests erzeugen echte wxPython-Fenster (`wx.App`, `MainFrame`, Dialoge). Auf dem normalen Desktop
+Viele Tests erzeugen echte wxPython-Fenster (`wx.App`, `ChatFrame`, `ChatListFrame`, Dialoge). Auf dem normalen Desktop
 gehen die beim Nutzer auf, stehlen den Fokus und verwirren NVDA – real passiert, der Nutzer: „die Tests
 machen eigene Fenster auf, das stört abartig und verwirrt NVDA“. Deshalb legt `tests/conftest.py`
 unter Windows vor allen Tests einen eigenen, unsichtbaren Desktop an (`CreateDesktopW` +
@@ -26,6 +26,18 @@ unsichtbaren. Tests, die einen Kindprozess mit GUI starten (z. B. `gui.main()` i
 aufrufen. Real passiert (30.10.2026): Ein solcher Kindprozess öffnete sein Fenster sichtbar, und ein
 Wächter, der nur die Fenster des pytest-Prozesses selbst prüfte, hat es übersehen. Ein Wächter muss
 deshalb die Fenster aller Nachfahren-Prozesse prüfen.
+
+**Auch die Zwischenablage gehört dem Nutzer:** Sie gilt für die ganze Windows-Sitzung, nicht nur für den
+unsichtbaren Desktop. Tests ersetzen `wx.TheClipboard` deshalb immer durch eine Attrappe, nie die echte
+benutzen – sonst überschreibt jeder Testlauf, was der Nutzer gerade kopiert hat.
+
+## Nach jeder Runde SceneAccess wieder starten (Nutzer-Vorgabe 30.10.2026)
+
+Der Nutzer beendet SceneAccess, bevor eine Änderungsrunde beginnt. Am Ende jeder Runde, sobald alle
+Tests grün sind (und committet ist, wenn committet werden soll), SceneAccess ungefragt wieder starten:
+als Hintergrundauftrag des Harness (`run_in_background`), damit Ausgaben und Tracebacks lesbar
+bleiben, und danach prüfen, dass das Fenster offen ist. Sind die Tests nicht grün, erst beheben, dann
+starten. Während Tests laufen, SceneAccess nicht parallel starten (Speicher dieses Rechners).
 
 ## Tests immer im Hintergrund (Nutzer-Vorgabe 30.10.2026)
 
