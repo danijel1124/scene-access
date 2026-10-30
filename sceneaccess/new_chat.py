@@ -1,5 +1,6 @@
 """Starting a video chat: from a local file or YouTube, with the start dialog, the video size question,
-shrinking, the download and the YouTube sign-in. Mixed into the main window (gui.MainFrame)."""
+shrinking, the download and the YouTube sign-in. Mixed into the chat list (chat_list.ChatListFrame), whose
+dialogs start a chat, and into the chat windows (gui.ChatFrame), in which the chat then starts."""
 
 from __future__ import annotations
 

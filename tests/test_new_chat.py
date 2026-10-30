@@ -11,7 +11,7 @@ def test_new_chat_freezes_the_chosen_tools_in_saved_session(tmp_path, monkeypatc
     source = tmp_path / "video.mp4"
     source.write_bytes(b"video")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     monkeypatch.setattr(frame, "_send", lambda *args, **kwargs: None)
     try:
         frame._start_chat(source, "Video", "Describe", "", source_url="https://youtube.test/v" if online else "",
@@ -32,7 +32,7 @@ def test_chosen_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monkey
     source = tmp_path / "video.mp4"
     source.write_bytes(b"video")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     shown, started = [], []
     original = new_chat.StartChatDialog
 
@@ -78,7 +78,8 @@ def test_chosen_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monkey
 def test_new_video_chat_menu_runs_the_chosen_entry(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    # New video chat is in the main window, the chat list.
+    frame = gui.ChatWindows().show_list()
     calls = []
     monkeypatch.setattr(frame, "new_from_local_file", lambda: calls.append("local"))
     monkeypatch.setattr(frame, "new_from_youtube", lambda: calls.append("youtube"))
@@ -136,7 +137,7 @@ def test_the_size_question_comes_only_for_too_large_videos_that_are_not_skipped(
     large.write_bytes(b"x" * 300)
     calls = []
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         monkeypatch.setattr(new_chat, "SizeDialog", fake_size_dialog(new_chat.SIZE_SEND, calls, dont_ask=True))
         frame.config = gui.replace(frame.config, model="a/one")
@@ -170,7 +171,7 @@ def run_youtube_chat(tmp_path, monkeypatch, sizes, choices):
     monkeypatch.setattr(new_chat, "url_from_clipboard", lambda: "")
     downloads, started, calls, asked = [], [], [], []
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
 
     def download(_url, target_dir, height):
         path = target_dir / f"Video [abcdefghijk] [{height}].mp4"
@@ -237,7 +238,7 @@ def test_default_download_folder_is_created_inside_an_existing_videos_folder(tmp
     monkeypatch.setattr(new_chat, "default_download_dir", lambda: tmp_path / "Videos" / "scene-access")
     (tmp_path / "Videos").mkdir()
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         assert frame._download_dir() == tmp_path / "Videos" / "scene-access"
         assert (tmp_path / "Videos" / "scene-access").is_dir()

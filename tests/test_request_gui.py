@@ -12,7 +12,7 @@ def frame(tmp_path, monkeypatch):
     monkeypatch.setattr(gui.wx, 'MessageBox', lambda *a, **kw: wx.OK)
     monkeypatch.setattr(gui.wx, 'CallAfter', lambda f, *a, **kw: f(*a, **kw))
     app = wx.App(False)
-    window = gui.MainFrame()
+    window = gui.ChatFrame()
     window.config = gui.replace(window.config, api_key='test-only')
     video = tmp_path / 'fixture.mp4'
     video.write_bytes(b'fixture, no media decoding')
@@ -99,17 +99,6 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
     frame._send('Original question', initial=True)
     assert generated, errors
     assert generated[0].exists() is (outcome == 'success')
-
-
-def test_delete_error_keeps_chat_visible_and_reports_failure(frame, monkeypatch):
-    messages = []
-    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: messages.append(message) or wx.YES)
-    def fail(*a, **kw): raise PermissionError('fixture: file is locked')
-    monkeypatch.setattr(frame.store, 'delete_session', fail)
-    session_id = frame.current.id
-    frame.on_delete(None)
-    assert frame.current.id == session_id
-    assert 'file is locked' in messages[-1]
 
 
 def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
@@ -220,67 +209,3 @@ def test_a_failed_question_comes_back_only_into_an_empty_field(frame):
     frame.question.SetValue('')
     frame._failed('Fixture provider failure')
     assert frame.question.GetValue() == 'Failed question'
-
-
-def test_every_window_shares_openrouters_catalog_whatever_the_settings(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    app = wx.App(False)
-    manager = gui.ChatWindows()
-    try:
-        first, second = manager.new_window(), manager.new_window()
-        old_catalog = second.catalog
-        first.config = gui.replace(first.config, provider='llama.cpp',
-                                   llama_cpp_url='http://fixture.example:8080/v1/chat/completions')
-        assert first.catalog is second.catalog is old_catalog
-        assert old_catalog.url == 'https://openrouter.ai/api/v1/models'
-    finally:
-        for window in list(manager.frames): window.Destroy()
-        app.Destroy()
-
-
-def test_missing_session_does_not_create_blank_window(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    app = wx.App(False)
-    manager = gui.ChatWindows()
-    try:
-        manager.new_window()
-        assert manager.open_session('vid_missing') is None
-        assert len(manager.frames) == 1
-    finally:
-        for window in list(manager.frames): window.Destroy()
-        app.Destroy()
-
-
-def test_separate_top_level_windows_reuse_same_chat(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    app = wx.App(False)
-    manager = None
-    try:
-        manager = gui.ChatWindows()
-        launcher = manager.new_window()
-        video = tmp_path/'fixture.mp4'
-        video.write_bytes(b'fixture')
-        sessions = [launcher.store.create_session(owner_id=gui.OWNER_ID, source_path=video,
-                    title=name, model='fixture', initial_question='?') for name in ['A','B']]
-        first = manager.open_session(sessions[0].id)
-        second = manager.open_session(sessions[1].id)
-        assert first is not second and first is not launcher
-        assert first.GetParent() is None and second.GetParent() is None
-        assert manager.open_session(sessions[0].id) is first
-        assert len(manager.frames) == 3
-        assert 'A' in first.GetTitle() and 'B' in second.GetTitle()
-        launcher.config = gui.replace(launcher.config, max_tool_rounds=12)
-        assert first.config.max_tool_rounds == 12
-        assert second.config.max_tool_rounds == 12
-        monkeypatch.setattr(gui.MainFrame, '_send', lambda *a, **kw: None)
-        launcher.pending_size_skip = 'fixture/model'
-        launcher._start_chat(video, 'New', 'Question', '', tools=())
-        created = manager.frames[-1]
-        assert created is not launcher and launcher.current is None
-        assert created.current.tools == []
-        assert created.size_skip_after_answer == (created.current.id, 'fixture/model')
-        assert launcher.pending_size_skip == ''
-    finally:
-        if manager:
-            for window in list(manager.frames): window.Destroy()
-        app.Destroy()

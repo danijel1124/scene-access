@@ -13,7 +13,8 @@ import pytest
 TEST_DESKTOP = "sceneaccess-tests"
 
 
-def _move_to_invisible_desktop() -> None:
+def move_to_invisible_desktop() -> None:
+    """Also for child processes that open windows: a new process starts on the user's desktop."""
     import ctypes
     from ctypes import wintypes
 
@@ -33,7 +34,7 @@ def _move_to_invisible_desktop() -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     if sys.platform == "win32":
-        _move_to_invisible_desktop()
+        move_to_invisible_desktop()
 
 
 @pytest.fixture

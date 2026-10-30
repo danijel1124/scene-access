@@ -52,7 +52,7 @@ def test_advanced_quality_change_replaces_cached_file_only_when_requested(tmp_pa
     source = tmp_path/'old480.mp4'
     source.write_bytes(b'old video')
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     frame.config = gui.replace(frame.config, youtube_max_height=480)
     calls = []
 
@@ -97,7 +97,7 @@ def test_playlist_hides_existing_chats_reuses_orphans_and_downloads_only_selecte
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     monkeypatch.setattr(new_chat, 'url_from_clipboard', lambda: '')
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     downloads = tmp_path/'downloads'
     downloads.mkdir()
     hidden = downloads/('Hidden [ccccccccccc] [aaaaaaaaaaa].mp4' if misleading_titles else 'Hidden [aaaaaaaaaaa].mp4')

@@ -28,7 +28,7 @@ def test_legacy_source_only_persists_single_video(tmp_path, video_server, monkey
     app = wx.App(False)
     loop = wx.GUIEventLoop()
     activator = wx.EventLoopActivator(loop)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         source = tmp_path / 'fixture.mp4'
         source.write_bytes(b'fixture')

@@ -4,7 +4,7 @@ import wx
 
 import pytest
 
-from sceneaccess import gui
+from sceneaccess import chat_list, gui
 from sceneaccess.config import AppConfig
 from sceneaccess.providers import LLAMA_CPP
 
@@ -17,15 +17,16 @@ def test_settings_reject_an_unusable_llama_cpp_address_without_saving(tmp_path, 
     app = wx.App(False)
     path = tmp_path/'config.json'
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: path)
-    frame = gui.MainFrame()
+    windows = gui.ChatWindows()
+    frame = windows.show_list()
     messages = []
     class Dialog:
         def __init__(self, *args): pass
         def ShowModal(self): return wx.ID_OK
         def value(self): return settings
         def Destroy(self): pass
-    monkeypatch.setattr(gui, 'SettingsDialog', Dialog)
-    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **k: messages.append(message))
+    monkeypatch.setattr(chat_list, 'SettingsDialog', Dialog)
+    monkeypatch.setattr(chat_list.wx, 'MessageBox', lambda message, *a, **k: messages.append(message))
     try:
         original = frame.config
         frame.on_settings(None)

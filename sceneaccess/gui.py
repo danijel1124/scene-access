@@ -13,11 +13,13 @@ from pathlib import Path
 
 import wx
 
+from .app_window import AppWindow, open_store, resolve_openrouter_key
 from .chat_history import chat_history_entries, transcript_entry
+from .chat_list import ChatListFrame
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
 from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
                            StoredSizeDialog)
-from .dialogs import NO_PROFILE, SettingsDialog
+from .dialogs import NO_PROFILE
 from .models import AUTO_ROUTER, ModelCatalog, routing
 from .new_chat import NewChatMixin, url_from_clipboard
 from .openrouter import OpenRouterClient
@@ -27,7 +29,6 @@ from .prompts import system_prompt
 from .session_store import TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession, VideoSessionStore, SessionNotFound
 from .speech import announce
 from .single_instance import SingleInstance
-from .models import api_url
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
                     provider_tools, tool_definitions)
 from .transcript import make_transcript, needs_transcript
@@ -61,10 +62,6 @@ OWNER_ID = "local:" + _local_user()
 LEGACY_OWNER_ID = "local:" + os.environ.get("USER", "user")
 
 
-def resolve_openrouter_key(config: AppConfig) -> str | None:
-    return os.environ.get("OPENROUTER_API_KEY") or config.api_key or None
-
-
 def _search_through_openrouter(client: OpenRouterClient, model: str, options: dict, query: str) -> ToolResult:
     """The web_search tool of a llama.cpp chat: OpenRouter's search, given only the query. options holds
     the provider and model exclusions from Settings."""
@@ -77,13 +74,109 @@ def _search_through_openrouter(client: OpenRouterClient, model: str, options: di
 
 
 class ChatWindows:
-    """One independent top-level window per chat, with shared application settings."""
+    """The app's windows: the chat list (the main window) and one window per open chat. They share the
+    settings, OpenRouter's model catalogue and the stored chats."""
     def __init__(self):
-        self.frames: list[MainFrame] = []
+        self.main: ChatListFrame | None = None
+        self.frames: list[ChatFrame] = []
         self.config: AppConfig | None = None
         self.catalog: ModelCatalog | None = None
-        self.last_active: MainFrame | None = None
+        self.config_path: Path | None = None
+        self.store: VideoSessionStore | None = None
+        self.owner_id = OWNER_ID
+        self.last_active: wx.Frame | None = None
         self.requests: dict[str, RequestControl] = {}
+
+    def prepare(self) -> None:
+        """Loads what all windows share, once, before the first window."""
+        if self.config_path is None:
+            self.config_path = config_path_from_standard_paths(wx.StandardPaths.Get())
+        if self.config is None:
+            self.config = load_config(self.config_path)
+        if self.store is None:
+            self.store = open_store(self.config_path, OWNER_ID, LEGACY_OWNER_ID)
+        if self.catalog is None:
+            # OpenRouter's models: which hear, routing and exclusions. llama.cpp chats ask their server.
+            self.catalog = ModelCatalog(OPENROUTER_URL)
+
+    def all_windows(self) -> list[wx.Frame]:
+        return ([self.main] if self.main and not self.main._closing else []) + self.frames
+
+    def show_list(self) -> ChatListFrame:
+        self.prepare()
+        if self.main is None:
+            self.main = ChatListFrame(self)
+        self.main.Show()
+        self.main.sessions.SetFocus()
+        return self.main
+
+    def new_chat_window(self) -> ChatFrame:
+        """A hidden window for a chat about to start; chat_started shows it once the chat exists."""
+        self.prepare()
+        frame = ChatFrame(self)
+        self.frames.append(frame)
+        return frame
+
+    def chat_started(self, frame: ChatFrame) -> None:
+        if frame.current is None:
+            # Never shown, so the screen reader does not announce a window that disappears at once.
+            frame.Close()
+            self.refresh()
+        else:
+            if self.main and not self.main._closing:
+                self.main.refresh_sessions(select=frame.current.id)
+            self._show(frame)
+
+    def open_session(self, session_id: str) -> ChatFrame | None:
+        for frame in self.frames:
+            if frame.current and frame.current.id == session_id:
+                self._show(frame)
+                return frame
+        self.prepare()
+        try:
+            session = self.store.get_session(session_id, OWNER_ID)
+        except SessionNotFound:
+            self.refresh()
+            return None
+        frame = self.new_chat_window()
+        frame.current = session
+        frame.render_current()
+        self._show(frame)
+        return frame
+
+    def _show(self, frame: ChatFrame) -> None:
+        if frame.IsIconized():
+            frame.Iconize(False)
+        frame.Show()
+        frame.Raise()
+        # Raising alone leaves the screen reader's focus where it was; the history has the newest answer selected.
+        frame.chat_list.SetFocus()
+
+    def close_session(self, session_id: str) -> None:
+        for frame in list(self.frames):
+            if frame.current and frame.current.id == session_id:
+                frame.Close()
+
+    def close_all_chats(self) -> None:
+        for frame in list(self.frames):
+            frame.Close()
+
+    def chat_closed(self, frame: ChatFrame) -> None:
+        if frame in self.frames:
+            self.frames.remove(frame)
+        if self.main and not self.main._closing and frame.IsShown():
+            wx.CallAfter(self._focus_list)
+
+    def _focus_list(self) -> None:
+        if self.main and not self.main._closing:
+            self.main.Raise()
+            self.main.sessions.SetFocus()
+
+    def settings_changed(self) -> None:
+        """Chats on "default" show the model from Settings, so they are shown again."""
+        for frame in self.frames:
+            if not frame._closing and frame.current:
+                frame.render_current()
 
     def request_finished(self, session_id: str, control: RequestControl) -> None:
         if self.requests.get(session_id) is not control:
@@ -99,92 +192,51 @@ class ChatWindows:
                 frame.render_current()
 
     def activate(self) -> None:
-        frame = self.last_active if self.last_active in self.frames else (self.frames[-1] if self.frames else None)
+        """Brings back the window used last, e.g. when SceneAccess is started a second time. A chat window
+        still starting is hidden and not brought back."""
+        windows = [window for window in self.all_windows() if window is self.main or window.IsShown()]
+        frame = self.last_active if self.last_active in windows else (windows[-1] if windows else None)
         if frame is not None:
             if frame.IsIconized():
                 frame.Iconize(False)
             frame.Raise()
             frame.SetFocus()
 
-    def new_window(self) -> MainFrame:
-        frame = MainFrame(self)
-        self.frames.append(frame)
-        frame.Show()
-        return frame
-
-    def open_session(self, session_id: str) -> MainFrame | None:
-        for frame in self.frames:
-            if frame.current and frame.current.id == session_id:
-                if frame.IsIconized():
-                    frame.Iconize(False)
-                frame.Raise()
-                return frame
-        if not self.frames:
-            return None
-        try:
-            session = self.frames[0].store.get_session(session_id, OWNER_ID)
-        except SessionNotFound:
-            self.refresh()
-            return None
-        frame = self.new_window()
-        frame.current = session
-        frame.render_current()
-        return frame
-
     def refresh(self) -> None:
-        for frame in self.frames:
-            if not frame._closing:
-                frame.refresh_sessions()
+        if self.main and not self.main._closing:
+            self.main.refresh_sessions()
 
 
-class MainFrame(NewChatMixin, wx.Frame):
-    @property
-    def config(self) -> AppConfig:
-        return self.windows.config if self.windows and self.windows.config is not None else self._config
-
-    @config.setter
-    def config(self, value: AppConfig) -> None:
-        self._config = value
-        if self.windows:
-            self.windows.config = value
-
-    @property
-    def catalog(self) -> ModelCatalog:
-        return self.windows.catalog if self.windows and self.windows.catalog is not None else self._catalog
-
-    @catalog.setter
-    def catalog(self, value: ModelCatalog) -> None:
-        self._catalog = value
-        if self.windows:
-            self.windows.catalog = value
+class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
+    """The window of one chat: its history, the question field and the chat's own settings. The chat list
+    (chat_list.ChatListFrame) starts and opens chats."""
 
     def __init__(self, windows: ChatWindows | None = None):
-        super().__init__(None, title="SceneAccess", size=(1100, 760))
+        super().__init__(None, title="SceneAccess", size=(900, 760))
         self.windows = windows
         self._closing = False
         self._request: RequestControl | None = None
         self._pending_question = ""
-        self.config_path = config_path_from_standard_paths(wx.StandardPaths.Get())
-        self.config = windows.config if windows and windows.config is not None else load_config(self.config_path)
-        self.owner_id = OWNER_ID
-        self.store = VideoSessionStore(self.config_path.parent / "chats")
-        if LEGACY_OWNER_ID != OWNER_ID:
-            self.store.reassign_owner(LEGACY_OWNER_ID, OWNER_ID)
-        if not windows or windows.catalog is None:
-            # OpenRouter's models: which hear, routing and exclusions. llama.cpp chats ask their server.
+        if windows:
+            windows.prepare()
+            self.config_path, self.store = windows.config_path, windows.store
+        else:
+            # A window on its own, e.g. in a test: it keeps its own settings, catalogue and stored chats.
+            self.config_path = config_path_from_standard_paths(wx.StandardPaths.Get())
+            self.config = load_config(self.config_path)
+            self.store = open_store(self.config_path, OWNER_ID, LEGACY_OWNER_ID)
             self.catalog = ModelCatalog(OPENROUTER_URL)
+        self.owner_id = OWNER_ID
         self.current: VideoSession | None = None
         # What the Chat history shows, and what Enter opens in the reader (longer for the transcript).
         self.history_items: list[str] = []
         self.reader_texts: list[str] = []
-        self.session_ids: list[str] = []
         # "Don't show this dialog again" for a model: chosen in the size dialog, kept once the answer arrives.
         self.pending_size_skip = ""
         self.size_skip_after_answer: tuple[str, str] | None = None
         # A chat whose too large stored video was sent as it is; it stops asking once the answer arrives.
         self.size_confirm_after_answer = ""
         self._build()
-        self.refresh_sessions()
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Bind(wx.EVT_ACTIVATE, self.on_activate)
 
@@ -197,41 +249,19 @@ class MainFrame(NewChatMixin, wx.Frame):
         self._closing = True
         if self._request:
             self._request.cancel()
-        if self.windows and self in self.windows.frames:
-            self.windows.frames.remove(self)
+        if self.windows:
+            self.windows.chat_closed(self)
         event.Skip()
 
-    def _start_chat(self, *args, **kwargs) -> None:
-        if not self.windows:
-            return super()._start_chat(*args, **kwargs)
-        frame = self.windows.new_window()
-        frame.pending_size_skip, self.pending_size_skip = self.pending_size_skip, ""
-        NewChatMixin._start_chat(frame, *args, **kwargs)
-        if frame.current is None:
-            frame.Close()
-        self.windows.refresh()
+    def refresh_sessions(self) -> None:
+        """The chat list shows titles and order; a chat window has no list of its own."""
+        if self.windows:
+            self.windows.refresh()
 
     def _build(self) -> None:
         panel = wx.Panel(self)
-        layout = wx.BoxSizer(wx.HORIZONTAL)
-        left = wx.BoxSizer(wx.VERTICAL)
-        self.new_button = wx.Button(panel, label="New video chat")
-        self.settings_button = wx.Button(panel, label="Settings")
-        self.update_path_button = wx.Button(panel, label="Update original file path")
-        self.setup_button = wx.Button(panel, label="Change prompt profile and tools")
-        self.chat_settings_button = wx.Button(panel, label="Chat settings")
-        self.delete_button = wx.Button(panel, label="Delete current chat")
-        self.sessions = wx.ListBox(panel)
-        left.Add(self.new_button, 0, wx.EXPAND | wx.ALL, 6)
-        left.Add(self.settings_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-        left.Add(self.update_path_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-        left.Add(self.setup_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-        left.Add(self.chat_settings_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-        left.Add(self.delete_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-        left.Add(wx.StaticText(panel, label="Recent video chats"), 0, wx.LEFT | wx.TOP, 6)
-        left.Add(self.sessions, 1, wx.EXPAND | wx.ALL, 6)
-        right = wx.BoxSizer(wx.VERTICAL)
-        self.status = wx.StaticText(panel, label="Start a new chat with a local video file.")
+        layout = wx.BoxSizer(wx.VERTICAL)
+        self.status = wx.StaticText(panel, label="")
         # The label directly before the list gives it its accessible name for screen readers.
         history_label = wx.StaticText(panel, label="Chat history")
         self.chat_list = wx.ListBox(panel)
@@ -239,23 +269,26 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.send_button = wx.Button(panel, label="Send question")
         self.pause_button = wx.Button(panel, label="Pause request")
         self.pause_button.Hide()
-        right.Add(self.status, 0, wx.EXPAND | wx.ALL, 8)
-        right.Add(history_label, 0, wx.LEFT | wx.RIGHT, 8)
-        right.Add(self.chat_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        right.Add(wx.StaticText(panel, label="Question"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
-        right.Add(self.question, 0, wx.EXPAND | wx.ALL, 8)
-        right.Add(self.send_button, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
-        right.Add(self.pause_button, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
-        layout.Add(left, 0, wx.EXPAND | wx.ALL, 4)
-        layout.Add(right, 1, wx.EXPAND | wx.ALL, 4)
+        self.chat_settings_button = wx.Button(panel, label="Chat settings")
+        self.setup_button = wx.Button(panel, label="Change prompt profile and tools")
+        self.update_path_button = wx.Button(panel, label="Update original file path")
+        layout.Add(self.status, 0, wx.EXPAND | wx.ALL, 8)
+        layout.Add(history_label, 0, wx.LEFT | wx.RIGHT, 8)
+        layout.Add(self.chat_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        layout.Add(wx.StaticText(panel, label="Question"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        layout.Add(self.question, 0, wx.EXPAND | wx.ALL, 8)
+        requests = wx.BoxSizer(wx.HORIZONTAL)
+        requests.Add(self.send_button, 0, wx.RIGHT, 8)
+        requests.Add(self.pause_button, 0)
+        layout.Add(requests, 0, wx.ALIGN_RIGHT | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        chat = wx.BoxSizer(wx.HORIZONTAL)
+        for button in (self.chat_settings_button, self.setup_button, self.update_path_button):
+            chat.Add(button, 0, wx.RIGHT, 8)
+        layout.Add(chat, 0, wx.ALL, 8)
         panel.SetSizer(layout)
-        self.new_button.Bind(wx.EVT_BUTTON, self.on_new)
-        self.settings_button.Bind(wx.EVT_BUTTON, self.on_settings)
         self.update_path_button.Bind(wx.EVT_BUTTON, self.on_update_path)
         self.setup_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_setup())
         self.chat_settings_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_chat_settings())
-        self.delete_button.Bind(wx.EVT_BUTTON, self.on_delete)
-        self.sessions.Bind(wx.EVT_LISTBOX, self.on_open)
         self.send_button.Bind(wx.EVT_BUTTON, self.on_send)
         self.pause_button.Bind(wx.EVT_BUTTON, self.on_pause)
         self.chat_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda _event: self.open_selected_message())
@@ -286,39 +319,6 @@ class MainFrame(NewChatMixin, wx.Frame):
         with MessageReaderDialog(self, self.reader_texts[index]) as dialog:
             dialog.ShowModal()
         self.chat_list.SetFocus()
-
-    def refresh_sessions(self) -> None:
-        sessions = self.store.list_sessions(OWNER_ID)
-        self.session_ids = [session.id for session in sessions]
-        self.sessions.Set([session.title for session in sessions])
-
-    def on_settings(self, _event: wx.CommandEvent) -> None:
-        dialog = SettingsDialog(self, self.config, self.catalog)
-        if dialog.ShowModal() == wx.ID_OK:
-            candidate = dialog.value()
-            try:
-                if not candidate.model:
-                    raise ValueError("An OpenRouter model is required.")
-                if candidate.provider == LLAMA_CPP and not candidate.llama_cpp_url:
-                    raise ValueError("New chats use the llama.cpp server, so its URL is required.")
-                if candidate.llama_cpp_url:
-                    api_url(candidate.llama_cpp_url, "models")
-            except ValueError as error:
-                wx.MessageBox(str(error), "Invalid settings", wx.OK | wx.ICON_ERROR)
-            else:
-                self.config = candidate
-                save_config(self.config_path, self.config)
-        dialog.Destroy()
-
-    def on_open(self, _event: wx.CommandEvent) -> None:
-        index = self.sessions.GetSelection()
-        if index == wx.NOT_FOUND:
-            return
-        if self.windows:
-            self.windows.open_session(self.session_ids[index])
-            return
-        self.current = self.store.get_session(self.session_ids[index], OWNER_ID)
-        self.render_current()
 
     def on_update_path(self, _event: wx.CommandEvent) -> None:
         if not self.current or self._chat_busy():
@@ -371,9 +371,6 @@ class MainFrame(NewChatMixin, wx.Frame):
     def _local_web_search(self) -> bool:
         """Whether the open llama.cpp chat was started with web search through OpenRouter."""
         return bool(self.current) and WEB_SEARCH in function_tool_names(self.current.tools)
-
-    def openrouter_key(self) -> str | None:
-        return resolve_openrouter_key(self.config)
 
     def chat_model(self, session: VideoSession) -> str:
         """The model a chat uses: its own, or the one in Settings for its provider if it has none ("default")."""
@@ -516,27 +513,6 @@ class MainFrame(NewChatMixin, wx.Frame):
         self.current = self.store.get_session(session.id, OWNER_ID)
         return True
 
-    def on_delete(self, _event: wx.CommandEvent) -> None:
-        if not self.current or self._chat_busy():
-            return
-        if wx.MessageBox("The conversation history and locally stored video data URL will be deleted.", "Delete this chat?", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
-            return
-        try:
-            self.store.delete_session(self.current.id, OWNER_ID)
-        except (OSError, SessionNotFound) as error:
-            wx.MessageBox(f"The chat could not be completely deleted. You can retry deleting it.\n\n{error}",
-                          "Delete failed", wx.OK | wx.ICON_ERROR)
-            return
-        self.current = None
-        self.history_items = []
-        self.reader_texts = []
-        self.chat_list.Clear()
-        self.status.SetLabel("Chat deleted.")
-        self.SetTitle("SceneAccess")
-        self.refresh_sessions()
-        if self.windows:
-            self.windows.refresh()
-
     def render_current(self) -> None:
         if not self.current:
             return
@@ -564,7 +540,7 @@ class MainFrame(NewChatMixin, wx.Frame):
 
     def _set_chat_mutation_buttons(self) -> None:
         busy = self._chat_busy()
-        for button in (self.delete_button, self.setup_button, self.update_path_button):
+        for button in (self.setup_button, self.update_path_button):
             button.Enable(not busy)
         self.chat_settings_button.Enable(not busy and not getattr(self, '_loading_chat_settings', False))
 
@@ -852,8 +828,8 @@ def main() -> int:
             return 1
         config = load_config(path)  # Validate before constructing any application window.
         windows = ChatWindows()
-        windows.config = config
-        windows.new_window()
+        windows.config_path, windows.config = path, config
+        windows.show_list()
         instance.start(lambda: wx.CallAfter(windows.activate))
         app.MainLoop()
         return 0

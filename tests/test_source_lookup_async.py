@@ -24,7 +24,7 @@ def test_lookup_disables_other_windows_until_it_finishes(tmp_path, monkeypatch):
     app = wx.App(False)
     loop = wx.GUIEventLoop()
     activator = wx.EventLoopActivator(loop)
-    frame, other = gui.MainFrame(), wx.Frame(None, title='Other chat')
+    frame, other = gui.ChatFrame(), wx.Frame(None, title='Other chat')
     frame.Show()
     other.Show()
     observations = []
@@ -74,7 +74,7 @@ def test_old_source_lookup_pumps_gui_and_can_be_cancelled(tmp_path, monkeypatch,
     # The real app runs MainLoop; without an active loop nothing is delivered on Windows.
     loop = wx.GUIEventLoop()  # keep a reference: the activator does not own the loop
     activator = wx.EventLoopActivator(loop)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     source = tmp_path/'Video [abcdefghijk].mp4'
     source.write_bytes(b'fixture')
     frame.current = frame.store.create_session(owner_id=gui.OWNER_ID,source_path=source,

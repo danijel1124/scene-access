@@ -10,7 +10,7 @@ from sceneaccess.prompts import BASE_SYSTEM_PROMPT
 def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     sent, opened = [], []
     monkeypatch.setattr(frame, "on_send", lambda _event: sent.append(True))
     monkeypatch.setattr(frame, "open_selected_message", lambda: opened.append(True))
@@ -22,7 +22,6 @@ def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path,
         assert sent == [True, True]
         assert frame.handle_enter(frame.chat_list,wx.WXK_RETURN, shift=False) is True
         assert opened == [True]
-        assert frame.handle_enter(frame.sessions, wx.WXK_RETURN, shift=False) is False
         assert frame.handle_enter(frame.question, ord("A"), shift=False) is False
     finally:
         frame.Destroy()
@@ -36,7 +35,7 @@ def test_dont_ask_again_is_kept_only_once_the_answer_arrived(tmp_path, monkeypat
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="a/one",
                                                    initial_question="Describe it.")
@@ -56,7 +55,7 @@ def test_a_chat_without_its_own_model_follows_settings(tmp_path, monkeypatch):
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         frame.config = gui.replace(frame.config, model="openrouter/auto")
         frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
@@ -99,7 +98,7 @@ def test_a_default_chat_sends_the_settings_model_and_gets_a_transcript_if_it_can
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         frame.config = gui.replace(frame.config, model="google/gemini-flash", api_key="test-key")
         frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
@@ -124,7 +123,7 @@ def test_changing_the_profile_keeps_the_chats_own_hearing_choice(tmp_path, monke
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         frame.config = gui.replace(frame.config, audio_only_auto=True)
         frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
@@ -160,7 +159,7 @@ def test_a_question_in_a_chat_with_a_too_large_video_asks_first(tmp_path, monkey
             return False
 
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         monkeypatch.setattr(gui, "StoredSizeDialog", FakeStoredSizeDialog)
         sent, settings, shrunk = [], [], []
@@ -206,7 +205,7 @@ def test_a_chat_from_before_tools_gets_the_prompt_and_tools(tmp_path, monkeypatc
     video = tmp_path / "old.mp4"
     video.write_bytes(b"fake-mp4-payload")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="Old", model="m",
                                                    initial_question="Describe it.")
@@ -232,7 +231,7 @@ def test_a_failed_transcription_is_remembered_and_does_not_stop_the_answer(tmp_p
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
     app = wx.App(False)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     try:
         session = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="T", model="m",
                                              initial_question="?", transcript_state="pending")

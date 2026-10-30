@@ -26,7 +26,7 @@ def frame(tmp_path, monkeypatch):
     monkeypatch.setattr(gui.wx, 'CallAfter', lambda f, *a, **kw: f(*a, **kw))
     monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
     app = wx.App(False)
-    window = gui.MainFrame()
+    window = gui.ChatFrame()
     window.config = gui.replace(window.config, api_key='openrouter-secret', provider=LLAMA_CPP,
                                 llama_cpp_url=LLAMA_URL, llama_cpp_api_key='llama-secret')
     window.errors = []

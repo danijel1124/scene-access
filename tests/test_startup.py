@@ -1,3 +1,4 @@
+import pytest
 import wx
 
 from sceneaccess import gui
@@ -20,19 +21,22 @@ def test_invalid_config_reports_path_and_exits_without_modifying_file(tmp_path, 
         if app: app.Destroy()
 
 
-def test_activating_application_restores_last_chat_window(tmp_path, monkeypatch):
+@pytest.mark.parametrize('last', ['list', 'chat', 'starting chat'])
+def test_activating_application_restores_the_window_used_last(tmp_path, monkeypatch, last):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     app = wx.App(False)
     manager = gui.ChatWindows()
     try:
-        first, second = manager.new_window(), manager.new_window()
+        chat_list, chat = manager.show_list(), manager.new_chat_window()
+        if last != 'starting chat':
+            chat.Show()  # A chat window still starting stays hidden until its chat exists.
         raised = []
-        for frame in (first, second):
+        for frame in (chat_list, chat):
             monkeypatch.setattr(frame, 'Raise', lambda frame=frame: raised.append(frame))
             monkeypatch.setattr(frame, 'SetFocus', lambda: None)
-        manager.last_active = first
+        manager.last_active = chat_list if last == 'list' else chat
         manager.activate()
-        assert raised == [first]
+        assert raised == [chat if last == 'chat' else chat_list]
     finally:
-        for frame in list(manager.frames): frame.Destroy()
+        for frame in list(manager.all_windows()): frame.Destroy()
         app.Destroy()

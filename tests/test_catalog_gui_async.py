@@ -16,7 +16,7 @@ def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which
     # The real app runs MainLoop; without an active loop wx.Yield delivers nothing on Windows.
     loop = wx.GUIEventLoop()  # keep a reference: the activator does not own the loop
     activator = wx.EventLoopActivator(loop)
-    frame = gui.MainFrame()
+    frame = gui.ChatFrame()
     queried, proceed, completed = threading.Event(), threading.Event(), threading.Event()
     threads = []
     class Catalog:

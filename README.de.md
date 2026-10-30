@@ -6,10 +6,12 @@ SceneAccess ist ein natives, zugängliches Werkzeug für Gespräche über Videos
 
 ## Bedienung
 
-1. **Settings** öffnen, den **Anbieter für neue Chats** wählen und OpenRouter-Modell und API-Key oder die Adresse des eigenen llama.cpp-Servers eintragen (siehe [Eigener llama.cpp-Server](#eigener-llamacpp-server)).
-2. **New video chat** wählen, dann **Start chat from local file**, um eine lokale `.mp4`, `.webm` oder `.mov` auszuwählen, oder **Start chat from YouTube**, um einen Link einzugeben. Ein kopierter Link wird automatisch vorgeschlagen.
-3. Die erste Frage eingeben und ein **Prompt-Profil** wählen. **Enter** startet den Chat, **Umschalt+Enter** fügt einen Zeilenumbruch ein.
-4. Folgefragen im Eingabefeld stellen. **Enter** sendet die Frage, **Umschalt+Enter** fügt einen Zeilenumbruch ein.
+SceneAccess startet mit seinem Hauptfenster, der Liste **Recent video chats**. **Enter** oder ein Doppelklick auf einen Chat öffnet ihn in einem eigenen Chatfenster; Blättern mit den Pfeiltasten öffnet nichts.
+
+1. Im Hauptfenster **Settings** öffnen, den **Anbieter für neue Chats** wählen und OpenRouter-Modell und API-Key oder die Adresse des eigenen llama.cpp-Servers eintragen (siehe [Eigener llama.cpp-Server](#eigener-llamacpp-server)).
+2. Im Hauptfenster **New video chat** wählen, dann **Start chat from local file**, um eine lokale `.mp4`, `.webm` oder `.mov` auszuwählen, oder **Start chat from YouTube**, um einen Link einzugeben. Ein kopierter Link wird automatisch vorgeschlagen.
+3. Die erste Frage eingeben und ein **Prompt-Profil** wählen. **Enter** startet den Chat in einem neuen Chatfenster, **Umschalt+Enter** fügt einen Zeilenumbruch ein.
+4. Folgefragen im Eingabefeld des Chatfensters stellen. **Enter** sendet die Frage, **Umschalt+Enter** fügt einen Zeilenumbruch ein.
 
 Die Liste **Chat history** enthält einen Eintrag pro Nachricht. **Enter** auf einem Eintrag öffnet ihn in einem schreibgeschützten Textfeld zum zeilenweisen Lesen. Unter jeder Antwort zeigt eine Nutzungszeile das Modell, das tatsächlich geantwortet hat (hilfreich bei `openrouter/auto`), die Prompt-Tokens, die aus dem Cache gelesen (hit), nicht aus dem Cache bedient (miss) und in den Cache geschrieben wurden, und bei Tool-Nutzung die Zahl der Anfragen.
 
@@ -17,13 +19,15 @@ Wenn ein laufender Screenreader wie NVDA erkannt wird, sagt SceneAccess an, dass
 
 Direkte Ansagen verwenden nur bekannte Screenreader-Anbindungen. Verfügbare reine Synthesizer wie SAPI, ESpeak oder Speech Dispatcher lösen keine Sprachausgabe aus; unbekannte Ausgabemodule bleiben stumm. Eine direkte Orca-Anbindung für Ansagen ist nicht enthalten.
 
-Die Seitenleiste enthält die letzten Chats. Ein Chat funktioniert weiter, wenn die Originaldatei verschoben oder gelöscht wurde, denn der private lokale Video-Kontext bleibt erhalten.
+Ein Chat funktioniert weiter, wenn die Originaldatei verschoben oder gelöscht wurde, denn der private lokale Video-Kontext bleibt erhalten.
 
-## Chatfenster und Anfragesteuerung
+## Hauptfenster und Chatfenster
 
-Jeder Chat öffnet ein eigenes Hauptfenster. **Alt+Tab** wechselt zwischen den Chats; ein bereits offener Chat wird nicht doppelt geöffnet. Die Einstellungen gelten gemeinsam für alle Fenster. Laufende Anfragen behalten den Einstellungsstand vom Start. Eine Antwort im Hintergrund nimmt dem aktuellen Fenster nicht den Fokus weg.
+Das Hauptfenster enthält **New video chat**, **Settings**, die Liste **Recent video chats** und **Delete chat**; das löscht nach Rückfrage den in der Liste ausgewählten Chat und schließt vorher sein offenes Chatfenster. Ein Chat, der noch antwortet oder speichert, wird nicht gelöscht. Schließen des Hauptfensters beendet SceneAccess und schließt alle Chatfenster; laufende Anfragen werden abgebrochen, abgeschlossene Chats bleiben gespeichert.
 
-Pro Benutzer-Anwendungsdatenordner läuft nur ein SceneAccess-Prozess. Ein weiterer Start stellt das zuletzt aktive Chatfenster wieder her und aktiviert es, statt einen zweiten Prozess zu öffnen, der Chatverläufe überschreiben könnte. Scheitert die Aktivierung, meldet der neue Prozess, dass SceneAccess bereits läuft, und beendet sich ohne zweite Instanz.
+Jeder Chat öffnet sich in einem eigenen Chatfenster, **Alt+Tab** wechselt also zwischen den Chats. Ein Chatfenster hat die Statuszeile, die **Chat history**, das Eingabefeld mit **Send question** und **Pause request** sowie die chateigenen Knöpfe **Chat settings**, **Change prompt profile and tools** und **Update original file path**. Ein bereits offener Chat wird nicht doppelt geöffnet, sein Fenster kommt nach vorn. Der Fokus geht auf die Chat history mit der neuesten Antwort; schließt ein Chatfenster, kehrt er zur Liste zurück. Die Einstellungen gelten gemeinsam für alle Fenster, gespeicherte Settings erscheinen sofort in offenen Chatfenstern. Laufende Anfragen behalten den Einstellungsstand vom Start. Eine Antwort im Hintergrund nimmt dem aktuellen Fenster nicht den Fokus weg.
+
+Pro Benutzer-Anwendungsdatenordner läuft nur ein SceneAccess-Prozess. Ein weiterer Start stellt das zuletzt benutzte Fenster wieder her und aktiviert es, statt einen zweiten Prozess zu öffnen, der Chatverläufe überschreiben könnte. Scheitert die Aktivierung, meldet der neue Prozess, dass SceneAccess bereits läuft, und beendet sich ohne zweite Instanz.
 
 Schließen eines Chats bricht seine Anfrage ab. Bis der alte Worker das Speichern beziehungsweise Beenden abgeschlossen hat, bleibt der Chat gegen eine weitere Anfrage gesperrt. Wiederöffnen ist erlaubt; eine neue Frage bleibt im Eingabefeld und kann kurz darauf erneut gesendet werden. Der Verlauf wird in einer SQLite-Schreibtransaktion ergänzt, sodass abgeschlossene Runden einander nicht überschreiben.
 
@@ -129,7 +133,9 @@ Der API-Key kann alternativ über `OPENROUTER_API_KEY` gesetzt werden, diese Umg
 
 Der gesamte Code liegt im Paket `sceneaccess`:
 
-- `gui.py`: Hauptfenster und App-Start
+- `gui.py`: die Chatfenster, der gemeinsame Zustand aller Fenster (`ChatWindows`) und der App-Start
+- `chat_list.py`: das Hauptfenster mit der Chatliste, Settings und dem Löschen eines Chats
+- `app_window.py`: was Hauptfenster und Chatfenster teilen: Einstellungen, Modellkatalog und gespeicherte Chats
 - `single_instance.py`: Prozesssperre und lokaler Aktivierungskanal mit festem Nachrichtentyp
 - `new_chat.py`: einen Chat aus einer lokalen Datei oder von YouTube starten: Chatstart-Dialog, Frage zur Videogröße, Verkleinern und Download
 - `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models

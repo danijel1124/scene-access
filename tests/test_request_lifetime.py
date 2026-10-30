@@ -21,8 +21,8 @@ def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, m
     windows = gui.ChatWindows()
     entered, release, saved = threading.Event(), threading.Event(), threading.Event()
     try:
-        windows.new_window()  # Keep the launcher alive after the chat closes.
-        old = windows.new_window()
+        windows.show_list()  # Keep the chat list alive after the chat closes.
+        old = windows.new_chat_window()
         old.config = gui.replace(old.config, api_key='test-only')
         source = tmp_path/'source.mp4'
         source.write_bytes(b'fixture')
@@ -58,7 +58,7 @@ def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, m
         release.set()
         saved.wait(3)
         wx.Yield()
-        for frame in list(windows.frames): frame.Destroy()
+        for frame in list(windows.all_windows()): frame.Destroy()
         app.Destroy()
 
 
@@ -74,8 +74,8 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
     windows = gui.ChatWindows()
     entered, release, saved = threading.Event(), threading.Event(), threading.Event()
     try:
-        windows.new_window()
-        old = windows.new_window()
+        windows.show_list()
+        old = windows.new_chat_window()
         old.config = gui.replace(old.config, api_key='test-only')
         source = tmp_path/'source.mp4'
         source.write_bytes(b'fixture')
@@ -101,8 +101,7 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
         assert reopened is not None
         assert reopened._request is None
         assert sid in windows.requests
-        for button in (reopened.setup_button, reopened.chat_settings_button,
-                       reopened.update_path_button, reopened.delete_button):
+        for button in (reopened.setup_button, reopened.chat_settings_button, reopened.update_path_button):
             assert not button.IsEnabled()
         reopened.apply_setup('General description')
         assert reopened.store.get_session(sid, gui.OWNER_ID).system_prompt == ''
@@ -129,7 +128,7 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
         while windows.requests and time.monotonic() < deadline:
             wx.Yield()
             time.sleep(.01)
-        for frame in list(windows.frames):
+        for frame in list(windows.all_windows()):
             frame.Destroy()
         app.Destroy()
 
@@ -137,7 +136,7 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
 @pytest.mark.parametrize('reopen', [False, True], ids=['active', 'reopened'])
 @pytest.mark.parametrize('handler', [
     'change_setup', 'apply_setup', 'on_update_path', 'change_chat_settings',
-    '_chat_settings_loaded', 'shrink_stored_video', '_find_online_source', 'on_delete',
+    '_chat_settings_loaded', 'shrink_stored_video', '_find_online_source',
 ])
 def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reopen, handler):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
@@ -149,8 +148,8 @@ def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reope
     app = wx.App(False)
     windows = gui.ChatWindows()
     try:
-        windows.new_window()
-        old = windows.new_window()
+        windows.show_list()
+        old = windows.new_chat_window()
         source = tmp_path/'source.mp4'
         source.write_bytes(b'fixture')
         old.current = old.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
@@ -175,22 +174,20 @@ def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reope
         monkeypatch.setattr(gui, 'local_video', forbidden)
         monkeypatch.setattr(frame, '_with_youtube_sign_in', forbidden)
         args = {'apply_setup': ('General description',), 'on_update_path': (None,),
-                '_chat_settings_loaded': (sid, []), 'on_delete': (None,)}.get(handler, ())
+                '_chat_settings_loaded': (sid, [])}.get(handler, ())
         getattr(frame, handler)(*args)
         assert frame.store.get_session(sid, gui.OWNER_ID) == before
-        for button in (frame.setup_button, frame.chat_settings_button,
-                       frame.update_path_button, frame.delete_button):
+        for button in (frame.setup_button, frame.chat_settings_button, frame.update_path_button):
             assert not button.IsEnabled()
         if not reopen:
             # Completion callbacks precede request_finished: do not unlock writes too early.
             frame._finish_request()
             assert not frame.setup_button.IsEnabled()
         windows.request_finished(sid, control)
-        for button in (frame.setup_button, frame.chat_settings_button,
-                       frame.update_path_button, frame.delete_button):
+        for button in (frame.setup_button, frame.chat_settings_button, frame.update_path_button):
             assert button.IsEnabled()
     finally:
-        for frame in list(windows.frames):
+        for frame in list(windows.all_windows()):
             frame.Destroy()
         app.Destroy()
 
@@ -201,7 +198,7 @@ def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_ch
     app = wx.App(False)
     windows = gui.ChatWindows()
     try:
-        launcher = windows.new_window()
+        launcher = windows.show_list()
         source = tmp_path/'source.mp4'
         source.write_bytes(b'original video')
         session = launcher.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
@@ -262,6 +259,6 @@ def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_ch
         assert persisted.model == 'changed/model'
         assert persisted.source_path == str(replacement)
     finally:
-        for frame in list(windows.frames):
+        for frame in list(windows.all_windows()):
             frame.Destroy()
         app.Destroy()

@@ -2,8 +2,13 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import wx
+
+# A child process starts on the user's desktop; this keeps the windows of a child running the GUI invisible.
+HIDDEN = (f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r}); import conftest; "
+          "conftest.move_to_invisible_desktop()\n")
 
 
 def test_second_process_activates_primary_without_becoming_primary(tmp_path):
@@ -62,7 +67,7 @@ original_activate = gui.ChatWindows.activate
 def activate(self):
     original_activate(self)
     (root/'activated').write_text('activated')
-    for frame in list(self.frames): frame.Close()
+    self.main.Close()  # Closing the chat list ends the app.
 gui.ChatWindows.activate = activate
 original_loop = wx.App.MainLoop
 def loop(self):
@@ -78,13 +83,13 @@ from sceneaccess import gui
 gui.config_path_from_standard_paths = lambda _: Path(sys.argv[1])/'config.json'
 raise SystemExit(gui.main())
 '''
-    primary = subprocess.Popen([sys.executable, '-c', primary_script, str(tmp_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    primary = subprocess.Popen([sys.executable, '-c', HIDDEN + primary_script, str(tmp_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         deadline = time.monotonic()+10
         while not ready.exists() and primary.poll() is None and time.monotonic() < deadline:
             time.sleep(0.05)
         assert ready.exists(), 'Primary GUI did not start'
-        secondary = subprocess.run([sys.executable, '-c', secondary_script, str(tmp_path)], capture_output=True, text=True, timeout=10)
+        secondary = subprocess.run([sys.executable, '-c', HIDDEN + secondary_script, str(tmp_path)], capture_output=True, text=True, timeout=10)
         assert secondary.returncode == 0, secondary.stderr
         output, errors = primary.communicate(timeout=10)
         assert primary.returncode == 0, errors

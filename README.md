@@ -6,10 +6,12 @@ SceneAccess is a native, accessible tool for conversations about videos, made fo
 
 ## Usage
 
-1. Open **Settings**, choose the **provider for new chats**, and enter the OpenRouter model and API key, or the URL of your own llama.cpp server (see [Own llama.cpp server](#own-llamacpp-server)).
-2. Choose **New video chat**, then **Start chat from local file** to select a local `.mp4`, `.webm`, or `.mov` file, or **Start chat from YouTube** to enter a link. A copied link is suggested automatically.
-3. Enter the first question and choose a **prompt profile**. **Enter** starts the chat, **Shift+Enter** inserts a line break.
-4. Ask follow-up questions in the question field. **Enter** sends the question, **Shift+Enter** inserts a line break.
+SceneAccess opens with its main window, the list of **Recent video chats**. **Enter** or a double click on a chat opens it in its own chat window; moving through the list with the arrow keys opens nothing.
+
+1. In the main window, open **Settings**, choose the **provider for new chats**, and enter the OpenRouter model and API key, or the URL of your own llama.cpp server (see [Own llama.cpp server](#own-llamacpp-server)).
+2. Choose **New video chat** in the main window, then **Start chat from local file** to select a local `.mp4`, `.webm`, or `.mov` file, or **Start chat from YouTube** to enter a link. A copied link is suggested automatically.
+3. Enter the first question and choose a **prompt profile**. **Enter** starts the chat in a new chat window, **Shift+Enter** inserts a line break.
+4. Ask follow-up questions in the chat window's question field. **Enter** sends the question, **Shift+Enter** inserts a line break.
 
 The **Chat history** list contains one item per message. **Enter** on an item opens it in a read-only text field for reading line by line. Below every answer, a usage line shows the model that actually answered (useful with `openrouter/auto`), the prompt tokens read from the cache (hit), not served from the cache (miss) and written to the cache, and, when tools were used, the number of requests.
 
@@ -17,13 +19,15 @@ When a running screen reader such as NVDA is detected, SceneAccess announces tha
 
 Direct announcements use only recognised screen-reader bridges. Available standalone synthesizers such as SAPI, ESpeak or Speech Dispatcher do not trigger speech; unknown output backends remain silent. No direct Orca announcement integration is included.
 
-The sidebar lists recent chats. A chat remains usable if the original file is moved or deleted because the private local video context is retained.
+A chat remains usable if the original file is moved or deleted because the private local video context is retained.
 
-## Chat windows and request controls
+## Main window and chat windows
 
-Each chat opens in its own top-level window, so Alt+Tab switches between chats. Opening an already open chat raises its existing window. Settings are shared between windows; a running request keeps the settings it started with. An answer arriving in a background window does not take focus from your current window.
+The main window holds **New video chat**, **Settings**, the list of **Recent video chats** and **Delete chat**, which deletes the chat selected in the list after asking; its open chat window closes first. A chat that is still answering or saving is not deleted. Closing the main window ends SceneAccess and closes every chat window, cancelling running requests; finished chats stay stored.
 
-Only one SceneAccess process runs per user application-data directory. Starting it again restores and activates the last active chat window instead of opening a second process that could overwrite chat history. If activation fails, the new process reports that SceneAccess is already running and exits without opening another instance.
+Each chat opens in its own chat window, so Alt+Tab switches between chats. A chat window has the status line, the **Chat history**, the question field with **Send question** and **Pause request**, and the chat's own **Chat settings**, **Change prompt profile and tools** and **Update original file path**. Opening an already open chat brings its window back. The focus goes to the chat history, with the newest answer selected; closing a chat window returns it to the list. Settings are shared between all windows, and saved Settings show at once in open chat windows; a running request keeps the settings it started with. An answer arriving in a background window does not take focus from your current window.
+
+Only one SceneAccess process runs per user application-data directory. Starting it again restores and activates the window used last instead of opening a second process that could overwrite chat history. If activation fails, the new process reports that SceneAccess is already running and exits without opening another instance.
 
 Closing a chat cancels its request, but the chat remains protected against another request until its old worker has finished saving or stopping. Reopening it during that interval is allowed; a new question stays in the input field and can be retried shortly. History is appended in a SQLite write transaction, so completed turns cannot overwrite one another.
 
@@ -129,7 +133,9 @@ Alternatively, set `OPENROUTER_API_KEY`; the environment variable takes preceden
 
 All code is in the `sceneaccess` package:
 
-- `gui.py`: the main window and the app start
+- `gui.py`: the chat windows, the windows' shared state (`ChatWindows`) and the app start
+- `chat_list.py`: the main window with the list of chats, Settings and deleting a chat
+- `app_window.py`: what the main window and the chat windows share: settings, model catalogue and stored chats
 - `new_chat.py`: starting a chat from a local file or YouTube: the start dialog, the video size question, shrinking and the download
 - `dialogs.py`: Settings with its File name, Prompt profiles and Providers and models sub-dialogs
 - `chat_dialogs.py`: the start-chat dialog with Advanced…, the video size questions, Chat settings, and the message reader
