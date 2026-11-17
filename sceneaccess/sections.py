@@ -106,7 +106,7 @@ SECTION_TASK = ("\n\nYour task: describe part {number} of {count}, from {span}, 
                 "and comes in {count} parts, each with its own picture and sound. The video is what counts: describe "
                 "what can be seen in it, the actions, aids, objects and details that matter. What is said, and the "
                 "transcript, only help to understand it; do not retell them. "
-                "Give every time as the time in the whole video, between {start} and {end}. Mention what goes on "
+                "Give every time as mm:ss in the whole video, between {start} and {end}. Mention what goes on "
                 "from the part before only if something new happens. Start right away with the first time; do not "
                 "repeat this task, the transcript or what you wrote about earlier parts. Answer in the language of "
                 "the question: {question}")
@@ -114,6 +114,15 @@ MERGE_TASK = ("\n\nYour task: give the one answer for the whole video, which is 
               "at once: put your descriptions of the parts above together in order, keep every detail and every "
               "time, and leave out only what repeats where two parts meet. Do not mention the parts. Answer in the "
               "language of the question: {question}")
+
+
+PART_HEADING = re.compile(r"\A\s*(?:\*\*)?(?:Part|Teil|Abschnitt)\s+\d+\b[^\n]*\n+", re.IGNORECASE)
+
+
+def without_part_heading(text: str) -> str:
+    """A section's description without a heading such as "Part 2 (00:28 to 00:56):", which models copy from the
+    descriptions of the parts before; the Chat history and the merged answer have headings of their own."""
+    return PART_HEADING.sub("", text, count=1)
 
 
 def describe_in_sections(client: Any, session: VideoSession, question: str, sections: list[Section],
@@ -132,9 +141,11 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     stored = session.sections if session.sections and session.sections.get("key") == key else None
     progress = stored or {"key": key, "sections": []}
     described = progress["sections"]
-    total = format_time(duration)
+    # Whole seconds only: the model copies the format, and tenths are noise on a braille display.
+    total = format_time(round(duration))
     for section in sections[len(described):]:
-        span = f"{format_time(section.start)} to {format_time(section.end)}"
+        start, end = format_time(round(section.start)), format_time(round(section.end))
+        span = f"{start} to {end}"
         notify("section", f"Section {section.index + 1} of {len(sections)}, {span}")
         parts: list[dict[str, Any]] = []
         if described:
@@ -148,8 +159,8 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         parts.append({"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{data}"}})
         parts += sound(section) if sound else []
         parts.append({"type": "text", "text": SECTION_TASK.format(
-            number=section.index + 1, count=len(sections), span=span, total=total, start=format_time(section.start),
-            end=format_time(section.end), question=question).strip()})
+            number=section.index + 1, count=len(sections), span=span, total=total, start=start, end=end,
+            question=question).strip()})
         runner = new_runner()
         try:
             turn = client.run_turn(session, [*session.system_messages, {"role": "user", "content": parts}],
@@ -157,7 +168,8 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         finally:
             runner.cleanup_files()
         described.append({"index": section.index, "start": section.start, "end": section.end,
-                          "text": turn.completion.answer, "thinking": turn.entries[-1].get("thinking", ""),
+                          "text": without_part_heading(turn.completion.answer),
+                          "thinking": turn.entries[-1].get("thinking", ""),
                           "usage": turn.completion.usage_record()})
         save(progress)
     notify("section", f"Putting the {len(sections)} sections together")

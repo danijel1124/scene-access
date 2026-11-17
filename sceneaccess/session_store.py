@@ -54,6 +54,11 @@ TRANSCRIPT_HELP = ("It is only a help: the video is what counts, so describe wha
 TRANSCRIPT_INTRO = ("You cannot hear this video, so here is an automatic transcript of its speech. Speech "
                     "recognition may contain errors; times are mm:ss from the start of the video. "
                     f"{TRANSCRIPT_HELP}\n\n")
+# A model that hears the video gets the transcript too when the chat's mode is on; telling it it cannot hear
+# would be wrong.
+TRANSCRIPT_HEARD_INTRO = ("Here is also an automatic transcript of the video's speech. Speech recognition may "
+                          "contain errors; times are mm:ss from the start of the video. "
+                          f"{TRANSCRIPT_HELP}\n\n")
 TRANSCRIPT_LATER_INTRO = ("Here is an automatic transcript of the video's speech, added after the video. Speech "
                           "recognition may contain errors; times are mm:ss from the start of the video. "
                           f"{TRANSCRIPT_HELP}\n\n")
@@ -71,7 +76,8 @@ SECTION_FILE_PREFIX = "section-"
 def joined_sections(described: list[dict[str, Any]]) -> str:
     """The descriptions of a video's sections as one text, each headed with its part and time."""
     from .tools import format_time
-    return "\n\n".join(f"Part {entry['index'] + 1} ({format_time(entry['start'])} to {format_time(entry['end'])}):\n"
+    return "\n\n".join(f"Part {entry['index'] + 1} ({format_time(round(entry['start']))} to "
+                       f"{format_time(round(entry['end']))}):\n"
                        f"{entry['text']}" for entry in described)
 
 
@@ -207,7 +213,8 @@ class VideoSession:
         # OpenRouter reads explicit cache breakpoints from content parts, not from the message.
         system = self.system_messages
         # The transcript comes before the video's cache breakpoint, so it is cached together with the video.
-        transcript = [{"type": "text", "text": TRANSCRIPT_INTRO + self.transcript}] if self.sends_transcript else []
+        intro = TRANSCRIPT_HEARD_INTRO if self.hears_sound else TRANSCRIPT_INTRO
+        transcript = [{"type": "text", "text": intro + self.transcript}] if self.sends_transcript else []
         # A video described in sections is too long to send; its sections' descriptions take its place, so later
         # questions know the video also when the answer to the first question is hidden.
         if self.described_in_sections:

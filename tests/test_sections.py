@@ -69,6 +69,22 @@ def test_each_section_gets_the_transcript_lines_of_its_own_time():
     assert transcript_between(transcript, 60, 90) == "[01:05] Four."
 
 
+def test_a_copied_part_heading_is_cut_from_a_sections_description():
+    from sceneaccess.sections import without_part_heading
+    assert without_part_heading("Part 2 (00:28.1 bis 00:56.1):\n\n00:28 Sie hält ein Tuch.") == "00:28 Sie hält ein Tuch."
+    assert without_part_heading("**Teil 3 von 3**\n00:56 Sieb.") == "00:56 Sieb."
+    assert without_part_heading("00:00 Part 1 of her day.") == "00:00 Part 1 of her day."
+
+
+def test_a_model_that_hears_is_not_told_it_cannot_hear(tmp_path: Path):
+    store, session = _session(tmp_path, seconds=0, transcribe="on")
+    store.update_transcript(session.id, "o", "done", "[00:05] Hello.")
+    session = store.get_session(session.id, "o")
+    assert "You cannot hear" in json.dumps(session.messages)
+    heard = json.dumps(replace(session, hears_sound=True).messages)
+    assert "You cannot hear" not in heard and "[00:05] Hello." in heard and "the video is what counts" in heard
+
+
 class Recorder:
     """A model that describes each part it gets, and fails at the part given in fail_at."""
 
@@ -126,6 +142,8 @@ def test_a_description_that_stops_continues_with_the_next_section(tmp_path: Path
     assert [len(progress["sections"]) for progress in saved] == [1]
     first = json.dumps(failing.requests[0][1])
     assert "describe part 1 of 3" in first and "[00:05] Hello." in first and "[00:40]" not in first
+    # Whole seconds in the task, so the model does not copy tenths.
+    assert "from 00:00 to 00:30" in first and "01:30 long" in first
     assert "input_audio" in first and "video_url" in first
 
     model = Recorder()
