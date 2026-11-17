@@ -7,6 +7,7 @@ import base64
 import os
 import shutil
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -42,24 +43,28 @@ def wants_transcript(session: VideoSession, hears: bool) -> bool:
     return session.transcribe == TRANSCRIBE_ON or (session.transcribe == TRANSCRIBE_AUTO and not hears)
 
 
-def sound_parts(session: VideoSession, control: RequestControl | None = None) -> list[dict[str, Any]]:
+def sound_parts(session: VideoSession, control: RequestControl | None = None, *, source: Path | None = None,
+                prefix: str = SOUND_FILE_PREFIX) -> list[dict[str, Any]]:
     """The video's sound as input_audio parts for a model on a llama.cpp server; empty if the video has none.
-    Extracted once and kept beside the chat's video, so every request sends the same and stays cached."""
+    Extracted once and kept beside the chat's video, so every request sends the same and stays cached.
+    source and prefix give a section's own sound, from its file and under its own names."""
     folder = session.directory
-    stored = sorted(folder.glob(f"{SOUND_FILE_PREFIX}*.mp3"))
-    if not stored and not (folder / NO_SOUND_FILE).exists():
-        with local_video(session) as video, tempfile.TemporaryDirectory() as temporary:
+    stored = sorted(folder.glob(f"{prefix}*.mp3"))
+    no_sound = folder / (NO_SOUND_FILE if prefix == SOUND_FILE_PREFIX else f"{prefix}none")
+    if not stored and not no_sound.exists():
+        with (nullcontext(source) if source else local_video(session)) as video, \
+                tempfile.TemporaryDirectory() as temporary:
             chunks = extract_audio_chunks(video, Path(temporary), **({"control": control} if control else {}))
             for index, (_start, chunk) in enumerate(chunks):
-                target = folder / f"{SOUND_FILE_PREFIX}{index:03d}.mp3"
+                target = folder / f"{prefix}{index:03d}.mp3"
                 # Copied under another name first, so a failed copy never looks like a stored piece.
                 partial = target.with_suffix(".tmp")
                 shutil.copyfile(chunk, partial)
                 os.chmod(partial, 0o600)
                 partial.replace(target)
         if not chunks:
-            (folder / NO_SOUND_FILE).touch()
-        stored = sorted(folder.glob(f"{SOUND_FILE_PREFIX}*.mp3"))
+            no_sound.touch()
+        stored = sorted(folder.glob(f"{prefix}*.mp3"))
     return [{"type": "input_audio", "input_audio": {"data": base64.b64encode(path.read_bytes()).decode("ascii"),
                                                     "format": "mp3"}} for path in stored]
 

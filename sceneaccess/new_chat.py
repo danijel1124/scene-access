@@ -440,7 +440,8 @@ class NewChatMixin:
                     source_url=source_url, video_info=video_info,
                     # The first request decides whether this model needs a transcript of the sound.
                     transcript_state=TRANSCRIPT_PENDING, audio_only=self.config.audio_only_auto, sent_video=sent_video,
-                    provider=provider, transcribe=transcribe)
+                    provider=provider, transcribe=transcribe,
+                    section_seconds=self.config.llama_cpp_section_seconds if provider == LLAMA_CPP else 0)
         except (OSError, MemoryError) as error:
             wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded", wx.OK | wx.ICON_ERROR)
             return

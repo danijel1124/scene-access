@@ -206,6 +206,103 @@ def test_a_streamed_answer_shows_live_and_stays_in_view_when_the_request_fails(f
     assert any('connection lost' in error for error in frame.errors)
 
 
+def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(frame, monkeypatch):
+    from sceneaccess.sections import Section
+    from sceneaccess.session_store import SECTION_FILE_PREFIX
+    frame.current = frame.store.create_session(
+        owner_id=gui.OWNER_ID, source_path=frame.video, title='Long', model='', initial_question='Describe it.',
+        system_prompt='Base.', tools=tool_definitions(online_video=False, web_search=False), provider=LLAMA_CPP,
+        transcribe=TRANSCRIBE_OFF, section_seconds=30)
+    directory = frame.current.directory
+    cut = []
+    for index in range(2):
+        path = directory / f'{SECTION_FILE_PREFIX}30s-{index:03d}.mp4'
+        path.write_bytes(b'section')
+        cut.append(Section(index, index * 30.0, (index + 1) * 30.0, path))
+    monkeypatch.setattr(gui, 'video_duration', lambda session: 60.0)
+    monkeypatch.setattr(gui, 'cut_sections', lambda session, duration, control=None: cut)
+    requests = []
+
+    def answer(client, session, messages, run_tool, on_event=None, routing=None, **kwargs):
+        text = json.dumps(messages)
+        requests.append(text)
+        reply = 'The whole video.' if 'give the one answer' in text else f'Part {len(requests)}.'
+        return Turn(entries=[{'role': 'assistant', 'content': reply}], completion=Completion(reply, 'm', 1, None, None))
+
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answer)
+    frame._send('Describe it.', initial=True)
+    assert frame.errors == [] and len(requests) == 3
+    assert 'describe part 1 of 2' in requests[0] and 'describe part 2 of 2' in requests[1]
+    stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    assert [entry['text'] for entry in stored.sections['sections']] == ['Part 1.', 'Part 2.']
+    assert stored.history[-1]['content'] == 'The whole video.'
+    assert any(item.startswith('Section 1 (00:00 to 00:30)') for item in frame.history_items)
+    frame._send('And then?', initial=False)
+    assert 'video_url' not in requests[-1] and 'The whole video.' in requests[-1]
+    # With the first answer hidden, a later question still gets what the sections said.
+    frame.store.set_rounds_in_context(frame.current.id, gui.OWNER_ID, [0], False)
+    frame._send('Once more?', initial=False)
+    assert 'The whole video.' not in requests[-1] and 'Part 1.' in requests[-1] and 'video_url' not in requests[-1]
+
+
+class ServerModel:
+    """A llama.cpp server running one model, which does not hear."""
+    def __init__(self, name): self.name = name
+    def model_ids(self): return [self.name]
+    def hears_audio(self, model): return False
+
+
+def test_a_stopped_description_continues_on_sending_again_but_not_with_another_model(frame, monkeypatch):
+    from sceneaccess.sections import Section
+    from sceneaccess.session_store import SECTION_FILE_PREFIX
+    frame.current = frame.store.create_session(
+        owner_id=gui.OWNER_ID, source_path=frame.video, title='Long', model='', initial_question='Describe it.',
+        system_prompt='Base.', tools=tool_definitions(online_video=False, web_search=False), provider=LLAMA_CPP,
+        transcribe=TRANSCRIBE_OFF, section_seconds=30)
+    cut = []
+    for index in range(2):
+        path = frame.current.directory / f'{SECTION_FILE_PREFIX}30s-{index:03d}.mp4'
+        path.write_bytes(b'section')
+        cut.append(Section(index, index * 30.0, (index + 1) * 30.0, path))
+    monkeypatch.setattr(gui, 'video_duration', lambda session: 60.0)
+    monkeypatch.setattr(gui, 'cut_sections', lambda session, duration, control=None: cut)
+    server = {'model': 'gemma-12b.gguf', 'fail': True}
+    monkeypatch.setattr(gui, 'llama_cpp_catalog', lambda url: ServerModel(server['model']))
+    requests = []
+
+    def answer(client, session, messages, run_tool, on_event=None, routing=None, **kwargs):
+        text = json.dumps(messages)
+        requests.append(text)
+        if server['fail'] and 'describe part 2 of 2' in text:
+            raise RuntimeError('fixture: server restarted')
+        reply = 'Whole.' if 'give the one answer' in text else f'Part {len(requests)}.'
+        return Turn(entries=[{'role': 'assistant', 'content': reply}], completion=Completion(reply, 'm', 1, None, None))
+
+    def parts_asked(since):
+        return [number for text in requests[since:] for number in (1, 2) if f'describe part {number} of 2' in text]
+
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answer)
+    frame._send('Describe it.', initial=True)
+    assert parts_asked(0) == [1, 2] and any('server restarted' in error for error in frame.errors)
+    # The stored first section shows once, as saved, not again as unfinished.
+    assert sum('Section 1 (00:00 to 00:30' in item for item in frame.history_items) == 1
+    assert not any(item.startswith('Unfinished') and 'Part 1.' in item for item in frame.history_items)
+    # Sending the first question again continues with the second section.
+    server['fail'] = False
+    asked = len(requests)
+    frame._send('Describe it.', initial=True)
+    assert parts_asked(asked) == [2]
+    assert frame.store.get_session(frame.current.id, gui.OWNER_ID).history[-1]['content'] == 'Whole.'
+    # Stopped again, then the server is restarted with another model: it starts over rather than mixing models.
+    frame.store.delete_rounds(frame.current.id, gui.OWNER_ID, [0])
+    server['fail'] = True
+    frame._send('Describe it.', initial=True)
+    server.update(fail=False, model='gemma-e4b.gguf')
+    asked = len(requests)
+    frame._send('Describe it.', initial=True)
+    assert parts_asked(asked) == [1, 2]
+
+
 def test_the_web_search_tool_searches_through_openrouter_with_the_settings_model(frame, monkeypatch):
     frame.config = gui.replace(frame.config, ignored_providers=('fixture-provider',))
     start(frame, web_search=True)

@@ -52,6 +52,11 @@ Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpa
   pytest oder ein Kindprozess ein sichtbares Fenster öffnet. So werden Tests gestartet.
 - `tools\e2e_llama.py [URL]`: schickt einen echten Chat an den llama.cpp-Server (ohne URL die aus den
   Settings), mit SceneAccess' eigener Sitzung und Werkzeugschleife.
+- `tools\live_window.ps1 <Logdatei> <cli-Argumente>`: führt einen Aufruf der Kommandozeile in einem eigenen
+  Konsolenfenster aus, in dem der Nutzer live mitliest und mit Strg+C abbricht; dieselbe Ausgabe landet in der
+  Logdatei, an deren Ende `=== Ende` steht, und das Fenster schließt sich dann selbst (Nutzer-Vorgabe 17.11.2026).
+  Starten mit `Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',
+  'tools\live_window.ps1', …` und im Hintergrund auf die Zeile `=== Ende` in der Logdatei warten.
 
 Chats des Nutzers lesen und Modelle vergleichen geht über die Kommandozeile der App (siehe README, „Start
 aus dem Quellcode“): `python -m sceneaccess.cli chats`, `show "<Titel>"` und `compare "<Titel>" <Modelle…>`.

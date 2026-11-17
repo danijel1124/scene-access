@@ -24,14 +24,15 @@ SESSION_FILE_PREFIX = "session-file:"
 
 COLUMNS = ("id", "owner_id", "title", "source_path", "model", "initial_question", "history_json",
            "system_prompt", "tools_json", "source_url", "video_info_json", "transcript", "transcript_state", "audio_only",
-           "size_confirmed", "provider", "transcribe")
+           "size_confirmed", "provider", "transcribe", "section_seconds", "sections_json")
 # Columns added after the first release, with the value older chats get. Older chats get no transcript,
 # so opening them does not change what is sent and their cache stays valid. Chats from before llama.cpp
 # support were all answered by OpenRouter, and older chats transcribe as needed. Databases from before the
 # transcript mode may still hold an unused openrouter_transcript column.
 ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url", "''"), ("video_info_json", "''"),
                  ("transcript", "''"), ("transcript_state", "'none'"), ("audio_only", "'0'"), ("size_confirmed", "'0'"),
-                 ("provider", f"'{OPENROUTER}'"), ("transcribe", "'auto'"))
+                 ("provider", f"'{OPENROUTER}'"), ("transcribe", "'auto'"), ("section_seconds", "'0'"),
+                 ("sections_json", "''"))
 
 # transcribe: "auto" makes and sends a transcript only while the chat's model cannot hear the video, "on" always,
 # "off" never. Making one sends the sound to OpenRouter's speech recognition.
@@ -47,10 +48,15 @@ TRANSCRIBE_HEADING = "Transcript of the speech (through OpenRouter and ElevenLab
 # later at the end of the chat as a history entry, so the cached video and history before it stay valid.
 TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_APPENDED = (
     "pending", "none", "done", "failed", "appended")
+# The video is what counts; the transcript only helps to follow it (user's wish, 17.11.2026).
+TRANSCRIPT_HELP = ("It is only a help: the video is what counts, so describe what you see in it and use the "
+                   "transcript to understand it, not to retell it.")
 TRANSCRIPT_INTRO = ("You cannot hear this video, so here is an automatic transcript of its speech. Speech "
-                    "recognition may contain errors; times are mm:ss from the start of the video.\n\n")
+                    "recognition may contain errors; times are mm:ss from the start of the video. "
+                    f"{TRANSCRIPT_HELP}\n\n")
 TRANSCRIPT_LATER_INTRO = ("Here is an automatic transcript of the video's speech, added after the video. Speech "
-                          "recognition may contain errors; times are mm:ss from the start of the video.\n\n")
+                          "recognition may contain errors; times are mm:ss from the start of the video. "
+                          f"{TRANSCRIPT_HELP}\n\n")
 # A stored entry marked like this stays in the Chat history but is not sent to the model.
 EXCLUDED = "excluded"
 # Marks the history entry of a transcript added later; it is sent as a user message.
@@ -58,6 +64,15 @@ TRANSCRIPT_ENTRY = "transcript"
 # The video's sound kept beside it for a llama.cpp server, in pieces <prefix>000.mp3, ...; the other file marks
 # a video without sound. Both belong to the stored video and go when it is replaced.
 SOUND_FILE_PREFIX, NO_SOUND_FILE = "context-sound-", "context-sound.none"
+# The sections of a video described in parts, with their sound, e.g. section-30s-000.mp4; see sections.py.
+SECTION_FILE_PREFIX = "section-"
+
+
+def joined_sections(described: list[dict[str, Any]]) -> str:
+    """The descriptions of a video's sections as one text, each headed with its part and time."""
+    from .tools import format_time
+    return "\n\n".join(f"Part {entry['index'] + 1} ({format_time(entry['start'])} to {format_time(entry['end'])}):\n"
+                       f"{entry['text']}" for entry in described)
 
 
 def is_question(message: dict[str, Any]) -> bool:
@@ -137,8 +152,20 @@ class VideoSession:
     provider: str = OPENROUTER
     # When the chat makes a transcript and sends it to the model (see TRANSCRIBE_MODES), chosen per chat.
     transcribe: str = TRANSCRIBE_AUTO
+    # A video longer than this many seconds is described in sections of at most this length, for a model that
+    # takes only short videos or sound; 0 sends the whole video. Fixed when the chat starts.
+    section_seconds: int = 0
+    # The descriptions of the sections so far and what they were made for (see sections.py); None before any.
+    sections: dict[str, Any] | None = None
     # Not stored: whether the model answering now hears the video's sound, set before each request.
     hears_sound: bool = False
+
+    @property
+    def described_in_sections(self) -> bool:
+        """True once the chat's video was described in sections and answered: later questions get those
+        descriptions, not the video, which is too long for the model. A description that stopped before its
+        answer is continued as the first question, so it does not count."""
+        return bool(self.history and self.sections and self.sections.get("sections"))
 
     @property
     def directory(self) -> Path:
@@ -158,26 +185,41 @@ class VideoSession:
         return self.data_url_path.stat().st_size
 
     @property
-    def messages(self) -> list[dict[str, Any]]:
-        # OpenRouter reads explicit cache breakpoints from content parts, not from the message. The blocks about
-        # the sound go only to a model that takes it in, by hearing or from the transcript.
-        # A failed or skipped transcript keeps its reason in the same field; that is no transcript. A transcript
-        # the chat's mode leaves out stays stored, so switching back never pays for it again.
+    def sends_transcript(self) -> bool:
+        """Whether the transcript goes to the model answering now. A failed or skipped transcript keeps its reason
+        in the same field; that is no transcript. A transcript the chat's mode leaves out stays stored, so
+        switching back never pays for it again."""
         wanted = self.transcribe == TRANSCRIBE_ON or (self.transcribe == TRANSCRIBE_AUTO and not self.hears_sound)
-        has_transcript = wanted and self.transcript_state == TRANSCRIPT_DONE and bool(self.transcript)
+        return wanted and self.transcript_state == TRANSCRIPT_DONE and bool(self.transcript)
+
+    @property
+    def system_messages(self) -> list[dict[str, Any]]:
+        """The system prompt with the blocks about the sound, which go only to a model that takes it in, by
+        hearing or from the transcript; empty for a chat without a system prompt."""
         added_later = any(entry.get(TRANSCRIPT_ENTRY) and not entry.get(EXCLUDED) for entry in self.history)
-        blocks = sound_blocks(gets_speech=self.hears_sound or has_transcript or added_later, hears=self.hears_sound)
+        blocks = sound_blocks(gets_speech=self.hears_sound or self.sends_transcript or added_later,
+                              hears=self.hears_sound)
         prompt = f"{self.system_prompt}\n\n{blocks}" if self.system_prompt and blocks else self.system_prompt
-        system = [{"role": "system", "content": prompt}] if prompt else []
+        return [{"role": "system", "content": prompt}] if prompt else []
+
+    @property
+    def messages(self) -> list[dict[str, Any]]:
+        # OpenRouter reads explicit cache breakpoints from content parts, not from the message.
+        system = self.system_messages
         # The transcript comes before the video's cache breakpoint, so it is cached together with the video.
-        transcript = [{"type": "text", "text": TRANSCRIPT_INTRO + self.transcript}] if has_transcript else []
+        transcript = [{"type": "text", "text": TRANSCRIPT_INTRO + self.transcript}] if self.sends_transcript else []
+        # A video described in sections is too long to send; its sections' descriptions take its place, so later
+        # questions know the video also when the answer to the first question is hidden.
+        if self.described_in_sections:
+            video = [{"type": "text", "text": "The video is too long to send, so it was described in parts:\n\n"
+                                              + joined_sections(self.sections["sections"]),
+                      "cache_control": {"type": "ephemeral"}}]
+        else:
+            video = [{"type": "video_url", "video_url": {"url": self.video_data_url},
+                      "cache_control": {"type": "ephemeral"}}]
         return _merge_user_runs([*system, {
             "role": "user",
-            "content": [
-                {"type": "text", "text": self.initial_question},
-                *transcript,
-                {"type": "video_url", "video_url": {"url": self.video_data_url}, "cache_control": {"type": "ephemeral"}},
-            ],
+            "content": [{"type": "text", "text": self.initial_question}, *transcript, *video],
         }, *(self.wire_message(message) for message in self.history if not message.get(EXCLUDED))])
 
     def wire_message(self, message: dict[str, Any]) -> dict[str, Any]:
@@ -220,7 +262,7 @@ class VideoSessionStore:
                        system_prompt: str = "", tools: list[dict[str, Any]] | None = None, source_url: str = "",
                        video_info: dict[str, Any] | None = None, transcript_state: str = TRANSCRIPT_NONE,
                        audio_only: bool = False, sent_video: Path | None = None, provider: str = OPENROUTER,
-                       transcribe: str = TRANSCRIBE_AUTO) -> VideoSession:
+                       transcribe: str = TRANSCRIBE_AUTO, section_seconds: int = 0) -> VideoSession:
         """sent_video is a smaller copy to send instead of source_path, e.g. shrunk for a provider's size limit."""
         source_path = Path(source_path).resolve()
         sent = Path(sent_video) if sent_video else source_path
@@ -234,7 +276,7 @@ class VideoSessionStore:
         values = (session_id, owner_id, title, str(source_path), model, initial_question, "[]", system_prompt,
                   json.dumps(tools or []), source_url, json.dumps(video_info) if video_info else "",
                   "", transcript_state, "1" if audio_only else "0", "0", provider,
-                  transcribe)
+                  transcribe, str(max(section_seconds, 0)), "")
         # A collision must never authorize cleanup of an existing directory or file.
         directory.mkdir(mode=0o700)
         data_url_path = directory / "context.data-url"
@@ -271,7 +313,17 @@ class VideoSessionStore:
             transcript=values["transcript"], transcript_state=values["transcript_state"],
             audio_only=values["audio_only"] == "1", size_confirmed=values["size_confirmed"] == "1",
             provider=values["provider"], transcribe=values["transcribe"],
+            section_seconds=int(values["section_seconds"] or 0),
+            sections=json.loads(values["sections_json"]) if values["sections_json"] else None,
         )
+
+    def save_sections(self, session_id: str, owner_id: str, sections: dict[str, Any] | None) -> None:
+        """Stores the progress of describing the video in sections right after each section, so a description
+        that stops is continued where it stopped; None forgets it."""
+        self.get_session(session_id, owner_id)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET sections_json = ? WHERE id = ? AND owner_id = ?",
+                         (json.dumps(sections) if sections else "", session_id, owner_id))
 
     def list_sessions(self, owner_id: str) -> list[VideoSession]:
         with sqlite3.connect(self.db_path) as conn:
@@ -318,9 +370,10 @@ class VideoSessionStore:
         state, transcript = session.transcript_state, session.transcript
         if state not in (TRANSCRIPT_DONE, TRANSCRIPT_APPENDED):
             state, transcript = TRANSCRIPT_PENDING, ""
+        # Sections described with the earlier prompt are described again with the new one.
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE sessions SET system_prompt = ?, tools_json = ?, audio_only = ?, transcript = ?, "
-                         "transcript_state = ? WHERE id = ? AND owner_id = ?",
+                         "transcript_state = ?, sections_json = '' WHERE id = ? AND owner_id = ?",
                          (system_prompt, json.dumps(tools), "1" if audio_only else "0", transcript, state,
                           session_id, owner_id))
 
@@ -370,10 +423,12 @@ class VideoSessionStore:
         temporary.write_text(data_url, encoding="ascii")
         os.chmod(temporary, 0o600)
         temporary.replace(session.data_url_path)
-        for sound in [*session.directory.glob(f"{SOUND_FILE_PREFIX}*"), session.directory / NO_SOUND_FILE]:
-            sound.unlink(missing_ok=True)
+        for derived in [*session.directory.glob(f"{SOUND_FILE_PREFIX}*"), session.directory / NO_SOUND_FILE,
+                        *session.directory.glob(f"{SECTION_FILE_PREFIX}*")]:
+            derived.unlink(missing_ok=True)
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE sessions SET size_confirmed = '0' WHERE id = ? AND owner_id = ?", (session_id, owner_id))
+            conn.execute("UPDATE sessions SET size_confirmed = '0', sections_json = '' WHERE id = ? AND owner_id = ?",
+                         (session_id, owner_id))
 
     def update_transcript(self, session_id: str, owner_id: str, state: str, transcript: str = "") -> None:
         self.get_session(session_id, owner_id)
@@ -463,8 +518,10 @@ class VideoSessionStore:
                       for part in history[position]["content"] if part.get("type") == "image_url"
                       and str((part.get("image_url") or {}).get("url", "")).startswith(SESSION_FILE_PREFIX)]
             kept = [entry for position, entry in enumerate(history) if position not in deleted]
-            conn.execute("UPDATE sessions SET history_json = ? WHERE id = ? AND owner_id = ?",
-                         (json.dumps(kept), session_id, owner_id))
+            # The sections belong to the answer to the first question; without it they are described again.
+            first_round = bool(history) and 0 in deleted
+            conn.execute("UPDATE sessions SET history_json = ?" + (", sections_json = ''" if first_round else "") +
+                         " WHERE id = ? AND owner_id = ?", (json.dumps(kept), session_id, owner_id))
         # Only once the history no longer refers to them.
         for name in images:
             (self.sessions_dir / session_id / name).unlink(missing_ok=True)

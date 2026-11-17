@@ -31,6 +31,7 @@ from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .session_store import TRANSCRIBE_MODES, VideoSession, VideoSessionStore
 from .tools import ToolRunner, provider_tools
+from .sections import cut_sections, describe_in_sections, needs_sections, section_sound, video_duration
 from .transcript import model_hears, sound_parts, wants_transcript, with_sound
 
 
@@ -66,12 +67,15 @@ def show_chat(session: VideoSession, out: TextIO) -> None:
           f"model {session.model or '(Settings)'}", file=out)
     print(f"\n== System prompt\n{session.system_prompt or '(none)'}", file=out)
     for _shown, full, _index, _kind in chat_history_rows(session.initial_question, session.history,
-                                                         session.transcript_state, session.transcript):
+                                                         session.transcript_state, session.transcript,
+                                                         session.sections):
         print(f"\n{full}", file=out)
 
 
-def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextIO, transcribe: str = "") -> None:
-    """transcribe sets the copy's transcript mode; empty keeps the chat's."""
+def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextIO, transcribe: str = "",
+            section_seconds: int | None = None) -> None:
+    """transcribe sets the copy's transcript mode; empty keeps the chat's. section_seconds describes a longer
+    video in sections of at most that length, as the app does; None keeps the chat's, 0 sends it whole."""
     config = load_config(data_dir / "config.json")
     catalog = ModelCatalog(OPENROUTER_URL)
     work = Path(tempfile.mkdtemp(prefix="sceneaccess-compare-"))
@@ -81,9 +85,11 @@ def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextI
         shutil.copytree(session.directory, work / "sessions" / session.id)
         copy = replace(session, data_url_path=work / "sessions" / session.id / session.data_url_path.name,
                        history=[], system_prompt=current_system_prompt(session.system_prompt),
-                       transcribe=transcribe or session.transcribe)
+                       transcribe=transcribe or session.transcribe, sections=None,
+                       section_seconds=session.section_seconds if section_seconds is None else section_seconds)
         print(f"{session.title} | transcript mode {copy.transcribe}, {session.transcript_state} | "
-              f"system prompt updated: {copy.system_prompt != session.system_prompt}", file=out)
+              f"system prompt updated: {copy.system_prompt != session.system_prompt} | "
+              f"sections: {copy.section_seconds or 'none'}", file=out)
         for name in models:
             compare_one(config, catalog, copy, name, out)
     finally:
@@ -95,20 +101,25 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
     model = ((name.partition(":")[2] or config.llama_cpp_model or LLAMA_CPP_DEFAULT_MODEL)
              if provider == LLAMA_CPP else name)
     session = replace(session, provider=provider, model=model)
+    duration = video_duration(session) if session.section_seconds else 0.0
+    sectioned = needs_sections(session, duration)
     # As the app sends: a model on a llama.cpp server that hears gets the sound as a track of its own.
     hears = model_hears(session, llama_cpp_catalog(config.llama_cpp_url) if provider == LLAMA_CPP else catalog)
     sound = []
-    if hears and provider == LLAMA_CPP:
+    if hears and provider == LLAMA_CPP and not sectioned:
         try:
             sound = sound_parts(session)
         except Exception as error:
             print(f"The sound could not be prepared, so the model does not hear it: {error}", file=out)
         hears = bool(sound)
     session = replace(session, hears_sound=hears)
-    messages = with_sound(session.messages, sound)
-    # Compared as JSON text, so line breaks in the transcript match their escaped form in the request.
-    sent = bool(session.transcript) and (json.dumps(session.transcript, ensure_ascii=False)[1:-1]
-                                         in json.dumps(messages, ensure_ascii=False))
+    if sectioned:
+        messages, sent = [], session.sends_transcript
+    else:
+        messages = with_sound(session.messages, sound)
+        # Compared as JSON text, so line breaks in the transcript match their escaped form in the request.
+        sent = bool(session.transcript) and (json.dumps(session.transcript, ensure_ascii=False)[1:-1]
+                                             in json.dumps(messages, ensure_ascii=False))
     if wants_transcript(session, hears) and not sent:
         print("The transcript mode asks for a transcript the chat does not have; compare makes none.", file=out)
     if provider == LLAMA_CPP:
@@ -120,7 +131,8 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         client = OpenRouterClient(resolve_openrouter_key(config) or "", ignored_providers=config.ignored_providers)
         options = routing(model, session.audio_only, catalog, config.ignored_providers, config.excluded_models)
     runner = ToolRunner(session, config.youtube_cookies)
-    print(f"\n===== {name} | hears: {hears}{' (sound sent as a track)' if sound else ''} | "
+    track = sectioned and hears and provider == LLAMA_CPP
+    print(f"\n===== {name} | hears: {hears}{' (sound sent as a track)' if sound or track else ''} | "
           f"transcript sent: {sent} =====", file=out, flush=True)
     started = time.monotonic()
     # Everything is written as it happens, so a run can be followed in the output while it goes on, and what
@@ -139,9 +151,18 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         shown["kind"] = ""
         print(f"\n[Step, {time.monotonic() - started:.0f} s] {kind}: {text}", file=out, flush=True)
 
+    tooled = replace(session, tools=provider_tools(session.tools, provider))
     try:
-        turn = client.run_turn(replace(session, tools=provider_tools(session.tools, provider)), messages,
-                               runner.run, step, options, max_tool_rounds=config.max_tool_rounds, on_delta=piece)
+        if sectioned:
+            # As in the app, but the progress stays with this comparison.
+            turn = describe_in_sections(
+                client, tooled, session.initial_question, cut_sections(session, duration),
+                lambda: ToolRunner(session, config.youtube_cookies), lambda _progress: None, duration=duration,
+                sound=(lambda section: section_sound(session, section)) if track else None,
+                on_event=step, on_delta=piece, routing=options, max_tool_rounds=config.max_tool_rounds)
+        else:
+            turn = client.run_turn(tooled, messages, runner.run, step, options, max_tool_rounds=config.max_tool_rounds,
+                                   on_delta=piece)
         completion = turn.completion
         if not shown["text"]:
             # Not streamed, e.g. by a server that does not stream: the answer comes in one piece.
@@ -169,6 +190,8 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     compare_parser.add_argument("models", nargs="+", help='OpenRouter model IDs, or "llama.cpp[:name]"')
     compare_parser.add_argument("--transcribe", choices=TRANSCRIBE_MODES,
                                 help="transcript mode for this comparison only (default: the chat's)")
+    compare_parser.add_argument("--sections", type=int, metavar="SECONDS",
+                                help="describe a longer video in sections of at most this many seconds (0: whole)")
     args = parser.parse_args(argv)
     data_dir = args.data_dir or default_data_dir()
     store = open_store(data_dir / "config.json", OWNER_ID, LEGACY_OWNER_ID)
@@ -177,7 +200,7 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     elif args.command == "show":
         show_chat(find_chat(store, args.chat), out)
     else:
-        compare(data_dir, find_chat(store, args.chat), args.models, out, args.transcribe or "")
+        compare(data_dir, find_chat(store, args.chat), args.models, out, args.transcribe or "", args.sections)
     return 0
 
 

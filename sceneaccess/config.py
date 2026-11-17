@@ -26,6 +26,9 @@ class AppConfig:
     llama_cpp_url: str = ""
     llama_cpp_model: str = ""
     llama_cpp_api_key: str = ""
+    # New llama.cpp chats describe a video longer than this many seconds in sections of at most this length
+    # (see sections.py); 0 sends every video whole. Gemma 4 takes at most 30 seconds of sound.
+    llama_cpp_section_seconds: int = 0
     # Highest video height downloaded from YouTube; enough to recognize details without HD sizes.
     youtube_max_height: int = 480
     # Folder for downloaded videos; empty means the default <Videos>/scene-access.
@@ -91,6 +94,9 @@ def load_config(path: Path) -> AppConfig:
         llama_cpp_url=str(values.get("llama_cpp_url", "")),
         llama_cpp_model=str(values.get("llama_cpp_model", "")),
         llama_cpp_api_key=str(values.get("llama_cpp_api_key", "")),
+        llama_cpp_section_seconds=(values["llama_cpp_section_seconds"]
+                                   if type(values.get("llama_cpp_section_seconds")) is int
+                                   and values["llama_cpp_section_seconds"] >= 0 else 0),
         youtube_max_height=_positive_int(values.get("youtube_max_height"), AppConfig.youtube_max_height),
         download_dir=str(values.get("download_dir", "")),
         filename_fields=_filename_fields(values.get("filename_fields")),
@@ -156,6 +162,7 @@ def save_config(path: Path, config: AppConfig) -> None:
         "llama_cpp_url": config.llama_cpp_url,
         "llama_cpp_model": config.llama_cpp_model,
         "llama_cpp_api_key": config.llama_cpp_api_key,
+        "llama_cpp_section_seconds": config.llama_cpp_section_seconds,
         "youtube_max_height": config.youtube_max_height,
         "download_dir": config.download_dir,
         "filename_fields": list(config.filename_fields),

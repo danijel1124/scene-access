@@ -337,6 +337,8 @@ class SettingsDialog(wx.Dialog):
         self.llama_cpp_url = wx.TextCtrl(self, value=config.llama_cpp_url)
         self.llama_cpp_model = wx.TextCtrl(self, value=config.llama_cpp_model)
         self.llama_cpp_api_key = wx.TextCtrl(self, value=config.llama_cpp_api_key, style=wx.TE_PASSWORD)
+        sections_label = "llama.cpp: describe longer videos in sections of at most this many seconds (0 = whole video)"
+        self.llama_cpp_sections = wx.TextCtrl(self, value=str(config.llama_cpp_section_seconds), name=sections_label)
         tool_rounds_label = "Maximum tool rounds per answer (0 disables tools)"
         # A text field avoids the platform-dependent upper bound of a native spin control.
         self.max_tool_rounds = wx.TextCtrl(self, value=str(config.max_tool_rounds), name=tool_rounds_label)
@@ -379,6 +381,7 @@ class SettingsDialog(wx.Dialog):
                                ("llama.cpp server URL, e.g. http://host:8080/v1/chat/completions", self.llama_cpp_url),
                                ("llama.cpp model (optional)", self.llama_cpp_model),
                                ("llama.cpp API key (optional)", self.llama_cpp_api_key),
+                               (sections_label, self.llama_cpp_sections),
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
                                ("Downloaded file name", self.filename_button), ("YouTube sign-in", self.cookies_button),
                                ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only),
@@ -406,12 +409,14 @@ class SettingsDialog(wx.Dialog):
         max_tool_rounds = int(self.max_tool_rounds.GetValue().strip())
         if max_tool_rounds < 0:
             raise ValueError("Tool rounds cannot be negative")
+        section_seconds = self._section_seconds()
         download_dir = self.download_dir.GetPath().strip()
         # replace keeps settings this dialog does not show, such as the profile chosen last.
         return replace(self.config, provider=PROVIDERS[self.provider.GetSelection()], model=self.model.GetValue().strip(),
                        api_key=self.api_key.GetValue().strip(), llama_cpp_url=self.llama_cpp_url.GetValue().strip(),
                        llama_cpp_model=self.llama_cpp_model.GetValue().strip(),
                        llama_cpp_api_key=self.llama_cpp_api_key.GetValue().strip(),
+                       llama_cpp_section_seconds=section_seconds,
                        youtube_max_height=self.heights[self.youtube_quality.GetSelection()],
                        # Keep "default" as empty, so it keeps following the Videos folder.
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,
@@ -422,7 +427,20 @@ class SettingsDialog(wx.Dialog):
                        check_video_size=self.check_size.GetValue(), size_check_skipped_models=self.skipped_models,
                        max_tool_rounds=max_tool_rounds)
 
+    def _section_seconds(self) -> int:
+        text = self.llama_cpp_sections.GetValue().strip() or "0"
+        if not text.isdigit():
+            raise ValueError("Section length must be a whole number of seconds, at least 0")
+        return int(text)
+
     def _on_ok(self, event: wx.CommandEvent) -> None:
+        try:
+            self._section_seconds()
+        except ValueError:
+            wx.MessageBox("Enter the section length as a whole number of seconds, for example 30, or 0 to send every "
+                          "video whole.", "Invalid section length", wx.OK | wx.ICON_ERROR, self)
+            self.llama_cpp_sections.SetFocus()
+            return
         try:
             self.value()
         except ValueError:

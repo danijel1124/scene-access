@@ -71,10 +71,11 @@ def test_cancel_kills_media_worker_and_its_subprocess(tmp_path):
     worker = threading.Thread(target=work)
     worker.start()
     try:
+        # The subprocess creates the file before it writes its PID into it; under load a read can fall in between.
         deadline = time.monotonic() + 5
-        while not marker.exists() and time.monotonic() < deadline:
+        while not (marker.exists() and marker.read_text().strip()) and time.monotonic() < deadline:
             time.sleep(0.02)
-        assert marker.exists()
+        assert marker.exists() and marker.read_text().strip()
         control.cancel()
         assert finished.wait(3)
         assert isinstance(errors[0], RequestCancelled)

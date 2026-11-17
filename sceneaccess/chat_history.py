@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from .session_store import EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_ENTRY, TRANSCRIPT_FAILED, TRANSCRIPT_NONE
-from .tools import describe_call
+from .tools import describe_call, format_time
 
 # Said first for every item of a round hidden from the model, so the screen reader reads it.
 HIDDEN_FROM_MODEL = "[hidden from model] "
 # What an item of the Chat history shows; the newest ANSWER is selected first.
-QUESTION, TRANSCRIPT, ANSWER, USAGE, NOTE, TOOL, IMAGE, THINKING = (
-    "question", "transcript", "answer", "usage", "note", "tool", "image", "thinking")
+QUESTION, TRANSCRIPT, ANSWER, USAGE, NOTE, TOOL, IMAGE, THINKING, SECTION = (
+    "question", "transcript", "answer", "usage", "note", "tool", "image", "thinking", "section")
 # A thinking item shows only its beginning, as a long one would be read out in full when selected.
 THINKING_PREVIEW_WORDS = 12
 
@@ -66,13 +66,16 @@ def chat_history_entries(initial_question: str, history: list[dict[str, Any]], t
 
 
 def chat_history_rows(initial_question: str, history: list[dict[str, Any]], transcript_state: str = TRANSCRIPT_NONE,
-                      transcript: str = "") -> list[tuple[str, str, int | None, str]]:
-    """Each item as (shown text, text for the reader, index of its history entry or None, kind)."""
+                      transcript: str = "", sections: dict[str, Any] | None = None
+                      ) -> list[tuple[str, str, int | None, str]]:
+    """Each item as (shown text, text for the reader, index of its history entry or None, kind). sections is a
+    chat's progress of describing its video in sections (see sections.py)."""
     rows: list[tuple[str, str, int | None, str]] = [(f"You: {initial_question}", f"You: {initial_question}", None,
                                                      QUESTION)]
     note = transcript_entry(transcript_state, transcript)
     if note:
         rows.append((*note, None, TRANSCRIPT))
+    rows += [(shown, full, None, SECTION) for shown, full in section_items(sections, answered=bool(history))]
     for index, message in enumerate(history):
         marker = HIDDEN_FROM_MODEL if message.get(EXCLUDED) else ""
         rows += [(marker + shown, marker + full, index, kind) for shown, full, kind in _message_items(message)]
@@ -106,6 +109,21 @@ def _message_items(message: dict[str, Any]) -> list[tuple[str, str, str]]:
     sources = "".join(f"\n- {source['title']}: {source['url']}" for source in message.get("sources") or [])
     return [*thinking, _same(f"Model: {content}" + (f"\n\nSources:{sources}" if sources else ""), ANSWER),
             _same(usage_text(message.get("usage")), USAGE)]
+
+
+def section_items(sections: dict[str, Any] | None, answered: bool = True) -> list[tuple[str, str]]:
+    """The descriptions of a video described in sections, folded like the thinking: each section's beginning in
+    the list, all of it for the reader. Before the answer is stored, they are what a stopped description kept."""
+    described = (sections or {}).get("sections") or []
+    state = "" if answered else ", unfinished"
+    items = []
+    for entry in described:
+        span = f"{format_time(entry['start'])} to {format_time(entry['end'])}"
+        words = entry["text"].split()
+        beginning = " ".join(words[:THINKING_PREVIEW_WORDS]) + (" …" if len(words) > THINKING_PREVIEW_WORDS else "")
+        label = f"Section {entry['index'] + 1} ({span}{state})"
+        items.append((f"{label}, Enter shows it: {beginning}", f"{label}:\n\n{entry['text'].strip()}"))
+    return items
 
 
 def thinking_item(thinking: str, label: str = "Model's thinking") -> tuple[str, str, str]:

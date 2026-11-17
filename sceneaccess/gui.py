@@ -31,6 +31,7 @@ from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
                     provider_tools, tool_definitions, tool_key, tools_for_provider)
+from .sections import cut_sections, describe_in_sections, needs_sections, section_sound, video_duration
 from .transcript import make_transcript, model_hears, sound_parts, wants_transcript, with_sound
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
@@ -576,7 +577,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         model = session.model or f"{self.config.model_for(session.provider)} (from Settings)"
         self.status.SetLabel(f"{session.title} | {model} via {PROVIDER_LABELS.get(session.provider, session.provider)}"
                              f"\n{context} {source}")
-        rows = chat_history_rows(session.initial_question, session.history, session.transcript_state, session.transcript)
+        rows = chat_history_rows(session.initial_question, session.history, session.transcript_state, session.transcript,
+                                 session.sections)
         items = [shown for shown, _full, _index, _kind in rows]
         self.history_items = items
         self.reader_texts = [full for _shown, full, _index, _kind in rows]
@@ -827,7 +829,10 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                 return
             # What was written before the tool call is complete; whatever comes after starts a new item.
             end_live()
-            item = f"Tool call: {text}" if kind == "tool_call" else f"Tool result: {text}"
+            if kind == "section":
+                # The section before is stored now, so after a failure it shows as saved, not as unfinished too.
+                sections.clear()
+            item = {"tool_call": f"Tool call: {text}", "tool_result": f"Tool result: {text}"}.get(kind, f"{text}…")
             sections.append(("step", item))
             wx.CallAfter(self._request_callback, control, self._show_progress_item, session_id, item)
 
@@ -850,10 +855,20 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                 # server has no providers or router to choose from.
                 options = {} if llama_cpp else routing(session.model, session.audio_only, catalog,
                                                        config.ignored_providers, config.excluded_models)
+                # A video too long for the model is described in sections, also when a stopped description of
+                # the first question is sent again; later questions then get the descriptions, not the video.
+                duration = video_duration(session) if initial and session.section_seconds else 0.0
+                sectioned = initial and needs_sections(session, duration)
+                text_only = not initial and session.described_in_sections
                 # Asked anew each time: the server may run another model by now.
-                hears = model_hears(session, llama_cpp_catalog(config.llama_cpp_url) if llama_cpp else catalog)
+                provider_catalog = llama_cpp_catalog(config.llama_cpp_url) if llama_cpp else catalog
+                hears = model_hears(session, provider_catalog) and not text_only
+                # The model the server runs, whatever the chat calls it, so stored sections of another model
+                # are not continued.
+                served = provider_catalog.model_ids() if llama_cpp and sectioned else []
+                served_model = served[0] if len(served) == 1 else ""
                 sound = []
-                if hears and llama_cpp:
+                if hears and llama_cpp and not sectioned:
                     # The server ignores a video's sound, so a model that hears gets it as a track of its own.
                     # Without one, it does not hear this time, and the transcript mode decides as for any other.
                     try:
@@ -879,16 +894,29 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                 # Excluded providers never answer, the search included.
                 search_options = (routing(config.model, False, catalog, config.ignored_providers, config.excluded_models)
                                   if openrouter else {})
-                runner = ToolRunner(session, config.youtube_cookies, control=control,
-                                    web_search=(partial(_search_through_openrouter, openrouter, config.model,
-                                                        search_options) if openrouter else None))
-                turn = client.run_turn(replace(session, tools=provider_tools(session.tools, session.provider)), messages,
-                                       runner.run, on_event, options, max_tool_rounds=config.max_tool_rounds,
-                                       on_delta=on_delta)
+                def new_runner() -> ToolRunner:
+                    return ToolRunner(session, config.youtube_cookies, control=control,
+                                      web_search=(partial(_search_through_openrouter, openrouter, config.model,
+                                                          search_options) if openrouter else None))
+
+                tooled = replace(session, tools=provider_tools(session.tools, session.provider))
+                if sectioned:
+                    # Each section's sound goes along for a model on a llama.cpp server that hears.
+                    turn = describe_in_sections(
+                        client, tooled, question, cut_sections(session, duration, control), new_runner,
+                        lambda progress: self.store.save_sections(session_id, OWNER_ID, progress), duration=duration,
+                        sound=(lambda section: section_sound(session, section, control)) if hears and llama_cpp else None,
+                        on_event=on_event, on_delta=on_delta, routing=options, max_tool_rounds=config.max_tool_rounds,
+                        model_name=served_model)
+                else:
+                    runner = new_runner()
+                    turn = client.run_turn(tooled, messages, runner.run, on_event, options,
+                                           max_tool_rounds=config.max_tool_rounds, on_delta=on_delta)
                 control.check_cancelled()
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)
-                runner.commit_files()
+                if runner is not None:
+                    runner.commit_files()
                 completion = turn.completion
                 wx.CallAfter(self._request_callback, control, self._completed, session_id, completion.model, completion.tools_unavailable)
             except RequestCancelled:
@@ -947,10 +975,16 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.size_skip_after_answer = None
         self.size_confirm_after_answer = ""
         self._finish_request(restore_question=True)
+        self._reload_current()
         self.render_current()
         self._show_unfinished(unfinished)
         self.status.SetLabel("Request cancelled. Completed chat history is preserved; provider charges may still apply.")
         announce("Request cancelled.")
+
+    def _reload_current(self) -> None:
+        """Reads the open chat again: a request that stopped may have stored sections of its description."""
+        if self.current:
+            self.current = self.store.get_session(self.current.id, OWNER_ID)
 
     def _show_unfinished(self, unfinished: list[tuple[str, str]]) -> None:
         """Shows again what a request that was not stored had streamed, so it is not lost from view. It is not
@@ -1063,7 +1097,9 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.size_skip_after_answer = None
         self.size_confirm_after_answer = ""
         self.send_button.Enable()
-        # Nothing of the failed turn was stored; its progress items go, but what it streamed stays in view.
+        # Nothing of the failed turn was stored but the sections already described; its progress items go, but
+        # what it streamed stays in view.
+        self._reload_current()
         self.render_current()
         self._show_unfinished(unfinished)
         self.status.SetLabel("The request failed. The chat and local video context are preserved.")
