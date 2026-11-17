@@ -39,6 +39,14 @@ als Hintergrundauftrag des Harness (`run_in_background`), damit Ausgaben und Tra
 bleiben, und danach prüfen, dass das Fenster offen ist. Sind die Tests nicht grün, erst beheben, dann
 starten. Während Tests laufen, SceneAccess nicht parallel starten (Speicher dieses Rechners).
 
+## Python-Umgebung liegt im Repo unter `.venv` (Nutzer-Vorgabe 17.11.2026)
+
+SceneAccess, Tests und pyflakes laufen mit `.venv\Scripts\python.exe` im Repo-Ordner (per `.gitignore`
+ausgeschlossen), angelegt mit `py -3.12 -m venv .venv` und
+`pip install -r requirements.txt -r requirements-dev.txt pyflakes`. Nie ins Scratchpad von Claude Code
+legen: Das liegt im Temp-Ordner und wird aufgeräumt. Real passiert (17.11.2026): Dem venv dort fehlten
+plötzlich `pyvenv.cfg` und Teile von wx und pip, SceneAccess startete nicht mehr.
+
 ## Tests immer im Hintergrund (Nutzer-Vorgabe 30.10.2026)
 
 Testläufe (die volle Suite wie einzelne Dateien) immer als Hintergrundauftrag starten
