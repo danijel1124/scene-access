@@ -77,6 +77,19 @@ def test_changing_the_setup_decides_about_the_transcript_again_and_a_link_can_be
     assert session.transcript_state == "pending" and session.transcript == "" and session.audio_only is True
 
 
+@pytest.mark.parametrize("state", ["done", "appended"])
+def test_changing_the_setup_keeps_a_finished_or_added_transcript(tmp_path: Path, state):
+    # Making it again would be paid twice, and an added one would then reach the model twice.
+    source = tmp_path / "jacket.mp4"
+    source.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="o", source_path=source, title="J", model="m", initial_question="?")
+    store.update_transcript(session.id, "o", state, "[00:01] Hello" if state == "done" else "")
+    store.update_setup(session.id, "o", "Base.", [])
+    kept = store.get_session(session.id, "o")
+    assert kept.transcript_state == state and kept.transcript == ("[00:01] Hello" if state == "done" else "")
+
+
 def test_messages_keep_the_tool_protocol_and_drop_local_fields(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")

@@ -309,14 +309,25 @@ class VideoSessionStore:
 
     def update_setup(self, session_id: str, owner_id: str, system_prompt: str, tools: list[dict[str, Any]],
                      audio_only: bool = False) -> None:
-        """Replaces a chat's prompt and tools. The next request decides about a transcript again and
-        caches the video again."""
+        """Replaces a chat's prompt and tools. The next request caches the video again and, unless the chat has
+        a finished or added transcript, which is never paid for twice, decides about a transcript again."""
+        session = self.get_session(session_id, owner_id)
+        state, transcript = session.transcript_state, session.transcript
+        if state not in (TRANSCRIPT_DONE, TRANSCRIPT_APPENDED):
+            state, transcript = TRANSCRIPT_PENDING, ""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET system_prompt = ?, tools_json = ?, audio_only = ?, transcript = ?, "
+                         "transcript_state = ? WHERE id = ? AND owner_id = ?",
+                         (system_prompt, json.dumps(tools), "1" if audio_only else "0", transcript, state,
+                          session_id, owner_id))
+
+    def update_system_prompt(self, session_id: str, owner_id: str, system_prompt: str) -> None:
+        """Replaces only the chat's system prompt; its tools and transcript stay. The next request caches the
+        video again."""
         self.get_session(session_id, owner_id)
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE sessions SET system_prompt = ?, tools_json = ?, audio_only = ?, transcript = '', "
-                         "transcript_state = ? WHERE id = ? AND owner_id = ?",
-                         (system_prompt, json.dumps(tools), "1" if audio_only else "0", TRANSCRIPT_PENDING,
-                          session_id, owner_id))
+            conn.execute("UPDATE sessions SET system_prompt = ? WHERE id = ? AND owner_id = ?",
+                         (system_prompt, session_id, owner_id))
 
     def update_chat_settings(self, session_id: str, owner_id: str, model: str, audio_only: bool, *,
                              provider: str | None = None, transcribe: str | None = None,

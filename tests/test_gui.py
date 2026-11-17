@@ -5,6 +5,7 @@ import wx
 
 from sceneaccess import gui
 from sceneaccess.openrouter import Completion, Turn
+from sceneaccess import prompts
 from sceneaccess.prompts import BASE_SYSTEM_PROMPT
 
 
@@ -333,6 +334,64 @@ def test_a_chat_from_before_tools_gets_the_prompt_and_tools(tmp_path, monkeypatc
         assert "zoom_frame" in json.dumps(session.tools) and "high_resolution_frame" not in json.dumps(session.tools)
         assert session.system_prompt.startswith(BASE_SYSTEM_PROMPT)
         assert session.system_prompt.endswith(frame.config.profile_text("Identify brand and model"))
+    finally:
+        frame.Destroy()
+        app.Destroy()
+
+
+OLD_BASE = ("You are SceneAccess, an assistant that describes videos for a blind person.\n\n"
+            "- The person cannot see the video.\n- Answer in the language the person writes in.")
+OLD_AUDIO_DESCRIPTION = next(iter(prompts.UPGRADED_PROFILE_TEXTS))
+
+
+def test_an_earlier_system_prompt_is_rebuilt_with_the_current_base_and_profile_text():
+    current = prompts.current_system_prompt
+    # An earlier default profile text gets the current one; a profile the user wrote stays.
+    assert current(f"{OLD_BASE}\n\n{OLD_AUDIO_DESCRIPTION}") == prompts.system_prompt(prompts.AUDIO_DESCRIPTION)
+    assert current(f"{OLD_BASE}\n\nMy own profile.\n\nIts second paragraph.") == \
+        prompts.system_prompt("My own profile.\n\nIts second paragraph.")
+    assert current(OLD_BASE) == BASE_SYSTEM_PROMPT
+    # Chats from before system prompts get the base prompt.
+    assert current("") == BASE_SYSTEM_PROMPT
+    # Current prompts, and prompts SceneAccess did not build, stay.
+    # So does one whose base is not an introduction and a list: rebuilding it could lose part of the profile.
+    for prompt in (prompts.system_prompt("Profile."), BASE_SYSTEM_PROMPT, "Something else.",
+                   "You are SceneAccess.\n\nNo list here.\n\nProfile."):
+        assert current(prompt) == prompt
+
+
+@pytest.mark.parametrize("answer", [wx.YES, wx.NO])
+def test_update_system_prompt_is_offered_only_for_an_earlier_version(tmp_path, monkeypatch, answer):
+    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
+    asked = []
+    monkeypatch.setattr(gui.wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or answer)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    app = wx.App(False)
+    frame = gui.ChatFrame()
+    try:
+        tools = [{"type": "function", "function": {"name": "zoom_frame"}}]
+        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+                                                   initial_question="?", tools=tools,
+                                                   system_prompt=prompts.system_prompt("Profile."))
+        frame.render_current()
+        assert not frame.prompt_button.IsShown()
+        frame.store.update_system_prompt(frame.current.id, gui.OWNER_ID, f"{OLD_BASE}\n\n{OLD_AUDIO_DESCRIPTION}")
+        frame.store.update_transcript(frame.current.id, gui.OWNER_ID, "done", "[00:01] Hello")
+        frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        frame.render_current()
+        assert frame.prompt_button.IsShown()
+        frame.update_system_prompt()
+        assert asked and "uncached" in asked[-1]
+        stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        if answer == wx.YES:
+            assert stored.system_prompt == prompts.system_prompt(prompts.AUDIO_DESCRIPTION)
+            # Only the prompt changes: the tools and the paid transcript stay.
+            assert (stored.tools, stored.transcript_state, stored.transcript) == (tools, "done", "[00:01] Hello")
+            assert not frame.prompt_button.IsShown()
+        else:
+            assert stored.system_prompt == f"{OLD_BASE}\n\n{OLD_AUDIO_DESCRIPTION}" and frame.prompt_button.IsShown()
     finally:
         frame.Destroy()
         app.Destroy()

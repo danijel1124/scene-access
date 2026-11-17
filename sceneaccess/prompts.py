@@ -53,6 +53,22 @@ def system_prompt(profile_text: str) -> str:
     return f"{BASE_SYSTEM_PROMPT}\n\n{profile_text}" if profile_text else BASE_SYSTEM_PROMPT
 
 
+def current_system_prompt(stored: str) -> str:
+    """A chat's stored system prompt rebuilt with the current base prompt, and with the current text of a profile
+    that still holds an earlier default one; a profile the user wrote stays as it is. Every base prompt so far is
+    an introduction and a list, each followed by a blank line, so the profile is what comes after them. Chats
+    from before system prompts have none and get the base prompt."""
+    if not stored.strip():
+        return BASE_SYSTEM_PROMPT
+    parts = stored.split("\n\n")
+    # Anything else stays as it is, rather than losing part of the profile or keeping part of an old base.
+    if (not stored.startswith(BASE_SYSTEM_PROMPT.split("\n", 1)[0]) or len(parts) < 2
+            or not all(line.startswith("- ") for line in parts[1].splitlines())):
+        return stored
+    profile = "\n\n".join(parts[2:])
+    return system_prompt(UPGRADED_PROFILE_TEXTS.get(profile, profile))
+
+
 def sound_blocks(gets_speech: bool, hears: bool) -> str:
     """The blocks about the sound added to a chat's system prompt when sending: what is said if the model gets
     it, by hearing or from a transcript, and other sounds only if it hears them."""

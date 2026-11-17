@@ -119,8 +119,9 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
         reopened.apply_setup('General description')
         persisted = reopened.store.get_session(sid, gui.OWNER_ID)
         assert persisted.system_prompt
-        assert persisted.transcript_state == gui.TRANSCRIPT_PENDING
-        assert persisted.transcript == ''
+        # A new setup keeps the finished transcript, so it is never paid for twice.
+        assert persisted.transcript_state == gui.TRANSCRIPT_DONE
+        assert persisted.transcript == '[00:00] Old transcript'
     finally:
         release.set()
         saved.wait(3)
@@ -135,7 +136,7 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize('reopen', [False, True], ids=['active', 'reopened'])
 @pytest.mark.parametrize('handler', [
-    'change_setup', 'apply_setup', 'on_update_path', 'change_chat_settings',
+    'change_setup', 'apply_setup', 'update_system_prompt', 'on_update_path', 'change_chat_settings',
     '_chat_settings_loaded', 'shrink_stored_video', '_find_online_source',
 ])
 def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reopen, handler):
@@ -171,13 +172,14 @@ def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reope
         monkeypatch.setattr(gui, 'ChatSettingsDialog', forbidden)
         monkeypatch.setattr(frame.catalog, 'model_ids', forbidden)
         monkeypatch.setattr(frame.store, 'update_setup', forbidden)
+        monkeypatch.setattr(frame.store, 'update_system_prompt', forbidden)
         monkeypatch.setattr(gui, 'local_video', forbidden)
         monkeypatch.setattr(frame, '_with_youtube_sign_in', forbidden)
         args = {'apply_setup': ('General description',), 'on_update_path': (None,),
                 '_chat_settings_loaded': (sid, {})}.get(handler, ())
         getattr(frame, handler)(*args)
         assert frame.store.get_session(sid, gui.OWNER_ID) == before
-        for button in (frame.setup_button, frame.chat_settings_button, frame.update_path_button):
+        for button in (frame.setup_button, frame.prompt_button, frame.chat_settings_button, frame.update_path_button):
             assert not button.IsEnabled()
         if not reopen:
             # Completion callbacks precede request_finished: do not unlock writes too early.

@@ -27,7 +27,7 @@ from .new_chat import NewChatMixin, url_from_clipboard
 from .openrouter import OpenRouterClient
 from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .request_control import RequestControl, RequestCancelled
-from .prompts import system_prompt
+from .prompts import current_system_prompt, system_prompt
 from .session_store import (EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING,
                             VideoSession, VideoSessionStore, SessionNotFound, round_bounds)
 from .speech import announce
@@ -277,6 +277,10 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.pause_button = wx.Button(panel, label="Pause request")
         self.pause_button.Hide()
         self.chat_settings_button = wx.Button(panel, label="Chat settings")
+        # Shown only while the chat's frozen system prompt is an earlier version of the current one. Created
+        # right after Chat settings, as the order of creation is the Tab order.
+        self.prompt_button = wx.Button(panel, label="Update system prompt")
+        self.prompt_button.Hide()
         self.setup_button = wx.Button(panel, label="Change prompt profile and tools")
         self.update_path_button = wx.Button(panel, label="Update original file path")
         self.transcript_button = wx.Button(panel, label="Add a transcript of the speech")
@@ -290,11 +294,13 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         requests.Add(self.pause_button, 0)
         layout.Add(requests, 0, wx.ALIGN_RIGHT | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         chat = wx.BoxSizer(wx.HORIZONTAL)
-        for button in (self.chat_settings_button, self.setup_button, self.transcript_button, self.update_path_button):
+        for button in (self.chat_settings_button, self.prompt_button, self.setup_button, self.transcript_button,
+                       self.update_path_button):
             chat.Add(button, 0, wx.RIGHT, 8)
         layout.Add(chat, 0, wx.ALL, 8)
         panel.SetSizer(layout)
         self.update_path_button.Bind(wx.EVT_BUTTON, self.on_update_path)
+        self.prompt_button.Bind(wx.EVT_BUTTON, lambda _event: self.update_system_prompt())
         self.setup_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_setup())
         self.chat_settings_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_chat_settings())
         self.transcript_button.Bind(wx.EVT_BUTTON, lambda _event: self.add_transcript())
@@ -373,8 +379,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         search = " and web search" if self.current.provider == OPENROUTER or self._local_web_search() else ""
         tools = "zoom" + search + (", high resolution and video information" if self.current.source_url else "")
         message = (f"Choose the prompt profile for this chat. It also gets the current base prompt and the tools "
-                   f"({tools}), and a transcript if the model cannot hear. The next question sends the video "
-                   "uncached once, so it costs more.")
+                   f"({tools}), and keeps a transcript it has. The next question sends the video uncached once, so "
+                   "it costs more.")
         with wx.SingleChoiceDialog(self, message, "Change prompt profile and tools", names) as dialog:
             if self.config.profile in names:
                 dialog.SetSelection(names.index(self.config.profile))
@@ -396,6 +402,24 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.current = self.store.get_session(self.current.id, OWNER_ID)
         self.render_current()
         self.status.SetLabel(self.status.GetLabel() + f"\nPrompt profile set to {profile or NO_PROFILE}; tools enabled.")
+
+    def update_system_prompt(self) -> None:
+        """Gives the open chat the current version of its system prompt, keeping its profile, tools and transcript."""
+        if not self.current or self._chat_busy():
+            return
+        updated = current_system_prompt(self.current.system_prompt)
+        if updated == self.current.system_prompt or wx.MessageBox(
+                "This chat still uses an earlier version of the system prompt. Update it to the current version? "
+                "The chat keeps its prompt profile, tools and transcript. The next question sends the video uncached "
+                "once, so it costs more.", "Update system prompt", wx.YES_NO | wx.ICON_QUESTION) != wx.YES:
+            return
+        self.store.update_system_prompt(self.current.id, OWNER_ID, updated)
+        self.current = self.store.get_session(self.current.id, OWNER_ID)
+        self.render_current()
+        # The button disappears with the old version, so the focus goes on to the question.
+        self.question.SetFocus()
+        self.status.SetLabel(self.status.GetLabel() + "\nSystem prompt updated to the current version.")
+        announce("System prompt updated.")
 
     def _local_web_search(self) -> bool:
         """Whether the open llama.cpp chat was started with web search through OpenRouter."""
@@ -577,6 +601,10 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         # Select the newest answer rather than its usage line, so it is what gets read first.
         answers = [position for position, (_index, kind) in enumerate(self.history_rows) if kind == ANSWER]
         self.select_history_item(answers[-1] if answers else len(items) - 1)
+        outdated = current_system_prompt(session.system_prompt) != session.system_prompt
+        if self.prompt_button.IsShown() != outdated:
+            self.prompt_button.Show(outdated)
+            self.prompt_button.GetParent().Layout()
         self._set_chat_mutation_buttons()
 
     def on_history_menu(self, event: wx.ContextMenuEvent) -> None:
@@ -731,7 +759,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
 
     def _set_chat_mutation_buttons(self) -> None:
         busy = self._chat_busy()
-        for button in (self.setup_button, self.update_path_button, self.transcript_button):
+        for button in (self.setup_button, self.prompt_button, self.update_path_button, self.transcript_button):
             button.Enable(not busy)
         self.chat_settings_button.Enable(not busy and not getattr(self, '_loading_chat_settings', False))
 
