@@ -182,6 +182,30 @@ def test_without_its_sound_a_hearing_llama_cpp_model_gets_the_transcript_instead
     assert 'input_audio' not in json.dumps(call['messages']) and '[00:00] Hello' in json.dumps(call['messages'])
 
 
+def test_a_streamed_answer_shows_live_and_stays_in_view_when_the_request_fails(frame, monkeypatch):
+    start(frame)
+    seen = {}
+
+    def stream(client, session, messages, run_tool, on_event=None, routing=None, on_delta=None, **kwargs):
+        on_delta('thinking', 'Let me look ' * 30)
+        on_delta('text', 'Half of ')
+        on_delta('text', 'the answer')
+        position = next(i for i, item in enumerate(frame.history_items) if item.startswith('Model is writing'))
+        # The item keeps its text, so the screen reader is not disturbed; what Enter shows grows.
+        seen['item'] = frame.history_items[position]
+        seen['reader'] = frame.reader_texts[position]
+        raise RuntimeError('fixture: connection lost')
+
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', stream)
+    frame._send('Describe it.', initial=True)
+    assert seen['item'] == 'Model is writing… (Enter shows it so far)'
+    assert seen['reader'].endswith('Half of the answer')
+    unfinished = [item for item in frame.history_items if item.startswith('Unfinished, not saved')]
+    assert len(unfinished) == 2 and '(90 words; Enter shows it)' in unfinished[0]
+    assert unfinished[1] == 'Unfinished, not saved: model wrote: Half of the answer'
+    assert any('connection lost' in error for error in frame.errors)
+
+
 def test_the_web_search_tool_searches_through_openrouter_with_the_settings_model(frame, monkeypatch):
     frame.config = gui.replace(frame.config, ignored_providers=('fixture-provider',))
     start(frame, web_search=True)

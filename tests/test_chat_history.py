@@ -73,3 +73,22 @@ def test_chat_history_shows_tool_steps_readably_and_ends_with_the_answer():
                          "Tool result: Image of 02:51, the whole frame", "Image: Image of 02:51."]
     assert items[5] == "Model: It is a Moncler.\n\nSources:\n- Moncler: https://m.example"
     assert "requests: 2" in items[6]
+
+
+def test_the_models_thinking_is_folded_and_belongs_to_its_round():
+    from sceneaccess.chat_history import THINKING, chat_history_rows
+    thinking = " ".join(f"word{number}" for number in range(40))
+    rows = chat_history_rows("Brand?", [
+        {"role": "assistant", "content": None, "thinking": "Zoom first.", "tool_calls": [
+            {"id": "c", "type": "function", "function": {"name": "zoom_frame", "arguments": '{"time": "02:51"}'}}]},
+        {"role": "tool", "tool_call_id": "c", "content": "x", "caption": "Image of 02:51"},
+        {"role": "assistant", "content": "A Moncler.", "thinking": thinking, "excluded": True},
+    ])
+    kinds = [kind for _shown, _full, _index, kind in rows]
+    assert kinds == ["question", THINKING, "tool", "tool", THINKING, "answer", "usage"]
+    shown, full, index, _kind = rows[4]
+    # Folded: the list shows its beginning and how long it is; Enter reads all of it.
+    assert shown.startswith("[hidden from model] Model's thinking (40 words; Enter shows it): word0 word1")
+    assert "word39" not in shown and full.endswith(f"Model's thinking:\n\n{thinking}")
+    # It belongs to the answer's entry, so hiding or deleting the answer takes it along.
+    assert index == rows[5][2] == 2 and rows[1][2] == 0

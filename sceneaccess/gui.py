@@ -13,7 +13,7 @@ from pathlib import Path
 import wx
 
 from .app_window import LEGACY_OWNER_ID, OWNER_ID, AppWindow, open_store, resolve_openrouter_key
-from .chat_history import ANSWER, NOTE, chat_history_rows, transcript_entry
+from .chat_history import ANSWER, NOTE, chat_history_rows, thinking_item, transcript_entry
 from .chat_list import ChatListFrame
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
 from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
@@ -21,7 +21,7 @@ from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSetti
 from .dialogs import NO_PROFILE
 from .models import AUTO_ROUTER, ModelCatalog, llama_cpp_catalog, routing
 from .new_chat import NewChatMixin, url_from_clipboard
-from .openrouter import OpenRouterClient
+from .openrouter import LLAMA_CPP_READ_TIMEOUT, OpenRouterClient
 from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .request_control import RequestControl, RequestCancelled
 from .prompts import current_system_prompt, system_prompt
@@ -39,6 +39,8 @@ from .youtube import fetch_video_info, search_videos
 LB_SETCARETINDEX, LB_GETCARETINDEX = 0x019E, 0x019F
 # yt-dlp's default file name ends with the video ID in brackets: "Title [jNQXAC9IVRw].mp4".
 YOUTUBE_ID_IN_NAME = re.compile(r"\[([A-Za-z0-9_-]{11})\]")
+# The items that grow while an answer is streamed.
+LIVE_LABELS = {"thinking": "Model is thinking", "text": "Model is writing"}
 
 
 def youtube_link_in_file_name(source_path: str) -> str | None:
@@ -580,6 +582,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.reader_texts = [full for _shown, full, _index, _kind in rows]
         # Which stored entry each item shows, and what it is: for the context menu and the selection.
         self.history_rows = [(index, kind) for _shown, _full, index, kind in rows]
+        # The list is built anew, so a growing item of a streamed answer is no longer where it was.
+        self._live_position = None
         self.chat_list.Set(items)
         # Select the newest answer rather than its usage line, so it is what gets read first.
         answers = [position for position, (_index, kind) in enumerate(self.history_rows) if kind == ANSWER]
@@ -796,12 +800,35 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
 
         if not initial:
             self._show_progress_item(session_id, f"You: {question}", announce_it=False)
+        # The answer as it is streamed: one item per stretch of thinking or writing, whose text for the reader
+        # grows with every piece. sections keeps every stretch, to show them if the answer is not stored.
+        live = {"kind": "", "text": ""}
+        sections: list[tuple[str, str]] = []
+
+        def end_live() -> None:
+            if live["kind"]:
+                sections.append((live["kind"], live["text"]))
+                live.update(kind="", text="")
+
+        def on_delta(kind: str, text: str) -> None:
+            if kind != live["kind"]:
+                end_live()
+                live["kind"] = kind
+                wx.CallAfter(self._request_callback, control, self._start_live_item, session_id, kind)
+            live["text"] += text
+            wx.CallAfter(self._request_callback, control, self._update_live_item, session_id, kind, live["text"])
+
+        def unfinished() -> list[tuple[str, str]]:
+            return [*sections, *([(live["kind"], live["text"])] if live["kind"] and live["text"] else [])]
 
         def on_event(kind: str, text: str) -> None:
             if kind == "paused":
                 wx.CallAfter(self._request_callback, control, self._paused, text)
                 return
+            # What was written before the tool call is complete; whatever comes after starts a new item.
+            end_live()
             item = f"Tool call: {text}" if kind == "tool_call" else f"Tool result: {text}"
+            sections.append(("step", item))
             wx.CallAfter(self._request_callback, control, self._show_progress_item, session_id, item)
 
         def worker() -> None:
@@ -812,7 +839,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                               if openrouter_key else None)
                 if llama_cpp:
                     # Only the llama.cpp key goes to the user's server, never the OpenRouter key.
-                    client = OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url, control=control)
+                    client = OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url, control=control,
+                                              read_timeout=LLAMA_CPP_READ_TIMEOUT)
                 else:
                     client = openrouter
                 # A chat on "default" asks the model that is in Settings now.
@@ -855,7 +883,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                                     web_search=(partial(_search_through_openrouter, openrouter, config.model,
                                                         search_options) if openrouter else None))
                 turn = client.run_turn(replace(session, tools=provider_tools(session.tools, session.provider)), messages,
-                                       runner.run, on_event, options, max_tool_rounds=config.max_tool_rounds)
+                                       runner.run, on_event, options, max_tool_rounds=config.max_tool_rounds,
+                                       on_delta=on_delta)
                 control.check_cancelled()
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)
@@ -863,9 +892,9 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                 completion = turn.completion
                 wx.CallAfter(self._request_callback, control, self._completed, session_id, completion.model, completion.tools_unavailable)
             except RequestCancelled:
-                wx.CallAfter(self._request_callback, control, self._cancelled)
+                wx.CallAfter(self._request_callback, control, self._cancelled, unfinished())
             except Exception as error:
-                wx.CallAfter(self._request_callback, control, self._failed, str(error))
+                wx.CallAfter(self._request_callback, control, self._failed, str(error), unfinished())
             finally:
                 if runner is not None:
                     runner.cleanup_files()
@@ -914,13 +943,28 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self._pending_question = ""
         self._set_request_buttons(False)
 
-    def _cancelled(self) -> None:
+    def _cancelled(self, unfinished: list[tuple[str, str]] = ()) -> None:
         self.size_skip_after_answer = None
         self.size_confirm_after_answer = ""
         self._finish_request(restore_question=True)
         self.render_current()
+        self._show_unfinished(unfinished)
         self.status.SetLabel("Request cancelled. Completed chat history is preserved; provider charges may still apply.")
         announce("Request cancelled.")
+
+    def _show_unfinished(self, unfinished: list[tuple[str, str]]) -> None:
+        """Shows again what a request that was not stored had streamed, so it is not lost from view. It is not
+        saved, so the next time the list is built, e.g. after another question, it is gone."""
+        if not self.current or not unfinished:
+            return
+        for kind, text in unfinished:
+            if kind == "thinking":
+                shown, full, _kind = thinking_item(text, "Unfinished, not saved: model's thinking")
+            elif kind == "text":
+                shown = full = f"Unfinished, not saved: model wrote: {text}"
+            else:
+                shown = full = f"Unfinished, not saved: {text}"
+            self._show_progress_item(self.current.id, shown, announce_it=False, full=full)
 
     def _prepare_transcript(self, session: VideoSession, client: OpenRouterClient | None) -> None:
         """Runs in the request thread: transcribes the sound once, as the chat's transcript mode asks.
@@ -964,6 +1008,25 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         if announce_it:
             announce(item, interrupt=False)
 
+    def _start_live_item(self, session_id: str, kind: str) -> None:
+        """Adds the item that shows the model's thinking or writing while it is streamed. Once the answer is
+        stored, the Chat history shows the same as items of their own: the thinking folded, the text written
+        before a tool call as a note, and the answer."""
+        label = LIVE_LABELS.get(kind, kind)
+        # The item's text stays as it is: changing it while the screen reader is on it would read it out again
+        # and could move the list's caret. Only what Enter shows grows.
+        self._show_progress_item(session_id, f"{label}… (Enter shows it so far)", announce_it=False)
+        if self.current and self.current.id == session_id and not self._closing:
+            self._live_position = len(self.history_items) - 1
+            announce(f"{label}…", interrupt=False)
+
+    def _update_live_item(self, session_id: str, kind: str, text: str) -> None:
+        position = getattr(self, "_live_position", None)
+        if (self._closing or not self.current or self.current.id != session_id or position is None
+                or position >= len(self.history_items)):
+            return
+        self.reader_texts[position] = f"{LIVE_LABELS.get(kind, kind)} (so far):\n\n{text}"
+
     def _completed(self, session_id: str, answered_by: str, tools_unavailable: bool = False) -> None:
         self._finish_request()
         if not self.current or self.current.id != session_id:
@@ -995,13 +1058,14 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         else:
             self.chat_list.SetFocus()
 
-    def _failed(self, error: str) -> None:
+    def _failed(self, error: str, unfinished: list[tuple[str, str]] = ()) -> None:
         self._finish_request(restore_question=True)
         self.size_skip_after_answer = None
         self.size_confirm_after_answer = ""
         self.send_button.Enable()
-        # Nothing of the failed turn was stored; remove its progress items from the list.
+        # Nothing of the failed turn was stored; its progress items go, but what it streamed stays in view.
         self.render_current()
+        self._show_unfinished(unfinished)
         self.status.SetLabel("The request failed. The chat and local video context are preserved.")
         provider = self.current.provider if self.current else OPENROUTER
         if provider == LLAMA_CPP and "exceeds the available context size" in error:

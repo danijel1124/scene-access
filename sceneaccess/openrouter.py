@@ -14,6 +14,10 @@ from .worker_process import run_isolated_task
 
 # A question may trigger several rounds of tool calls; after this many the model must answer.
 MAX_TOOL_ROUNDS = 6
+# How long a streamed answer may stay silent, in seconds. Before its first word comes the whole prompt is read,
+# which on the user's own llama.cpp server can take minutes for a video; see LLAMA_CPP_READ_TIMEOUT.
+READ_TIMEOUT = 300
+LLAMA_CPP_READ_TIMEOUT = 900
 
 
 class OpenRouterError(RuntimeError):
@@ -58,6 +62,9 @@ class Turn:
 
 # Events reported while a turn runs: ("tool_call", text) before a tool runs, ("tool_result", text) after it.
 EventHandler = Callable[[str, str], None]
+# Pieces of a streamed answer as they arrive: ("thinking", text) for the model's reasoning, ("text", text) for
+# what it writes.
+DeltaHandler = Callable[[str, str], None]
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -74,13 +81,87 @@ def _request_json(url: str, body: bytes, headers: dict[str, str]) -> tuple[int |
         return error.code, _error_message(error)
 
 
+def _request_stream(url: str, body: bytes, headers: dict[str, str], read_timeout: float = READ_TIMEOUT,
+                    _progress_pipe: Any = None) -> tuple[int | None, Any]:
+    """Runs in a worker process: streams the request and sends each piece back through the progress pipe."""
+    request = Request(url, data=body, headers=headers, method="POST")
+    report = (lambda kind, text: _progress_pipe.send(("progress", (kind, text)))) if _progress_pipe else (lambda *_: None)
+    try:
+        with build_opener(_NoRedirect).open(request, timeout=read_timeout) as response:
+            return None, _read_stream(response, report)
+    except HTTPError as error:
+        return error.code, _error_message(error)
+
+
+def _read_stream(response: Any, on_delta: DeltaHandler) -> dict[str, Any]:
+    """Puts a streamed answer together into the response a request that is not streamed gets, reporting its
+    reasoning and text to on_delta as they arrive. An error sent in the stream is returned as {"error": ...}."""
+    message: dict[str, Any] = {"role": "assistant", "content": "", "reasoning": ""}
+    calls: dict[int, dict[str, Any]] = {}
+    details: dict[tuple[Any, Any], dict[str, Any]] = {}
+    annotations: list[dict[str, Any]] = []
+    data: dict[str, Any] = {}
+    unstreamed, streamed = [], False
+    for raw in response:
+        line = raw.decode("utf-8").strip()
+        if not line.startswith("data:"):
+            unstreamed.append(raw)
+            continue
+        streamed = True
+        body = line[len("data:"):].strip()
+        if body == "[DONE]":
+            break
+        chunk = json.loads(body)
+        if "error" in chunk:
+            return {"error": chunk["error"]}
+        data.update({key: chunk[key] for key in ("model", "provider", "usage") if chunk.get(key)})
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") or {}
+            # llama.cpp calls the reasoning reasoning_content, OpenRouter reasoning.
+            thinking = delta.get("reasoning_content") or delta.get("reasoning")
+            if thinking:
+                message["reasoning"] += thinking
+                on_delta("thinking", thinking)
+            if delta.get("content"):
+                message["content"] += delta["content"]
+                on_delta("text", delta["content"])
+            for call in delta.get("tool_calls") or []:
+                slot = calls.setdefault(call.get("index", len(calls)),
+                                        {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                slot["id"] = call.get("id") or slot["id"]
+                function = call.get("function") or {}
+                slot["function"]["name"] += function.get("name") or ""
+                slot["function"]["arguments"] += function.get("arguments") or ""
+            for detail in delta.get("reasoning_details") or []:
+                _merge_detail(details, detail)
+            annotations += delta.get("annotations") or []
+    if not streamed:
+        # A server or proxy that does not stream answers in one piece; that is the response itself.
+        return json.loads(b"".join(unstreamed).decode("utf-8"))
+    # As in a response that is not streamed: no text is None, not "", and no reasoning is none at all.
+    message["content"] = message["content"] or None
+    if not message["reasoning"]:
+        del message["reasoning"]
+    if calls:
+        message["tool_calls"] = [calls[index] for index in sorted(calls)]
+    if details:
+        # Some models need their reasoning back with the tool results, as in a response that is not streamed.
+        message["reasoning_details"] = list(details.values())
+    if annotations:
+        message["annotations"] = annotations
+    return {**data, "choices": [{"message": message}]}
+
+
 class OpenRouterClient:
     """Chat completions with OpenRouter, or with a llama.cpp server at another endpoint."""
     endpoint = OPENROUTER_URL
 
     def __init__(self, api_key: str, base_url: str | None = None, opener: Callable[..., Any] = urlopen,
-                 control: RequestControl | None = None, ignored_providers: tuple[str, ...] = ()):
+                 control: RequestControl | None = None, ignored_providers: tuple[str, ...] = (),
+                 read_timeout: float = READ_TIMEOUT):
+        """read_timeout is how long a streamed answer may stay silent, see READ_TIMEOUT."""
         self.api_key = api_key
+        self.read_timeout = read_timeout
         self.endpoint = base_url or self.endpoint
         self.opener = opener
         self.control = control
@@ -90,14 +171,17 @@ class OpenRouterClient:
         vendor = model.split('/', 1)[0].casefold()
         return vendor not in {name.casefold() for name in self.ignored_providers}
 
-    def _post(self, payload: dict[str, Any], url: str | None = None) -> dict[str, Any]:
-        if self.control:
-            self.control.check_cancelled()
+    def _request(self, payload: dict[str, Any], url: str | None = None) -> Request:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             # A llama.cpp server without --api-key needs none.
             headers["Authorization"] = f"Bearer {self.api_key}"
-        request = Request(url or self.endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        return Request(url or self.endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+
+    def _post(self, payload: dict[str, Any], url: str | None = None) -> dict[str, Any]:
+        if self.control:
+            self.control.check_cancelled()
+        request = self._request(payload, url)
         try:
             if self.control and self.opener is urlopen:
                 data = self._controlled_post(request)
@@ -111,6 +195,34 @@ class OpenRouterClient:
             self.control.check_cancelled()
         if "error" in data:
             raise OpenRouterError(data["error"].get("message", "OpenRouter request failed"), data["error"].get("code"))
+        return data
+
+    def _post_stream(self, payload: dict[str, Any], on_delta: DeltaHandler) -> dict[str, Any]:
+        """Like _post, but streamed: on_delta gets the reasoning and the text as they arrive, and the pieces are
+        put together into the same response _post returns. The time limit applies to each read, so a long
+        answer that keeps coming is not cut off. A request that can be cancelled is streamed in a worker
+        process, which reports the pieces back."""
+        if self.control:
+            self.control.check_cancelled()
+        request = self._request({**payload, "stream": True, "stream_options": {"include_usage": True}})
+        if self.control and self.opener is urlopen:
+            # An answer may take long while it keeps coming; a stalled one fails on its own after read_timeout.
+            status, data = run_isolated_task(_request_stream, (request.full_url, request.data, dict(request.header_items()),
+                                                               self.read_timeout),
+                                             control=self.control, timeout=3600,
+                                             progress_callback=lambda piece: on_delta(*piece))
+            if status is not None:
+                raise OpenRouterError(f"HTTP {status}: {data}", status)
+        else:
+            try:
+                with self.opener(request, timeout=self.read_timeout) as response:
+                    data = _read_stream(response, on_delta)
+            except HTTPError as error:
+                raise OpenRouterError(f"HTTP {error.code}: {_error_message(error)}", error.code) from None
+        if self.control:
+            self.control.check_cancelled()
+        if "error" in data:
+            raise OpenRouterError(data["error"].get("message", "Request failed"), data["error"].get("code"))
         return data
 
     def _controlled_post(self, request: Request) -> dict[str, Any]:
@@ -145,9 +257,10 @@ class OpenRouterClient:
 
     def run_turn(self, session: VideoSession, messages: list[dict[str, Any]], run_tool: Callable[[str, str], Any],
                  on_event: EventHandler | None = None, routing: dict[str, Any] | None = None,
-                 max_tool_rounds: int = MAX_TOOL_ROUNDS) -> Turn:
+                 max_tool_rounds: int = MAX_TOOL_ROUNDS, on_delta: DeltaHandler | None = None) -> Turn:
         """Asks the model and runs its tool calls until it answers. run_tool returns a tools.ToolResult.
-        routing holds extra request fields such as plugins and provider, see models.routing."""
+        routing holds extra request fields such as plugins and provider, see models.routing. With on_delta, each
+        request is streamed and on_delta gets its reasoning and text as they arrive."""
         from .tools import describe_call, image_message
 
         notify = on_event or (lambda _kind, _text: None)
@@ -169,7 +282,7 @@ class OpenRouterClient:
                 if rounds >= max_tool_rounds:
                     payload["tool_choice"] = "none"
             try:
-                data = self._post(payload)
+                data = self._post_stream(payload, on_delta) if on_delta else self._post(payload)
             except OpenRouterError as error:
                 if tools and _rejects_tools(error):
                     # The model cannot use tools; answer without them rather than not at all.
@@ -182,6 +295,11 @@ class OpenRouterClient:
             assistant = {key: message[key] for key in ("role", "content", "tool_calls", "reasoning_details") if key in message}
             assistant["role"] = "assistant"
             assistant.setdefault("content", None)
+            # Kept for the Chat history only, never sent back: OpenRouter calls it reasoning, llama.cpp
+            # reasoning_content.
+            thinking = message.get("reasoning") or message.get("reasoning_content")
+            if thinking:
+                assistant["thinking"] = thinking
             if calls and (not tools or rounds >= max_tool_rounds):
                 # The model ignored tool_choice "none". Never run more calls: each round is a paid request.
                 # The calls are dropped, so the stored chat has no call without a result.
@@ -229,6 +347,21 @@ class OpenRouterClient:
 def _wire(message: dict[str, Any]) -> dict[str, Any]:
     from .session_store import WIRE_KEYS
     return {key: message[key] for key in WIRE_KEYS if key in message}
+
+
+def _merge_detail(details: dict[tuple[Any, Any], dict[str, Any]], detail: dict[str, Any]) -> None:
+    """Joins the streamed pieces of one reasoning detail, which share its index and type."""
+    key = (detail.get("index"), detail.get("type"))
+    if key not in details:
+        details[key] = dict(detail)
+        return
+    merged = details[key]
+    for name, value in detail.items():
+        if isinstance(value, str) and name in ("text", "summary", "data"):
+            merged[name] = (merged.get(name) or "") + value
+        elif value is not None and merged.get(name) is None:
+            # E.g. a signature that comes after a first piece with "signature": null; Gemini needs it back.
+            merged[name] = value
 
 
 def _rejects_tools(error: OpenRouterError) -> bool:

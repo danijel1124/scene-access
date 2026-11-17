@@ -26,7 +26,7 @@ from .app_window import LEGACY_OWNER_ID, OWNER_ID, open_store, resolve_openroute
 from .chat_history import chat_history_rows
 from .config import AppConfig, load_config
 from .models import ModelCatalog, llama_cpp_catalog, routing
-from .openrouter import OpenRouterClient
+from .openrouter import LLAMA_CPP_READ_TIMEOUT, OpenRouterClient
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .session_store import TRANSCRIBE_MODES, VideoSession, VideoSessionStore
@@ -113,28 +113,43 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         print("The transcript mode asks for a transcript the chat does not have; compare makes none.", file=out)
     if provider == LLAMA_CPP:
         # Only the llama.cpp key goes to the user's server, never the OpenRouter key.
-        client = OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url)
+        client = OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url,
+                                  read_timeout=LLAMA_CPP_READ_TIMEOUT)
         options = {}
     else:
         client = OpenRouterClient(resolve_openrouter_key(config) or "", ignored_providers=config.ignored_providers)
         options = routing(model, session.audio_only, catalog, config.ignored_providers, config.excluded_models)
     runner = ToolRunner(session, config.youtube_cookies)
-    steps: list[str] = []
     print(f"\n===== {name} | hears: {hears}{' (sound sent as a track)' if sound else ''} | "
-          f"transcript sent: {sent} =====", file=out)
+          f"transcript sent: {sent} =====", file=out, flush=True)
     started = time.monotonic()
+    # Everything is written as it happens, so a run can be followed in the output while it goes on, and what
+    # came before a failure stays.
+    shown = {"kind": "", "text": False}
+
+    def piece(kind: str, text: str) -> None:
+        shown["text"] = shown["text"] or kind == "text"
+        if kind != shown["kind"]:
+            label = {"thinking": "Thinking", "text": "Writing"}.get(kind, kind)
+            print(f"\n[{label}, {time.monotonic() - started:.0f} s]", file=out)
+            shown["kind"] = kind
+        print(text, end="", file=out, flush=True)
+
+    def step(kind: str, text: str) -> None:
+        shown["kind"] = ""
+        print(f"\n[Step, {time.monotonic() - started:.0f} s] {kind}: {text}", file=out, flush=True)
+
     try:
         turn = client.run_turn(replace(session, tools=provider_tools(session.tools, provider)), messages,
-                               runner.run, lambda kind, text: steps.append(f"{kind}: {text}"), options,
-                               max_tool_rounds=config.max_tool_rounds)
+                               runner.run, step, options, max_tool_rounds=config.max_tool_rounds, on_delta=piece)
         completion = turn.completion
-        print(f"Time: {time.monotonic() - started:.0f} s | answered by {completion.model} | requests "
-              f"{completion.requests} | prompt tokens {completion.prompt_tokens}", file=out)
-        for step in steps:
-            print(f"Step: {step}", file=out)
-        print(completion.answer, file=out)
+        if not shown["text"]:
+            # Not streamed, e.g. by a server that does not stream: the answer comes in one piece.
+            print(f"\n{completion.answer}", file=out)
+        print(f"\n\nTime: {time.monotonic() - started:.0f} s | answered by {completion.model} | requests "
+              f"{completion.requests} | prompt tokens {completion.prompt_tokens}", file=out, flush=True)
     except Exception as error:
-        print(f"Failed after {time.monotonic() - started:.0f} s: {error}", file=out)
+        print(f"\n\nFailed after {time.monotonic() - started:.0f} s: {error}", file=out, flush=True)
     finally:
         runner.cleanup_files()
 

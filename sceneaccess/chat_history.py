@@ -10,8 +10,10 @@ from .tools import describe_call
 # Said first for every item of a round hidden from the model, so the screen reader reads it.
 HIDDEN_FROM_MODEL = "[hidden from model] "
 # What an item of the Chat history shows; the newest ANSWER is selected first.
-QUESTION, TRANSCRIPT, ANSWER, USAGE, NOTE, TOOL, IMAGE = ("question", "transcript", "answer", "usage", "note",
-                                                          "tool", "image")
+QUESTION, TRANSCRIPT, ANSWER, USAGE, NOTE, TOOL, IMAGE, THINKING = (
+    "question", "transcript", "answer", "usage", "note", "tool", "image", "thinking")
+# A thinking item shows only its beginning, as a long one would be read out in full when selected.
+THINKING_PREVIEW_WORDS = 12
 
 
 def usage_text(usage: dict[str, Any] | None) -> str:
@@ -92,17 +94,25 @@ def _message_items(message: dict[str, Any]) -> list[tuple[str, str, str]]:
         return [_same(f"You: {content}", QUESTION)]
     if message["role"] == "tool":
         return [_same(f"Tool result: {message.get('caption') or content}", TOOL)]
+    thinking = [thinking_item(message["thinking"])] if message.get("thinking") else []
     if message.get("tool_calls"):
         # Text the model wrote before calling tools; the final answer is the last "Model:" item.
-        items = [_same(f"Model note: {content}", NOTE)] if content else []
+        items = thinking + ([_same(f"Model note: {content}", NOTE)] if content else [])
         for call in message["tool_calls"]:
             function = call.get("function") or {}
             items.append(_same(f"Tool call: {describe_call(function.get('name', ''), function.get('arguments') or '')}",
                                TOOL))
         return items
     sources = "".join(f"\n- {source['title']}: {source['url']}" for source in message.get("sources") or [])
-    return [_same(f"Model: {content}" + (f"\n\nSources:{sources}" if sources else ""), ANSWER),
+    return [*thinking, _same(f"Model: {content}" + (f"\n\nSources:{sources}" if sources else ""), ANSWER),
             _same(usage_text(message.get("usage")), USAGE)]
+
+
+def thinking_item(thinking: str, label: str = "Model's thinking") -> tuple[str, str, str]:
+    """The model's reasoning, folded: its beginning in the list, all of it for the reader (Enter)."""
+    words = thinking.split()
+    beginning = " ".join(words[:THINKING_PREVIEW_WORDS]) + (" …" if len(words) > THINKING_PREVIEW_WORDS else "")
+    return (f"{label} ({len(words)} words; Enter shows it): {beginning}", f"{label}:\n\n{thinking.strip()}", THINKING)
 
 
 def _same(text: str, kind: str) -> tuple[str, str, str]:

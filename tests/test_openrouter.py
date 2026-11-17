@@ -297,3 +297,163 @@ def test_pause_finishes_tools_then_resumes_without_repeating_them(tmp_path):
     finally:
         control.cancel()
         worker.join(2)
+
+
+class StreamResponse:
+    """A streamed answer: one server-sent event per chunk, as llama.cpp and OpenRouter send them."""
+    def __init__(self, chunks, done=True):
+        self.lines = [f"data: {json.dumps(chunk)}\n\n".encode("utf-8") for chunk in chunks]
+        self.lines += [b"data: [DONE]\n\n"] if done else []
+
+    def __iter__(self):
+        return iter(self.lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _delta(**fields):
+    return {"choices": [{"delta": fields}]}
+
+
+def test_a_streamed_answer_is_reported_as_it_comes_and_put_together(tmp_path: Path):
+    _store, session = _tool_session(tmp_path)
+    bodies, pieces = [], []
+
+    def opener(request, timeout):
+        bodies.append(json.loads(request.data))
+        # llama.cpp calls the reasoning reasoning_content, OpenRouter reasoning; the usage comes last, alone.
+        return StreamResponse([{"model": "m", **_delta(reasoning_content="Look at ")}, _delta(reasoning="the logo."),
+                               _delta(content="A Moncler "), _delta(content="logo."),
+                               {"choices": [], "usage": {"prompt_tokens": 50}}])
+
+    turn = OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None,
+                                                         on_delta=lambda kind, text: pieces.append((kind, text)))
+    assert bodies[0]["stream"] is True
+    assert pieces == [("thinking", "Look at "), ("thinking", "the logo."), ("text", "A Moncler "), ("text", "logo.")]
+    answer = turn.entries[-1]
+    assert answer["content"] == turn.completion.answer == "A Moncler logo."
+    # The thinking is kept for the Chat history; the usage of the last chunk counts.
+    assert answer["thinking"] == "Look at the logo." and turn.completion.prompt_tokens == 50
+
+
+def test_streamed_tool_calls_and_reasoning_go_back_as_without_streaming(tmp_path: Path):
+    _store, session = _tool_session(tmp_path)
+    (session.directory / "frame_1.jpg").write_bytes(b"jpeg-bytes")
+    bodies = []
+    rounds = [
+        [_delta(reasoning="Zoom in.", reasoning_details=[{"type": "reasoning.text", "index": 0, "text": "Zoom ",
+                                                          "signature": None}]),
+         _delta(reasoning_details=[{"type": "reasoning.text", "index": 0, "text": "in.", "signature": "sig-1"}]),
+         # The call comes in pieces: its name, then its arguments bit by bit.
+         _delta(tool_calls=[{"index": 0, "id": "call_1", "type": "function", "function": {"name": "zoom_frame"}}]),
+         _delta(tool_calls=[{"index": 0, "function": {"arguments": "{\"time\""}}]),
+         _delta(tool_calls=[{"index": 0, "function": {"arguments": ": \"02:51\"}"}}])],
+        [_delta(content="A Moncler logo.", annotations=[
+            {"type": "url_citation", "url_citation": {"url": "https://example.com/a", "title": "A"}}])],
+    ]
+
+    def opener(request, timeout):
+        bodies.append(json.loads(request.data))
+        return StreamResponse(rounds[len(bodies) - 1])
+
+    calls = []
+
+    def run_tool(name, arguments):
+        calls.append((name, json.loads(arguments)))
+        return ToolResult("Image follows.", image="frame_1.jpg", caption="Image of 02:51")
+
+    turn = OpenRouterClient("k", opener=opener).run_turn(session, session.messages, run_tool, on_delta=lambda *_: None)
+    assert calls == [("zoom_frame", {"time": "02:51"})]
+    sent = bodies[1]["messages"][-3]
+    assert sent["tool_calls"] == [{"id": "call_1", "type": "function",
+                                   "function": {"name": "zoom_frame", "arguments": "{\"time\": \"02:51\"}"}}]
+    # The signature that came after a first piece without one goes back, as Gemini needs it.
+    assert sent["reasoning_details"] == [{"type": "reasoning.text", "index": 0, "text": "Zoom in.", "signature": "sig-1"}]
+    # The readable copy of the thinking is for the Chat history only.
+    assert "thinking" not in sent and "reasoning" not in sent and turn.entries[0]["thinking"] == "Zoom in."
+    assert turn.entries[-1]["sources"] == [{"title": "A", "url": "https://example.com/a"}]
+
+
+def test_a_server_that_does_not_stream_still_gives_the_whole_answer(tmp_path: Path):
+    _store, session = _tool_session(tmp_path)
+
+    class Unstreamed(StreamResponse):
+        def __init__(self, payload):
+            self.lines = [line.encode("utf-8") for line in json.dumps(payload, indent=2).splitlines(keepends=True)]
+
+    answer = {"model": "m", "choices": [{"message": {"content": "A jacket."}}], "usage": {"prompt_tokens": 7}}
+    turn = OpenRouterClient("k", opener=lambda request, timeout: Unstreamed(answer)).run_turn(
+        session, session.messages, lambda *_: None, on_delta=lambda *_: None)
+    assert turn.completion.answer == "A jacket." and turn.completion.prompt_tokens == 7
+
+
+def test_an_error_in_the_stream_fails_the_request(tmp_path: Path):
+    _store, session = _tool_session(tmp_path)
+    opener = lambda request, timeout: StreamResponse([_delta(content="Half"), {"error": {"message": "overloaded"}}])
+    with pytest.raises(OpenRouterError, match="overloaded"):
+        OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None,
+                                                      on_delta=lambda *_: None)
+
+
+@pytest.fixture
+def stream_server():
+    """A local server streaming an answer slowly, piece by piece; hold makes it wait before the last piece."""
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hold = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for chunk in (_delta(reasoning_content="Thinking."), _delta(content="Half "), _delta(content="done.")):
+                if chunk["choices"][0]["delta"].get("content") == "done.":
+                    hold.wait(10)
+                self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                time.sleep(0.05)
+            self.wfile.write(b"data: [DONE]\n\n")
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/v1/chat/completions", hold
+    hold.set()
+    server.shutdown()
+
+
+def test_a_request_that_can_be_cancelled_streams_through_its_worker_process(tmp_path: Path, stream_server):
+    from sceneaccess.request_control import RequestControl
+    _store, session = _tool_session(tmp_path)
+    url, hold = stream_server
+    hold.set()
+    pieces = []
+    turn = OpenRouterClient("", base_url=url, control=RequestControl()).run_turn(
+        session, session.messages, lambda *_: None, on_delta=lambda kind, text: pieces.append((kind, text)))
+    assert pieces == [("thinking", "Thinking."), ("text", "Half "), ("text", "done.")]
+    assert turn.completion.answer == "Half done."
+
+
+def test_cancelling_a_streamed_request_stops_it_at_once(tmp_path: Path, stream_server):
+    from sceneaccess.request_control import RequestCancelled, RequestControl
+    _store, session = _tool_session(tmp_path)
+    url, _hold = stream_server
+    control = RequestControl()
+
+    def piece(kind, text):
+        if text == "Half ":
+            control.cancel()
+
+    with pytest.raises(RequestCancelled):
+        OpenRouterClient("", base_url=url, control=control).run_turn(session, session.messages, lambda *_: None,
+                                                                     on_delta=piece)
