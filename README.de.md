@@ -163,6 +163,8 @@ Der gesamte Code liegt im Paket `sceneaccess`:
 
 `SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`: eine Datei pro Modul (`prompts.py` wird in den Tests von Hauptfenster und Dialogen mitgeprüft), weitere Dateien für modulübergreifendes Verhalten (Lebensdauer und Steuerung von Anfragen, llama.cpp-Chats, Downloads und ihr Aufräumen, Arbeitsprozesse, Ein-Instanz-Betrieb, Start) sowie Prüfungen der Doku-Sprache, des Datenbanknamens, des Standardmodells und der Release-Dateien. `tests/conftest.py` enthält Fixtures, die mehrere Dateien teilen, etwa einen lokalen Video-Webserver, und lässt unter Windows alle Tests auf einem eigenen, unsichtbaren Desktop laufen, damit ihre Fenster weder auf dem Bildschirm erscheinen noch beim Screenreader ankommen.
 
+`tools/` enthält Hilfsskripte für die Entwicklung: `guarded_pytest.py` startet pytest und bricht sofort ab, wenn ein Testfenster auf dem sichtbaren Desktop erscheint, `e2e_llama.py` schickt einen echten Chat an den llama.cpp-Server aus den Settings (oder an eine als Argument übergebene URL), und `read_newest_chat.py` gibt den neuesten Chat nur lesend aus.
+
 Bekannte Lücken der Tests:
 
 - Echte OpenRouter-Anfragen gehören nicht zu den Tests, weil sie kosten; sie werden von Hand geprüft. Die Tests verwenden stattdessen lokale HTTP-Server und vorgegebene Antworten. Anfragen an einen echten llama.cpp-Server werden ebenfalls nur von Hand geprüft.

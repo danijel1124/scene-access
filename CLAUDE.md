@@ -42,10 +42,17 @@ starten. Während Tests laufen, SceneAccess nicht parallel starten (Speicher die
 ## Python-Umgebung liegt im Repo unter `.venv` (Nutzer-Vorgabe 17.11.2026)
 
 SceneAccess, Tests und pyflakes laufen mit `.venv\Scripts\python.exe` im Repo-Ordner (per `.gitignore`
-ausgeschlossen), angelegt mit `py -3.12 -m venv .venv` und
-`pip install -r requirements.txt -r requirements-dev.txt pyflakes`. Nie ins Scratchpad von Claude Code
-legen: Das liegt im Temp-Ordner und wird aufgeräumt. Real passiert (17.11.2026): Dem venv dort fehlten
-plötzlich `pyvenv.cfg` und Teile von wx und pip, SceneAccess startete nicht mehr.
+ausgeschlossen), angelegt mit `py -3.12 -m venv .venv` und `pip install -r requirements-dev.txt`. Nie
+ins Scratchpad von Claude Code legen: Das liegt im Temp-Ordner und wird aufgeräumt. Real passiert
+(17.11.2026): Dem venv dort fehlten plötzlich `pyvenv.cfg` und Teile von wx und pip, SceneAccess startete
+nicht mehr, und die Hilfsskripte daneben waren ganz weg.
+
+Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpad:
+- `tools\guarded_pytest.py <Logdatei> <pytest-Argumente>`: startet pytest und bricht sofort ab, wenn
+  pytest oder ein Kindprozess ein sichtbares Fenster öffnet. So werden Tests gestartet.
+- `tools\e2e_llama.py [URL]`: schickt einen echten Chat an den llama.cpp-Server (ohne URL die aus den
+  Settings), mit SceneAccess' eigener Sitzung und Werkzeugschleife.
+- `tools\read_newest_chat.py`: liest den neuesten Chat des Nutzers nur lesend aus.
 
 ## Tests immer im Hintergrund (Nutzer-Vorgabe 30.10.2026)
 
