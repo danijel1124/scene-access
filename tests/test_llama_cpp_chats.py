@@ -4,7 +4,7 @@ import sqlite3
 import pytest
 import wx
 
-from sceneaccess import gui
+from sceneaccess import gui, models
 from sceneaccess.openrouter import Completion, OpenRouterClient, Turn
 from sceneaccess.providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL
 from sceneaccess.session_store import (TRANSCRIBE_AUTO, TRANSCRIBE_OFF, TRANSCRIBE_ON, TRANSCRIPT_DONE,
@@ -26,6 +26,8 @@ def frame(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     monkeypatch.setattr(gui.wx, 'CallAfter', lambda f, *a, **kw: f(*a, **kw))
     monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
+    # The fixture server does not exist: its model list is unknown at once, so its model does not hear.
+    monkeypatch.setattr(models, 'urlopen', lambda *a, **kw: (_ for _ in ()).throw(OSError('fixture: no server')))
     app = wx.App(False)
     window = gui.ChatFrame()
     window.config = gui.replace(window.config, api_key='openrouter-secret', provider=LLAMA_CPP,
@@ -49,7 +51,7 @@ def start(frame, *, web_search=False, transcribe=TRANSCRIBE_OFF):
 def answered(calls):
     def answer(client, session, messages, run_tool, on_event=None, routing=None, **kwargs):
         calls.append({'endpoint': client.endpoint, 'key': client.api_key, 'model': session.model,
-                      'tools': session.tools, 'routing': routing, 'run_tool': run_tool})
+                      'tools': session.tools, 'routing': routing, 'run_tool': run_tool, 'messages': messages})
         return Turn(entries=[{'role': 'assistant', 'content': 'Answer'}],
                     completion=Completion('Answer', 'fixture', 1, None, None))
     return answer
@@ -132,6 +134,52 @@ def test_auto_transcribes_a_llama_cpp_chat_through_openrouter_not_its_server(fra
     [client] = clients
     assert client.endpoint == OPENROUTER_URL and client.api_key == 'openrouter-secret'
     assert frame.store.get_session(frame.current.id, gui.OWNER_ID).transcript_state == TRANSCRIPT_DONE
+
+
+SOUND = {'type': 'input_audio', 'input_audio': {'data': 'fixture', 'format': 'mp3'}}
+
+
+class HearingServer:
+    """A llama.cpp server running one model that takes sound."""
+    def model_ids(self): return [r'D:\models\omni.gguf']
+    def hears_audio(self, model): return model == r'D:\models\omni.gguf'
+
+
+def test_a_llama_cpp_model_that_hears_gets_the_sound_as_a_track_and_no_transcript(frame, monkeypatch):
+    start(frame, transcribe=TRANSCRIBE_AUTO)
+    # The blocks about the sound are added to a system prompt; a chat without one gets none.
+    frame.store.update_system_prompt(frame.current.id, gui.OWNER_ID, 'Base prompt.')
+    monkeypatch.setattr(gui, 'llama_cpp_catalog', lambda url: HearingServer())
+    monkeypatch.setattr(gui, 'sound_parts', lambda session, control=None: [SOUND])
+    monkeypatch.setattr(gui, 'make_transcript', lambda *a: pytest.fail('a model that hears needs no transcript'))
+    calls = []
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answered(calls))
+    frame._send('Describe it.', initial=True)
+    frame._send('And then?', initial=False)
+    assert frame.errors == [] and len(calls) == 2
+    for call in calls:
+        user = next(message for message in call['messages'] if isinstance(message.get('content'), list))
+        kinds = [part['type'] for part in user['content']]
+        assert kinds[kinds.index('video_url') + 1] == 'input_audio'
+        # It also gets the prompt's block about other sounds, as a model that hears.
+        assert 'You also hear the video' in call['messages'][0]['content']
+    assert frame.store.get_session(frame.current.id, gui.OWNER_ID).transcript_state == TRANSCRIPT_NONE
+
+
+def test_without_its_sound_a_hearing_llama_cpp_model_gets_the_transcript_instead(frame, monkeypatch):
+    start(frame, transcribe=TRANSCRIBE_AUTO)
+    monkeypatch.setattr(gui, 'llama_cpp_catalog', lambda url: HearingServer())
+
+    def broken(session, control=None):
+        raise RuntimeError('fixture: ffmpeg failed')
+
+    monkeypatch.setattr(gui, 'sound_parts', broken)
+    monkeypatch.setattr(gui, 'make_transcript', lambda session, client: '[00:00] Hello')
+    calls = []
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answered(calls))
+    frame._send('Describe it.', initial=True)
+    [call] = calls
+    assert 'input_audio' not in json.dumps(call['messages']) and '[00:00] Hello' in json.dumps(call['messages'])
 
 
 def test_the_web_search_tool_searches_through_openrouter_with_the_settings_model(frame, monkeypatch):
@@ -273,7 +321,7 @@ def test_chat_settings_wait_only_briefly_for_the_llama_cpp_model_list(frame, mon
     def unreachable(request, timeout):
         timeouts.append(timeout)
         raise OSError('fixture: server switched off')
-    monkeypatch.setattr(gui, 'urlopen', unreachable)
+    monkeypatch.setattr(models, 'urlopen', unreachable)
     monkeypatch.setattr(frame.catalog, 'model_ids', lambda: ['openrouter/model'])
     monkeypatch.setattr(frame, '_chat_settings_loaded', lambda session_id, models: loaded.append(models))
     frame.change_chat_settings()

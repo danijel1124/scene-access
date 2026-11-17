@@ -72,7 +72,7 @@ Not every model hears a video's sound: Gemini models do, many others such as GLM
 
 Each chat has a **Transcript of the speech** mode, the same for both providers:
 
-- **Auto** makes and sends a transcript only while the chat's model cannot hear the video; a model that hears gets none. llama.cpp reads only the pictures of a video, even with a model that can hear, so in Auto a llama.cpp chat always gets one.
+- **Auto** makes and sends a transcript only while the chat's model cannot hear the video; a model that hears gets none. llama.cpp ignores the sound of a video. If the model on your server takes sound, as Qwen3-Omni does, its model list says so, and SceneAccess sends the video's sound along as a track of its own, extracted once and kept with the chat; the model then hears, and nothing goes to OpenRouter. A model on your server that takes no sound gets a transcript in Auto, like any model that cannot hear. SceneAccess asks the server before every question, so a server restarted with another model is handled right.
 - **On** always makes and sends a transcript, also to models that hear.
 - **Off** never sends the sound for a transcript. Models that hear still hear the video; the others get nothing about what is said.
 
@@ -80,7 +80,7 @@ Each chat has a **Transcript of the speech** mode, the same for both providers:
 
 **Add a transcript of the speech** in the chat window makes a transcript later, through OpenRouter and ElevenLabs, and adds it at the end of the chat instead of before the video, so the cached video and history stay valid. It asks the model nothing; the next question sends it along, whatever the chat's transcript mode. The transcript shows in the Chat history and can be hidden from the model or deleted like an answer.
 
-Only a model that takes in what is said, by hearing the video or from a transcript, gets the base prompt's instructions about it: to use what is said as context for which visible details matter, without quoting it unless asked. Only a model that hears also gets the instruction to mention other sounds. A model that gets neither, such as a llama.cpp model without a transcript, is not confused by them.
+Only a model that takes in what is said, by hearing the video or from a transcript, gets the base prompt's instructions about it: to use what is said as context for which visible details matter, without quoting it unless asked. Only a model that hears also gets the instruction to mention other sounds. A model that gets neither, such as a llama.cpp model that takes no sound and has no transcript, is not confused by them.
 
 ## Providers and models
 
@@ -203,7 +203,7 @@ python -m sceneaccess.cli compare "<chat title or ID>" google/gemini-3.8-flash l
 
 - `chats` lists the chats with their provider, model and transcript mode, and marks an outdated system prompt.
 - `show` prints a chat's system prompt and history, marking what is hidden from the model. It changes nothing.
-- `compare` answers a chat's first question with each model in turn, as the app would today: with the current system prompt, without the chat's history, and with its transcript as its transcript mode asks. It works on a copy of the chat, so the chat stays unchanged, and it makes no missing transcript. `llama.cpp` (or `llama.cpp:<model>`) means your own server; other names are OpenRouter models, billed as usual.
+- `compare` answers a chat's first question with each model in turn, as the app would today: with the current system prompt, without the chat's history, and with its transcript as its transcript mode asks. It works on a copy of the chat, so the chat stays unchanged, and it makes no missing transcript. `llama.cpp` (or `llama.cpp:<model>`) means your own server; other names are OpenRouter models, billed as usual. A model on your server that takes sound gets it as a track, as in the app. `--transcribe auto|on|off` tries another transcript mode for this comparison only, for example `on` to give a hearing model the transcript with its times as well.
 
 ## Windows package through GitHub Actions
 

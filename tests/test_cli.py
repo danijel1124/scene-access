@@ -59,6 +59,7 @@ def test_compare_asks_each_model_as_the_app_would_and_leaves_the_chat_unchanged(
     class Catalog:
         def __init__(self, url): pass
         def hears_audio(self, model): return model == 'hearing/model'
+        def model_ids(self): return []
 
     calls = []
 
@@ -68,6 +69,7 @@ def test_compare_asks_each_model_as_the_app_would_and_leaves_the_chat_unchanged(
         return Turn(entries=[], completion=Completion(f'Answer of {session.model}', session.model, 1, None, None))
 
     monkeypatch.setattr(cli, 'ModelCatalog', Catalog)
+    monkeypatch.setattr(cli, 'llama_cpp_catalog', Catalog)
     monkeypatch.setattr(cli, 'routing', lambda *a, **kw: {})
     monkeypatch.setattr(OpenRouterClient, 'run_turn', answer)
     store = VideoSessionStore(data_dir / 'chats')
@@ -87,6 +89,28 @@ def test_compare_asks_each_model_as_the_app_would_and_leaves_the_chat_unchanged(
     assert '===== llama.cpp | hears: False | transcript sent: True' in text
     assert '===== hearing/model | hears: True | transcript sent: False' in text
     assert store.get_session(before.id, OWNER_ID) == before
+
+
+def test_compare_sends_a_hearing_llama_cpp_model_its_sound_and_can_try_another_transcript_mode(data_dir, monkeypatch):
+    class Server:
+        def __init__(self, url): pass
+        def model_ids(self): return ['omni.gguf']
+        def hears_audio(self, model): return model == 'omni.gguf'
+
+    sent = []
+    monkeypatch.setattr(cli, 'llama_cpp_catalog', Server)
+    monkeypatch.setattr(cli, 'ModelCatalog', Server)
+    monkeypatch.setattr(cli, 'sound_parts', lambda session: [{'type': 'input_audio', 'input_audio': {'data': 'x'}}])
+    monkeypatch.setattr(OpenRouterClient, 'run_turn', lambda client, session, messages, *a, **kw: sent.append(
+        json.dumps(messages)) or Turn(entries=[], completion=Completion('Answer', 'omni', 1, None, None)))
+    text = run(data_dir, 'compare', 'Chat', 'llama.cpp')
+    assert 'input_audio' in sent[0] and '[00:01] Hello' not in sent[0]
+    assert 'hears: True (sound sent as a track) | transcript sent: False' in text
+    # On sends the transcript as well, for this comparison only.
+    text = run(data_dir, 'compare', 'Chat', 'llama.cpp', '--transcribe', 'on')
+    assert 'input_audio' in sent[1] and '[00:01] Hello' in sent[1] and 'transcript mode on' in text
+    [chat] = VideoSessionStore(data_dir / 'chats').list_sessions(OWNER_ID)
+    assert chat.transcribe == 'auto'
 
 
 def test_compare_reports_a_failing_model_and_goes_on(data_dir, monkeypatch):

@@ -25,13 +25,13 @@ from typing import TextIO
 from .app_window import LEGACY_OWNER_ID, OWNER_ID, open_store, resolve_openrouter_key
 from .chat_history import chat_history_rows
 from .config import AppConfig, load_config
-from .models import ModelCatalog, routing
+from .models import ModelCatalog, llama_cpp_catalog, routing
 from .openrouter import OpenRouterClient
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
-from .session_store import VideoSession, VideoSessionStore
+from .session_store import TRANSCRIBE_MODES, VideoSession, VideoSessionStore
 from .tools import ToolRunner, provider_tools
-from .transcript import model_hears
+from .transcript import model_hears, sound_parts, wants_transcript, with_sound
 
 
 def default_data_dir() -> Path:
@@ -70,7 +70,8 @@ def show_chat(session: VideoSession, out: TextIO) -> None:
         print(f"\n{full}", file=out)
 
 
-def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextIO) -> None:
+def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextIO, transcribe: str = "") -> None:
+    """transcribe sets the copy's transcript mode; empty keeps the chat's."""
     config = load_config(data_dir / "config.json")
     catalog = ModelCatalog(OPENROUTER_URL)
     work = Path(tempfile.mkdtemp(prefix="sceneaccess-compare-"))
@@ -79,8 +80,9 @@ def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextI
         (work / "sessions").mkdir()
         shutil.copytree(session.directory, work / "sessions" / session.id)
         copy = replace(session, data_url_path=work / "sessions" / session.id / session.data_url_path.name,
-                       history=[], system_prompt=current_system_prompt(session.system_prompt))
-        print(f"{session.title} | transcript mode {session.transcribe}, {session.transcript_state} | "
+                       history=[], system_prompt=current_system_prompt(session.system_prompt),
+                       transcribe=transcribe or session.transcribe)
+        print(f"{session.title} | transcript mode {copy.transcribe}, {session.transcript_state} | "
               f"system prompt updated: {copy.system_prompt != session.system_prompt}", file=out)
         for name in models:
             compare_one(config, catalog, copy, name, out)
@@ -93,12 +95,22 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
     model = ((name.partition(":")[2] or config.llama_cpp_model or LLAMA_CPP_DEFAULT_MODEL)
              if provider == LLAMA_CPP else name)
     session = replace(session, provider=provider, model=model)
-    hears = model_hears(session, catalog)
+    # As the app sends: a model on a llama.cpp server that hears gets the sound as a track of its own.
+    hears = model_hears(session, llama_cpp_catalog(config.llama_cpp_url) if provider == LLAMA_CPP else catalog)
+    sound = []
+    if hears and provider == LLAMA_CPP:
+        try:
+            sound = sound_parts(session)
+        except Exception as error:
+            print(f"The sound could not be prepared, so the model does not hear it: {error}", file=out)
+        hears = bool(sound)
     session = replace(session, hears_sound=hears)
-    messages = session.messages
+    messages = with_sound(session.messages, sound)
     # Compared as JSON text, so line breaks in the transcript match their escaped form in the request.
     sent = bool(session.transcript) and (json.dumps(session.transcript, ensure_ascii=False)[1:-1]
                                          in json.dumps(messages, ensure_ascii=False))
+    if wants_transcript(session, hears) and not sent:
+        print("The transcript mode asks for a transcript the chat does not have; compare makes none.", file=out)
     if provider == LLAMA_CPP:
         # Only the llama.cpp key goes to the user's server, never the OpenRouter key.
         client = OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url)
@@ -108,7 +120,8 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         options = routing(model, session.audio_only, catalog, config.ignored_providers, config.excluded_models)
     runner = ToolRunner(session, config.youtube_cookies)
     steps: list[str] = []
-    print(f"\n===== {name} | hears: {hears} | transcript sent: {sent} =====", file=out)
+    print(f"\n===== {name} | hears: {hears}{' (sound sent as a track)' if sound else ''} | "
+          f"transcript sent: {sent} =====", file=out)
     started = time.monotonic()
     try:
         turn = client.run_turn(replace(session, tools=provider_tools(session.tools, provider)), messages,
@@ -139,6 +152,8 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     compare_parser = commands.add_parser("compare", help="answer a chat's first question with several models")
     compare_parser.add_argument("chat", help="title or ID")
     compare_parser.add_argument("models", nargs="+", help='OpenRouter model IDs, or "llama.cpp[:name]"')
+    compare_parser.add_argument("--transcribe", choices=TRANSCRIBE_MODES,
+                                help="transcript mode for this comparison only (default: the chat's)")
     args = parser.parse_args(argv)
     data_dir = args.data_dir or default_data_dir()
     store = open_store(data_dir / "config.json", OWNER_ID, LEGACY_OWNER_ID)
@@ -147,7 +162,7 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     elif args.command == "show":
         show_chat(find_chat(store, args.chat), out)
     else:
-        compare(data_dir, find_chat(store, args.chat), args.models, out)
+        compare(data_dir, find_chat(store, args.chat), args.models, out, args.transcribe or "")
     return 0
 
 

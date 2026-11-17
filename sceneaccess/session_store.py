@@ -55,6 +55,9 @@ TRANSCRIPT_LATER_INTRO = ("Here is an automatic transcript of the video's speech
 EXCLUDED = "excluded"
 # Marks the history entry of a transcript added later; it is sent as a user message.
 TRANSCRIPT_ENTRY = "transcript"
+# The video's sound kept beside it for a llama.cpp server, in pieces <prefix>000.mp3, ...; the other file marks
+# a video without sound. Both belong to the stored video and go when it is replaced.
+SOUND_FILE_PREFIX, NO_SOUND_FILE = "context-sound-", "context-sound.none"
 
 
 def is_question(message: dict[str, Any]) -> bool:
@@ -367,6 +370,8 @@ class VideoSessionStore:
         temporary.write_text(data_url, encoding="ascii")
         os.chmod(temporary, 0o600)
         temporary.replace(session.data_url_path)
+        for sound in [*session.directory.glob(f"{SOUND_FILE_PREFIX}*"), session.directory / NO_SOUND_FILE]:
+            sound.unlink(missing_ok=True)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE sessions SET size_confirmed = '0' WHERE id = ? AND owner_id = ?", (session_id, owner_id))
 

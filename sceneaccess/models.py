@@ -104,6 +104,11 @@ class ModelCatalog:
         return sorted(chosen)
 
 
+def llama_cpp_catalog(url: str) -> ModelCatalog:
+    """The model list of the user's llama.cpp server. A switched-off server must not hold anything up for long."""
+    return ModelCatalog(url, opener=lambda request, timeout: urlopen(request, timeout=5))
+
+
 def routing(session_model: str, audio_only: bool, catalog: ModelCatalog, ignored_providers: tuple[str, ...] = (),
             excluded_models: tuple[str, ...] = ()) -> dict[str, Any]:
     """Request fields that choose who answers: the providers never to use, and for openrouter/auto the

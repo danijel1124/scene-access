@@ -72,7 +72,7 @@ Nicht jedes Modell hört den Ton eines Videos: Gemini-Modelle tun es, viele ande
 
 Jeder Chat hat einen Modus **Transcript of the speech**, für beide Anbieter gleich:
 
-- **Auto** erstellt und schickt ein Transkript nur, solange das Modell des Chats das Video nicht hört; ein hörendes Modell bekommt keines. llama.cpp liest von einem Video nur die Bilder, auch bei einem Modell, das hören kann, deshalb bekommt ein llama.cpp-Chat in Auto immer eines.
+- **Auto** erstellt und schickt ein Transkript nur, solange das Modell des Chats das Video nicht hört; ein hörendes Modell bekommt keines. llama.cpp beachtet den Ton eines Videos nicht. Nimmt das Modell auf dem eigenen Server Ton an, wie Qwen3-Omni, meldet das seine Modellliste, und SceneAccess schickt den Ton des Videos als eigene Spur mit, einmal herausgezogen und beim Chat gespeichert; das Modell hört dann, und nichts geht an OpenRouter. Ein Modell auf dem eigenen Server ohne Toneingabe bekommt in Auto ein Transkript, wie jedes Modell, das nicht hört. SceneAccess fragt den Server vor jeder Frage, damit auch ein mit anderem Modell neu gestarteter Server richtig behandelt wird.
 - **On** erstellt und schickt immer ein Transkript, auch an hörende Modelle.
 - **Off** schickt den Ton nie zur Transkription. Hörende Modelle hören das Video weiterhin; die anderen erfahren nichts vom Gesagten.
 
@@ -80,7 +80,7 @@ Jeder Chat hat einen Modus **Transcript of the speech**, für beide Anbieter gle
 
 **Add a transcript of the speech** im Chatfenster erstellt nachträglich ein Transkript über OpenRouter und ElevenLabs und hängt es ans Ende des Chats statt vor das Video, sodass gecachtes Video und Verlauf gültig bleiben. Dabei wird das Modell nichts gefragt; die nächste Frage schickt das Transkript mit, unabhängig vom Transkriptmodus des Chats. Das Transkript steht in der Chat history und lässt sich wie eine Antwort vor dem Modell verstecken oder löschen.
 
-Nur ein Modell, das das Gesagte erfasst, weil es das Video hört oder ein Transkript bekommt, erhält die Anweisungen des Grund-Prompts dazu: das Gesagte als Kontext dafür zu nutzen, welche sichtbaren Details wichtig sind, ohne es ungefragt zu zitieren. Nur ein Modell, das hört, erhält zusätzlich die Anweisung, andere Geräusche zu nennen. Ein Modell, das beides nicht bekommt, etwa ein llama.cpp-Modell ohne Transkript, wird davon nicht verwirrt.
+Nur ein Modell, das das Gesagte erfasst, weil es das Video hört oder ein Transkript bekommt, erhält die Anweisungen des Grund-Prompts dazu: das Gesagte als Kontext dafür zu nutzen, welche sichtbaren Details wichtig sind, ohne es ungefragt zu zitieren. Nur ein Modell, das hört, erhält zusätzlich die Anweisung, andere Geräusche zu nennen. Ein Modell, das beides nicht bekommt, etwa ein llama.cpp-Modell ohne Toneingabe und ohne Transkript, wird davon nicht verwirrt.
 
 ## Anbieter und Modelle
 
@@ -201,7 +201,7 @@ python -m sceneaccess.cli compare "<Chat-Titel oder ID>" google/gemini-3.8-flash
 
 - `chats` listet die Chats mit Anbieter, Modell und Transkriptmodus und markiert einen veralteten Systemprompt.
 - `show` gibt Systemprompt und Verlauf eines Chats aus und markiert, was vor dem Modell versteckt ist. Es ändert nichts.
-- `compare` beantwortet die erste Frage eines Chats nacheinander mit jedem Modell, so wie die App es heute täte: mit dem aktuellen Systemprompt, ohne den Verlauf des Chats und mit seinem Transkript, so wie es sein Transkriptmodus verlangt. Es arbeitet auf einer Kopie des Chats, der Chat bleibt also unverändert, und erstellt kein fehlendes Transkript. `llama.cpp` (oder `llama.cpp:<Modell>`) meint den eigenen Server; andere Namen sind OpenRouter-Modelle und kosten wie gewohnt.
+- `compare` beantwortet die erste Frage eines Chats nacheinander mit jedem Modell, so wie die App es heute täte: mit dem aktuellen Systemprompt, ohne den Verlauf des Chats und mit seinem Transkript, so wie es sein Transkriptmodus verlangt. Es arbeitet auf einer Kopie des Chats, der Chat bleibt also unverändert, und erstellt kein fehlendes Transkript. `llama.cpp` (oder `llama.cpp:<Modell>`) meint den eigenen Server; andere Namen sind OpenRouter-Modelle und kosten wie gewohnt. Ein Modell auf dem eigenen Server mit Toneingabe bekommt den Ton als Spur, wie in der App. `--transcribe auto|on|off` probiert für diesen Vergleich einen anderen Transkriptmodus, etwa `on`, damit ein hörendes Modell zusätzlich das Transkript mit seinen Zeiten bekommt.
 
 ## Windows-Paket durch GitHub Actions
 

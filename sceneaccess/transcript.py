@@ -1,14 +1,18 @@
-"""A timestamped transcript of a video's speech, for models that only see the picture."""
+"""The sound of a chat's video: whether the model answering hears it, a timestamped transcript for one that
+does not, and the sound as a track of its own for a model on a llama.cpp server, which ignores a video's sound."""
 
 from __future__ import annotations
 
+import base64
+import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from .models import AUTO_ROUTER, ModelCatalog
 from .providers import LLAMA_CPP
-from .session_store import TRANSCRIBE_AUTO, TRANSCRIBE_ON, VideoSession
+from .session_store import NO_SOUND_FILE, SOUND_FILE_PREFIX, TRANSCRIBE_AUTO, TRANSCRIBE_ON, VideoSession
 from .tools import format_time, local_video, run_ffmpeg
 from .request_control import RequestControl
 
@@ -19,28 +23,59 @@ PAUSE_SECONDS = 1.5
 MAX_LINE_SECONDS = 15.0
 
 
-def needs_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
-    """True unless the chat's model is known to hear the video's sound."""
-    if session.provider == LLAMA_CPP:
-        # llama.cpp reads only the pictures of a video, even for models that can hear.
-        return True
-    if session.audio_only and session.model == AUTO_ROUTER:
-        return False
-    # Unknown models, and openrouter/auto without the audio-only setting, may not hear; a transcript is safe.
-    return catalog.hears_audio(session.model) is not True
-
-
 def model_hears(session: VideoSession, catalog: ModelCatalog) -> bool:
-    """True if the chat's model is known to take in the video's sound; llama.cpp reads only its pictures."""
+    """True if the chat's model is known to take in the video's sound; catalog is that of the chat's provider.
+    Unknown models, and openrouter/auto without the audio-only setting, may not hear. A llama.cpp server ignores
+    a video's sound, so its model hears only the track SceneAccess sends along (see sound_parts); the server runs
+    one model, which answers whatever name the chat asks for."""
     if session.provider == LLAMA_CPP:
-        return False
+        ids = catalog.model_ids()
+        # A list that could not be read would only be asked for again, and a server that is off waited for twice.
+        if not ids:
+            return False
+        return catalog.hears_audio(session.model if session.model in ids or len(ids) != 1 else ids[0]) is True
     return catalog.hears_audio(session.model) is True or (session.model == AUTO_ROUTER and session.audio_only)
 
 
-def wants_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
-    """Whether the chat's transcript mode asks for a transcript for the model answering now."""
-    return session.transcribe == TRANSCRIBE_ON or (session.transcribe == TRANSCRIBE_AUTO
-                                                   and needs_transcript(session, catalog))
+def wants_transcript(session: VideoSession, hears: bool) -> bool:
+    """Whether the chat's transcript mode asks for a transcript, given whether the model answering now hears."""
+    return session.transcribe == TRANSCRIBE_ON or (session.transcribe == TRANSCRIBE_AUTO and not hears)
+
+
+def sound_parts(session: VideoSession, control: RequestControl | None = None) -> list[dict[str, Any]]:
+    """The video's sound as input_audio parts for a model on a llama.cpp server; empty if the video has none.
+    Extracted once and kept beside the chat's video, so every request sends the same and stays cached."""
+    folder = session.directory
+    stored = sorted(folder.glob(f"{SOUND_FILE_PREFIX}*.mp3"))
+    if not stored and not (folder / NO_SOUND_FILE).exists():
+        with local_video(session) as video, tempfile.TemporaryDirectory() as temporary:
+            chunks = extract_audio_chunks(video, Path(temporary), **({"control": control} if control else {}))
+            for index, (_start, chunk) in enumerate(chunks):
+                target = folder / f"{SOUND_FILE_PREFIX}{index:03d}.mp3"
+                # Copied under another name first, so a failed copy never looks like a stored piece.
+                partial = target.with_suffix(".tmp")
+                shutil.copyfile(chunk, partial)
+                os.chmod(partial, 0o600)
+                partial.replace(target)
+        if not chunks:
+            (folder / NO_SOUND_FILE).touch()
+        stored = sorted(folder.glob(f"{SOUND_FILE_PREFIX}*.mp3"))
+    return [{"type": "input_audio", "input_audio": {"data": base64.b64encode(path.read_bytes()).decode("ascii"),
+                                                    "format": "mp3"}} for path in stored]
+
+
+def with_sound(messages: list[dict[str, Any]], parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """messages with the sound parts right after the video, in the message that carries it."""
+    result, placed = [], not parts
+    for message in messages:
+        content = message.get("content")
+        if not placed and isinstance(content, list):
+            videos = [index for index, part in enumerate(content) if part.get("type") == "video_url"]
+            if videos:
+                message = {**message, "content": [*content[:videos[0] + 1], *parts, *content[videos[0] + 1:]]}
+                placed = True
+        result.append(message)
+    return result
 
 
 def extract_audio_chunks(video: Path, folder: Path, chunk_seconds: int | None = None,

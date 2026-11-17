@@ -9,7 +9,6 @@ import traceback
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
-from urllib.request import urlopen
 
 import wx
 
@@ -20,7 +19,7 @@ from .config import AppConfig, config_path_from_standard_paths, load_config, sav
 from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
                            StoredSizeDialog)
 from .dialogs import NO_PROFILE
-from .models import AUTO_ROUTER, ModelCatalog, routing
+from .models import AUTO_ROUTER, ModelCatalog, llama_cpp_catalog, routing
 from .new_chat import NewChatMixin, url_from_clipboard
 from .openrouter import OpenRouterClient
 from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
@@ -32,7 +31,7 @@ from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
                     provider_tools, tool_definitions, tool_key, tools_for_provider)
-from .transcript import make_transcript, model_hears, wants_transcript
+from .transcript import make_transcript, model_hears, sound_parts, wants_transcript, with_sound
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
 
@@ -423,9 +422,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         catalogs = {OPENROUTER: self.catalog, LLAMA_CPP: None}
         if self.config.llama_cpp_url:
             try:
-                # A switched-off server must not hold up the dialog for long.
-                catalogs[LLAMA_CPP] = ModelCatalog(self.config.llama_cpp_url,
-                                                   opener=lambda request, timeout: urlopen(request, timeout=5))
+                catalogs[LLAMA_CPP] = llama_cpp_catalog(self.config.llama_cpp_url)
             except ValueError:
                 pass
         self._loading_chat_settings = True
@@ -825,20 +822,32 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                 # server has no providers or router to choose from.
                 options = {} if llama_cpp else routing(session.model, session.audio_only, catalog,
                                                        config.ignored_providers, config.excluded_models)
+                # Asked anew each time: the server may run another model by now.
+                hears = model_hears(session, llama_cpp_catalog(config.llama_cpp_url) if llama_cpp else catalog)
+                sound = []
+                if hears and llama_cpp:
+                    # The server ignores a video's sound, so a model that hears gets it as a track of its own.
+                    # Without one, it does not hear this time, and the transcript mode decides as for any other.
+                    try:
+                        sound = sound_parts(session, control)
+                    except RequestCancelled:
+                        raise
+                    except Exception:
+                        sound = []
+                    hears = bool(sound)
                 # Decided for the model answering now, which may be another one than last time. A failed
                 # or skipped transcript is not tried again until Chat settings or the setup change.
                 if session.transcript_state in (TRANSCRIPT_NONE, TRANSCRIPT_PENDING):
-                    if wants_transcript(session, catalog):
+                    if wants_transcript(session, hears):
                         self._prepare_transcript(session, openrouter)
                         session = self.store.get_session(session_id, OWNER_ID)
                         session = replace(session, model=session.model or config.model_for(session.provider))
                     elif session.transcript_state == TRANSCRIPT_PENDING:
                         self.store.update_transcript(session_id, OWNER_ID, TRANSCRIPT_NONE)
                 # Only a model that takes in the sound gets the prompt's blocks about it.
-                hears = model_hears(session, catalog)
                 session = replace(session, hears_sound=hears)
-                messages = (session.messages if initial else
-                            self.store.build_follow_up_messages(session_id, OWNER_ID, question, hears_sound=hears))
+                messages = with_sound(session.messages if initial else self.store.build_follow_up_messages(
+                    session_id, OWNER_ID, question, hears_sound=hears), sound)
                 # Excluded providers never answer, the search included.
                 search_options = (routing(config.model, False, catalog, config.ignored_providers, config.excluded_models)
                                   if openrouter else {})
