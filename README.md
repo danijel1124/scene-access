@@ -170,10 +170,11 @@ All code is in the `sceneaccess` package:
 - `youtube.py`: yt-dlp downloads, file names and video information
 - `config.py`: settings in `config.json`
 - `speech.py`: announcements through the running screen reader
+- `cli.py`: the command line, see Run from source
 
 `SceneAccess.py` is the launcher used by PyInstaller. Tests are in `tests/`: one file per module (`prompts.py` is covered by the main window and dialog tests), further files for behaviour that spans modules (request lifetime and controls, llama.cpp chats, downloads and their cleanup, worker processes, the single instance, startup), and checks of the documentation language, the database name, the default model and the release files. `tests/conftest.py` holds fixtures several files share, such as a local video web server, and on Windows runs all tests on a separate invisible desktop, so their windows never appear on the screen or reach the screen reader.
 
-`tools/` holds helper scripts for development: `guarded_pytest.py` runs pytest and stops it at once if a test window appears on the visible desktop, `e2e_llama.py` sends a real chat to the llama.cpp server set in the settings (or to a URL given as argument), and `read_newest_chat.py` prints the newest chat read-only.
+`tools/` holds helper scripts for development: `guarded_pytest.py` runs pytest and stops it at once if a test window appears on the visible desktop, `e2e_llama.py` sends a real chat to the llama.cpp server set in the settings (or to a URL given as argument).
 
 Known gaps in the tests:
 
@@ -191,6 +192,18 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -p no:cacheprovider tests/ -q
 python SceneAccess.py
 ```
+
+From source, SceneAccess also has a command line, which uses the app's settings and chats; `SceneAccess.exe` has none, as a windowed program has no console:
+
+```bash
+python -m sceneaccess.cli chats
+python -m sceneaccess.cli show "<chat title or ID>"
+python -m sceneaccess.cli compare "<chat title or ID>" google/gemini-3.8-flash llama.cpp
+```
+
+- `chats` lists the chats with their provider, model and transcript mode, and marks an outdated system prompt.
+- `show` prints a chat's system prompt and history, marking what is hidden from the model. It changes nothing.
+- `compare` answers a chat's first question with each model in turn, as the app would today: with the current system prompt, without the chat's history, and with its transcript as its transcript mode asks. It works on a copy of the chat, so the chat stays unchanged, and it makes no missing transcript. `llama.cpp` (or `llama.cpp:<model>`) means your own server; other names are OpenRouter models, billed as usual.
 
 ## Windows package through GitHub Actions
 

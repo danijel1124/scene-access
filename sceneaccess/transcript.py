@@ -30,6 +30,13 @@ def needs_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
     return catalog.hears_audio(session.model) is not True
 
 
+def model_hears(session: VideoSession, catalog: ModelCatalog) -> bool:
+    """True if the chat's model is known to take in the video's sound; llama.cpp reads only its pictures."""
+    if session.provider == LLAMA_CPP:
+        return False
+    return catalog.hears_audio(session.model) is True or (session.model == AUTO_ROUTER and session.audio_only)
+
+
 def wants_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
     """Whether the chat's transcript mode asks for a transcript for the model answering now."""
     return session.transcribe == TRANSCRIBE_ON or (session.transcribe == TRANSCRIBE_AUTO

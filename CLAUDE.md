@@ -52,7 +52,10 @@ Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpa
   pytest oder ein Kindprozess ein sichtbares Fenster öffnet. So werden Tests gestartet.
 - `tools\e2e_llama.py [URL]`: schickt einen echten Chat an den llama.cpp-Server (ohne URL die aus den
   Settings), mit SceneAccess' eigener Sitzung und Werkzeugschleife.
-- `tools\read_newest_chat.py`: liest den neuesten Chat des Nutzers nur lesend aus.
+
+Chats des Nutzers lesen und Modelle vergleichen geht über die Kommandozeile der App (siehe README, „Start
+aus dem Quellcode“): `python -m sceneaccess.cli chats`, `show "<Titel>"` und `compare "<Titel>" <Modelle…>`.
+`compare` arbeitet auf einer Kopie des Chats; nur OpenRouter-Modelle kosten dabei Geld.
 
 ## Tests immer im Hintergrund (Nutzer-Vorgabe 30.10.2026)
 

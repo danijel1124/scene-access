@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import getpass
-import os
 import re
 import shutil
 import sys
@@ -15,7 +13,7 @@ from urllib.request import urlopen
 
 import wx
 
-from .app_window import AppWindow, open_store, resolve_openrouter_key
+from .app_window import LEGACY_OWNER_ID, OWNER_ID, AppWindow, open_store, resolve_openrouter_key
 from .chat_history import ANSWER, NOTE, chat_history_rows, transcript_entry
 from .chat_list import ChatListFrame
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
@@ -34,7 +32,7 @@ from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
                     provider_tools, tool_definitions, tool_key, tools_for_provider)
-from .transcript import make_transcript, wants_transcript
+from .transcript import make_transcript, model_hears, wants_transcript
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
 
@@ -53,18 +51,6 @@ def is_local_file_chat(title: str) -> bool:
     # Chats from a local file are titled with the file name, downloads with the video title.
     return Path(title).suffix.lower() in (".mp4", ".webm", ".mov")
 
-
-def _local_user() -> str:
-    # getpass also reads USERNAME, so it works on Windows, where USER is usually not set.
-    try:
-        return getpass.getuser() or "user"
-    except Exception:
-        return "user"
-
-
-OWNER_ID = "local:" + _local_user()
-# Earlier versions read only USER, so on Windows every chat was stored under this owner.
-LEGACY_OWNER_ID = "local:" + os.environ.get("USER", "user")
 
 
 def _search_through_openrouter(client: OpenRouterClient, model: str, options: dict, query: str) -> ToolResult:
@@ -848,10 +834,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                         session = replace(session, model=session.model or config.model_for(session.provider))
                     elif session.transcript_state == TRANSCRIPT_PENDING:
                         self.store.update_transcript(session_id, OWNER_ID, TRANSCRIPT_NONE)
-                # Only a model that takes in the sound gets the prompt's blocks about it; llama.cpp reads only
-                # the pictures of a video.
-                hears = not llama_cpp and (catalog.hears_audio(session.model) is True
-                                           or (session.model == AUTO_ROUTER and session.audio_only))
+                # Only a model that takes in the sound gets the prompt's blocks about it.
+                hears = model_hears(session, catalog)
                 session = replace(session, hears_sound=hears)
                 messages = (session.messages if initial else
                             self.store.build_follow_up_messages(session_id, OWNER_ID, question, hears_sound=hears))

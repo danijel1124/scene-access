@@ -168,10 +168,11 @@ Der gesamte Code liegt im Paket `sceneaccess`:
 - `youtube.py`: yt-dlp-Downloads, Dateinamen und Videoinformationen
 - `config.py`: Einstellungen in `config.json`
 - `speech.py`: Ansagen über den laufenden Screenreader
+- `cli.py`: die Kommandozeile, siehe Start aus dem Quellcode
 
 `SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`: eine Datei pro Modul (`prompts.py` wird in den Tests von Hauptfenster und Dialogen mitgeprüft), weitere Dateien für modulübergreifendes Verhalten (Lebensdauer und Steuerung von Anfragen, llama.cpp-Chats, Downloads und ihr Aufräumen, Arbeitsprozesse, Ein-Instanz-Betrieb, Start) sowie Prüfungen der Doku-Sprache, des Datenbanknamens, des Standardmodells und der Release-Dateien. `tests/conftest.py` enthält Fixtures, die mehrere Dateien teilen, etwa einen lokalen Video-Webserver, und lässt unter Windows alle Tests auf einem eigenen, unsichtbaren Desktop laufen, damit ihre Fenster weder auf dem Bildschirm erscheinen noch beim Screenreader ankommen.
 
-`tools/` enthält Hilfsskripte für die Entwicklung: `guarded_pytest.py` startet pytest und bricht sofort ab, wenn ein Testfenster auf dem sichtbaren Desktop erscheint, `e2e_llama.py` schickt einen echten Chat an den llama.cpp-Server aus den Settings (oder an eine als Argument übergebene URL), und `read_newest_chat.py` gibt den neuesten Chat nur lesend aus.
+`tools/` enthält Hilfsskripte für die Entwicklung: `guarded_pytest.py` startet pytest und bricht sofort ab, wenn ein Testfenster auf dem sichtbaren Desktop erscheint, `e2e_llama.py` schickt einen echten Chat an den llama.cpp-Server aus den Settings (oder an eine als Argument übergebene URL).
 
 Bekannte Lücken der Tests:
 
@@ -189,6 +190,18 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -p no:cacheprovider tests/ -q
 python SceneAccess.py
 ```
+
+Aus dem Quellcode hat SceneAccess auch eine Kommandozeile, die die Settings und Chats der App nutzt; `SceneAccess.exe` hat keine, weil ein Fensterprogramm keine Konsole hat:
+
+```bash
+python -m sceneaccess.cli chats
+python -m sceneaccess.cli show "<Chat-Titel oder ID>"
+python -m sceneaccess.cli compare "<Chat-Titel oder ID>" google/gemini-3.8-flash llama.cpp
+```
+
+- `chats` listet die Chats mit Anbieter, Modell und Transkriptmodus und markiert einen veralteten Systemprompt.
+- `show` gibt Systemprompt und Verlauf eines Chats aus und markiert, was vor dem Modell versteckt ist. Es ändert nichts.
+- `compare` beantwortet die erste Frage eines Chats nacheinander mit jedem Modell, so wie die App es heute täte: mit dem aktuellen Systemprompt, ohne den Verlauf des Chats und mit seinem Transkript, so wie es sein Transkriptmodus verlangt. Es arbeitet auf einer Kopie des Chats, der Chat bleibt also unverändert, und erstellt kein fehlendes Transkript. `llama.cpp` (oder `llama.cpp:<Modell>`) meint den eigenen Server; andere Namen sind OpenRouter-Modelle und kosten wie gewohnt.
 
 ## Windows-Paket durch GitHub Actions
 
