@@ -6,7 +6,8 @@ import imageio_ffmpeg
 from sceneaccess import transcript
 from sceneaccess.models import ModelCatalog
 from sceneaccess.session_store import VideoSessionStore
-from sceneaccess.transcript import extract_audio_chunks, make_transcript, needs_transcript, transcript_lines
+from sceneaccess.transcript import (extract_audio_chunks, make_transcript, needs_transcript, transcript_lines,
+                                    wants_transcript)
 
 
 def _video(path: Path, *, sound: bool, seconds: int = 3) -> Path:
@@ -77,3 +78,16 @@ def test_only_models_that_are_known_to_hear_get_no_transcript(tmp_path: Path):
     assert needs_transcript(hearing_auto, catalog) is False
     # Unlimited, it may pick a model that only sees the picture.
     assert needs_transcript(auto, catalog) is True
+
+
+def test_the_transcript_mode_overrides_whether_the_model_hears(tmp_path: Path):
+    from dataclasses import replace
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake")
+    glm = VideoSessionStore(tmp_path / "data").create_session(owner_id="o", source_path=video, title="T",
+                                                              model="z-ai/glm", initial_question="?")
+    for hears in (False, True):
+        catalog = FakeCatalog(hears=hears)
+        assert wants_transcript(replace(glm, transcribe="auto"), catalog) is not hears
+        assert wants_transcript(replace(glm, transcribe="on"), catalog) is True
+        assert wants_transcript(replace(glm, transcribe="off"), catalog) is False

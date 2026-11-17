@@ -7,7 +7,8 @@ import wx
 from sceneaccess import gui
 from sceneaccess.openrouter import Completion, OpenRouterClient, Turn
 from sceneaccess.providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL
-from sceneaccess.session_store import TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_PENDING, VideoSessionStore
+from sceneaccess.session_store import (TRANSCRIBE_AUTO, TRANSCRIBE_OFF, TRANSCRIBE_ON, TRANSCRIPT_DONE,
+                                       TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSessionStore)
 from sceneaccess.tools import WEB_SEARCH, ToolResult, ToolRunner, function_tool_names, provider_tools, tool_definitions
 
 LLAMA_URL = 'http://192.0.2.1:8080/v1/chat/completions'
@@ -38,11 +39,11 @@ def frame(tmp_path, monkeypatch):
     app.Destroy()
 
 
-def start(frame, *, web_search=False, openrouter_transcript=False):
+def start(frame, *, web_search=False, transcribe=TRANSCRIBE_OFF):
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='A', model='', initial_question='Describe it.',
         tools=tool_definitions(online_video=False, web_search=False, local_web_search=web_search),
-        transcript_state=TRANSCRIPT_PENDING, provider=LLAMA_CPP, openrouter_transcript=openrouter_transcript)
+        transcript_state=TRANSCRIPT_PENDING, provider=LLAMA_CPP, transcribe=transcribe)
 
 
 def answered(calls):
@@ -82,7 +83,7 @@ def test_an_openrouter_chat_stays_with_openrouter_after_settings_switch_to_llama
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='B', model='', initial_question='Describe it.',
         tools=tool_definitions(online_video=False))
-    monkeypatch.setattr(gui, 'needs_transcript', lambda *a: False)
+    monkeypatch.setattr(gui, 'wants_transcript', lambda *a: False)
     calls = []
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answered(calls))
     frame._send('Describe it.', initial=True)
@@ -111,19 +112,19 @@ def test_a_llama_cpp_chat_without_its_server_url_keeps_the_question(frame, monke
     assert 'llama.cpp' in frame.errors[-1]
 
 
-def test_the_sound_stays_private_unless_the_chat_allowed_openrouter(frame, monkeypatch):
-    start(frame)
+def test_with_transcripts_off_the_sound_is_never_sent(frame, monkeypatch):
+    start(frame, transcribe=TRANSCRIBE_OFF)
     transcriptions = []
     monkeypatch.setattr(gui, 'make_transcript', lambda *a: transcriptions.append(True) or 'should not run')
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answered([]))
     frame._send('Describe it.', initial=True)
     saved = frame.store.get_session(frame.current.id, gui.OWNER_ID)
-    assert transcriptions == []
-    assert saved.transcript_state == TRANSCRIPT_FAILED and 'llama.cpp' in saved.transcript
+    assert transcriptions == [] and saved.transcript_state == TRANSCRIPT_NONE and saved.transcript == ''
 
 
-def test_an_allowed_transcript_is_made_by_openrouter_not_the_llama_cpp_server(frame, monkeypatch):
-    start(frame, openrouter_transcript=True)
+def test_auto_transcribes_a_llama_cpp_chat_through_openrouter_not_its_server(frame, monkeypatch):
+    # llama.cpp reads only the pictures, so in Auto mode its models never hear.
+    start(frame, transcribe=TRANSCRIBE_AUTO)
     clients = []
     monkeypatch.setattr(gui, 'make_transcript', lambda session, client: clients.append(client) or '[00:00] Hello')
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answered([]))
@@ -190,29 +191,37 @@ def test_an_error_names_the_chats_provider_and_explains_a_too_small_context(fram
 
 
 @pytest.mark.parametrize('openrouter_key', [False, True])
-def test_a_llama_cpp_chat_offers_search_and_transcript_only_with_an_openrouter_key(frame, openrouter_key):
+def test_a_llama_cpp_chat_offers_the_web_search_only_with_an_openrouter_key(frame, openrouter_key):
     from sceneaccess.chat_dialogs import StartChatDialog
     from sceneaccess.tools import ZOOM_FRAME
-    dialog = StartChatDialog(frame, (), '', llama_cpp=True, openrouter_key=openrouter_key)
+    dialog = StartChatDialog(frame, (), '', llama_cpp=True, openrouter_key=openrouter_key, transcribe=TRANSCRIBE_OFF)
     try:
-        assert dialog.transcript.IsShown() and dialog.transcript.IsEnabled() is openrouter_key
-        # The transcript is not a tool and off by default; selecting all tools leaves it alone.
-        assert not dialog.transcript.GetValue()
         assert dialog.chosen_tools() == ((ZOOM_FRAME, WEB_SEARCH) if openrouter_key else (ZOOM_FRAME,))
+        # The transcript mode is not a tool; selecting all tools leaves it alone.
         dialog._on_toggle_tools(None)
         dialog._on_toggle_tools(None)
-        assert not dialog.transcript.GetValue()
+        assert dialog.chosen_transcribe() == TRANSCRIBE_OFF
     finally:
         dialog.Destroy()
 
 
-def test_an_openrouter_chat_has_no_transcript_choice(frame):
+@pytest.mark.parametrize('llama_cpp', [False, True])
+@pytest.mark.parametrize('mode', [TRANSCRIBE_AUTO, TRANSCRIBE_ON, TRANSCRIBE_OFF])
+def test_every_new_chat_offers_the_transcript_mode_preselected_from_settings(frame, llama_cpp, mode):
     from sceneaccess.chat_dialogs import StartChatDialog
-    dialog = StartChatDialog(frame, (), '', openrouter_key=True)
+    dialog = StartChatDialog(frame, (), '', llama_cpp=llama_cpp, openrouter_key=True, transcribe=mode)
     try:
-        assert not dialog.transcript.IsShown()
+        assert dialog.transcribe.IsShown() and dialog.chosen_transcribe() == mode
     finally:
         dialog.Destroy()
+
+
+def test_a_new_chat_gets_the_transcript_mode_chosen_when_starting(frame):
+    frame.chat_transcribe = TRANSCRIBE_ON
+    frame.config = gui.replace(frame.config, transcribe=TRANSCRIBE_OFF)
+    frame._send = lambda *a, **kw: None
+    frame._start_chat(frame.video, 'C', 'Describe it.', '')
+    assert frame.store.get_session(frame.current.id, gui.OWNER_ID).transcribe == TRANSCRIBE_ON
 
 
 def test_chat_settings_move_a_chat_with_its_tools_to_the_other_provider(frame, monkeypatch):
@@ -225,12 +234,12 @@ def test_chat_settings_move_a_chat_with_its_tools_to_the_other_provider(frame, m
         def __exit__(self, *a): pass
         def ShowModal(self): return wx.ID_OK
         def value(self): return '', False, False
-        def provider_value(self): return OPENROUTER, False
+        def provider_value(self): return OPENROUTER, TRANSCRIBE_ON
 
     monkeypatch.setattr(gui, 'ChatSettingsDialog', Dialog)
     frame._chat_settings_loaded(frame.current.id, {OPENROUTER: [], LLAMA_CPP: []})
     moved = frame.store.get_session(frame.current.id, gui.OWNER_ID)
-    assert moved.provider == OPENROUTER
+    assert moved.provider == OPENROUTER and moved.transcribe == TRANSCRIBE_ON
     # Same tools, now with OpenRouter's own web search instead of the one through OpenRouter.
     assert [tool_key(tool) for tool in moved.tools] == [ZOOM_FRAME, WEB_SEARCH]
     assert any(tool.get('type') == 'openrouter:web_search' for tool in moved.tools)
@@ -250,7 +259,7 @@ def test_moving_to_llama_cpp_without_an_openrouter_key_drops_the_web_search(fram
         def __exit__(self, *a): pass
         def ShowModal(self): return wx.ID_OK
         def value(self): return '', False, False
-        def provider_value(self): return LLAMA_CPP, False
+        def provider_value(self): return LLAMA_CPP, TRANSCRIBE_AUTO
 
     monkeypatch.setattr(gui, 'ChatSettingsDialog', Dialog)
     frame._chat_settings_loaded(frame.current.id, {OPENROUTER: [], LLAMA_CPP: []})
@@ -278,7 +287,7 @@ def test_only_openrouter_gets_its_own_tools():
     assert provider_tools(tools, LLAMA_CPP) == [tool for tool in tools if tool.get('type') == 'function']
 
 
-def test_chats_from_before_llama_cpp_support_stay_with_openrouter(tmp_path):
+def test_chats_from_before_llama_cpp_support_stay_with_openrouter_and_transcribe_as_needed(tmp_path):
     root = tmp_path / 'chats'
     root.mkdir()
     with sqlite3.connect(root / 'sceneaccess.db') as conn:
@@ -286,7 +295,21 @@ def test_chats_from_before_llama_cpp_support_stay_with_openrouter(tmp_path):
                      "model TEXT, initial_question TEXT, history_json TEXT)")
         conn.execute("INSERT INTO sessions VALUES ('vid_old', 'o', 'Old', 'x.mp4', '', '?', '[]')")
     old = VideoSessionStore(root).get_session('vid_old', 'o')
-    assert old.provider == OPENROUTER and old.openrouter_transcript is False
+    assert old.provider == OPENROUTER and old.transcribe == TRANSCRIBE_AUTO
+
+
+def test_chats_from_before_the_transcript_mode_all_get_auto(tmp_path):
+    # The former per-chat permission for llama.cpp chats is replaced by the mode and no longer read.
+    root = tmp_path / 'chats'
+    VideoSessionStore(root)
+    with sqlite3.connect(root / 'sceneaccess.db') as conn:
+        conn.execute("ALTER TABLE sessions RENAME COLUMN transcribe TO dropped")
+        conn.execute("ALTER TABLE sessions ADD COLUMN openrouter_transcript TEXT NOT NULL DEFAULT '0'")
+        conn.execute("INSERT INTO sessions (id, owner_id, title, source_path, model, initial_question, history_json, "
+                     "provider, openrouter_transcript) VALUES ('vid_a', 'o', 'A', 'x.mp4', '', '?', '[]', 'llama.cpp', '0'), "
+                     "('vid_b', 'o', 'B', 'x.mp4', '', '?', '[]', 'openrouter', '0')")
+    store = VideoSessionStore(root)
+    assert [store.get_session(name, 'o').transcribe for name in ('vid_a', 'vid_b')] == [TRANSCRIBE_AUTO] * 2
 
 
 def test_an_empty_key_sends_no_authorization_header():

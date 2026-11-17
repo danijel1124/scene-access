@@ -24,16 +24,26 @@ SESSION_FILE_PREFIX = "session-file:"
 
 COLUMNS = ("id", "owner_id", "title", "source_path", "model", "initial_question", "history_json",
            "system_prompt", "tools_json", "source_url", "video_info_json", "transcript", "transcript_state", "audio_only",
-           "size_confirmed", "provider", "openrouter_transcript")
+           "size_confirmed", "provider", "transcribe")
 # Columns added after the first release, with the value older chats get. Older chats get no transcript,
 # so opening them does not change what is sent and their cache stays valid. Chats from before llama.cpp
-# support were all answered by OpenRouter.
+# support were all answered by OpenRouter, and older chats transcribe as needed. Databases from before the
+# transcript mode may still hold an unused openrouter_transcript column.
 ADDED_COLUMNS = (("system_prompt", "''"), ("tools_json", "'[]'"), ("source_url", "''"), ("video_info_json", "''"),
                  ("transcript", "''"), ("transcript_state", "'none'"), ("audio_only", "'0'"), ("size_confirmed", "'0'"),
-                 ("provider", f"'{OPENROUTER}'"), ("openrouter_transcript", "'0'"))
+                 ("provider", f"'{OPENROUTER}'"), ("transcribe", "'auto'"))
+
+# transcribe: "auto" makes and sends a transcript only while the chat's model cannot hear the video, "on" always,
+# "off" never. Making one sends the sound to OpenRouter's speech recognition.
+TRANSCRIBE_AUTO, TRANSCRIBE_ON, TRANSCRIBE_OFF = "auto", "on", "off"
+TRANSCRIBE_MODES = (TRANSCRIBE_AUTO, TRANSCRIBE_ON, TRANSCRIBE_OFF)
+TRANSCRIBE_LABELS = {TRANSCRIBE_AUTO: "Auto: only while the model cannot hear the video",
+                     TRANSCRIBE_ON: "On: always, also for models that hear",
+                     TRANSCRIBE_OFF: "Off: never; the sound is not sent"}
+TRANSCRIBE_HEADING = "Transcript of the speech (through OpenRouter and ElevenLabs; needs an OpenRouter API key)"
 
 # transcript_state: "pending" until the first request decides whether the model needs a transcript,
-# "none" if it hears the video itself, "done" (text may be empty: no speech), "failed", or "appended": added
+# "none" if the chat's transcript mode asked for none (each question decides again), "done" (text may be empty: no speech), "failed", or "appended": added
 # later at the end of the chat as a history entry, so the cached video and history before it stay valid.
 TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_APPENDED = (
     "pending", "none", "done", "failed", "appended")
@@ -122,8 +132,8 @@ class VideoSession:
     size_confirmed: bool = False
     # Fixed when the chat starts, so its video never goes to another provider than the one chosen for it.
     provider: str = OPENROUTER
-    # A llama.cpp chat may send its sound to OpenRouter's speech recognition only if the user allowed it.
-    openrouter_transcript: bool = False
+    # When the chat makes a transcript and sends it to the model (see TRANSCRIBE_MODES), chosen per chat.
+    transcribe: str = TRANSCRIBE_AUTO
     # Not stored: whether the model answering now hears the video's sound, set before each request.
     hears_sound: bool = False
 
@@ -148,8 +158,10 @@ class VideoSession:
     def messages(self) -> list[dict[str, Any]]:
         # OpenRouter reads explicit cache breakpoints from content parts, not from the message. The blocks about
         # the sound go only to a model that takes it in, by hearing or from the transcript.
-        # A failed or skipped transcript keeps its reason in the same field; that is no transcript.
-        has_transcript = self.transcript_state == TRANSCRIPT_DONE and bool(self.transcript)
+        # A failed or skipped transcript keeps its reason in the same field; that is no transcript. A transcript
+        # the chat's mode leaves out stays stored, so switching back never pays for it again.
+        wanted = self.transcribe == TRANSCRIBE_ON or (self.transcribe == TRANSCRIBE_AUTO and not self.hears_sound)
+        has_transcript = wanted and self.transcript_state == TRANSCRIPT_DONE and bool(self.transcript)
         added_later = any(entry.get(TRANSCRIPT_ENTRY) and not entry.get(EXCLUDED) for entry in self.history)
         blocks = sound_blocks(gets_speech=self.hears_sound or has_transcript or added_later, hears=self.hears_sound)
         prompt = f"{self.system_prompt}\n\n{blocks}" if self.system_prompt and blocks else self.system_prompt
@@ -205,7 +217,7 @@ class VideoSessionStore:
                        system_prompt: str = "", tools: list[dict[str, Any]] | None = None, source_url: str = "",
                        video_info: dict[str, Any] | None = None, transcript_state: str = TRANSCRIPT_NONE,
                        audio_only: bool = False, sent_video: Path | None = None, provider: str = OPENROUTER,
-                       openrouter_transcript: bool = False) -> VideoSession:
+                       transcribe: str = TRANSCRIBE_AUTO) -> VideoSession:
         """sent_video is a smaller copy to send instead of source_path, e.g. shrunk for a provider's size limit."""
         source_path = Path(source_path).resolve()
         sent = Path(sent_video) if sent_video else source_path
@@ -219,7 +231,7 @@ class VideoSessionStore:
         values = (session_id, owner_id, title, str(source_path), model, initial_question, "[]", system_prompt,
                   json.dumps(tools or []), source_url, json.dumps(video_info) if video_info else "",
                   "", transcript_state, "1" if audio_only else "0", "0", provider,
-                  "1" if openrouter_transcript else "0")
+                  transcribe)
         # A collision must never authorize cleanup of an existing directory or file.
         directory.mkdir(mode=0o700)
         data_url_path = directory / "context.data-url"
@@ -255,7 +267,7 @@ class VideoSessionStore:
             video_info=json.loads(values["video_info_json"]) if values["video_info_json"] else None,
             transcript=values["transcript"], transcript_state=values["transcript_state"],
             audio_only=values["audio_only"] == "1", size_confirmed=values["size_confirmed"] == "1",
-            provider=values["provider"], openrouter_transcript=values["openrouter_transcript"] == "1",
+            provider=values["provider"], transcribe=values["transcribe"],
         )
 
     def list_sessions(self, owner_id: str) -> list[VideoSession]:
@@ -307,27 +319,26 @@ class VideoSessionStore:
                           session_id, owner_id))
 
     def update_chat_settings(self, session_id: str, owner_id: str, model: str, audio_only: bool, *,
-                             provider: str | None = None, openrouter_transcript: bool | None = None,
+                             provider: str | None = None, transcribe: str | None = None,
                              tools: list[dict[str, Any]] | None = None) -> None:
         """Sets the chat's own model ("" follows Settings) and whether openrouter/auto may pick only hearing
-        models; optionally its provider, whether a llama.cpp chat may transcribe through OpenRouter, and the
-        tools fitting the new provider. A chat without a transcript decides again on its next question whether
-        it needs one; so does one whose transcript was skipped, if its provider changed or transcription
-        through OpenRouter was just allowed."""
+        models; optionally its provider, its transcript mode and the tools fitting the new provider. A chat
+        without a transcript decides again on its next question whether it needs one; so does one whose
+        transcript was skipped, if its provider or transcript mode changed. A finished transcript is kept, also
+        while the mode leaves it out, so it is never paid for twice."""
         session = self.get_session(session_id, owner_id)
         provider = provider or session.provider
-        if openrouter_transcript is None:
-            openrouter_transcript = session.openrouter_transcript
+        transcribe = transcribe or session.transcribe
         state, transcript = session.transcript_state, session.transcript
-        retry = provider != session.provider or (openrouter_transcript and not session.openrouter_transcript)
+        retry = provider != session.provider or transcribe != session.transcribe
         if state == TRANSCRIPT_NONE or (retry and state == TRANSCRIPT_FAILED):
             state, transcript = TRANSCRIPT_PENDING, ""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE sessions SET model = ?, audio_only = ?, transcript_state = ?, transcript = ?, "
-                         "size_confirmed = '0', provider = ?, openrouter_transcript = ?, tools_json = ? "
+                         "size_confirmed = '0', provider = ?, transcribe = ?, tools_json = ? "
                          "WHERE id = ? AND owner_id = ?",
                          (model, "1" if audio_only else "0", state, transcript, provider,
-                          "1" if openrouter_transcript else "0",
+                          transcribe,
                           json.dumps(session.tools if tools is None else tools), session_id, owner_id))
 
     def confirm_size(self, session_id: str, owner_id: str) -> None:

@@ -28,7 +28,7 @@ class ChatListFrame(AppWindow, NewChatMixin, wx.Frame):
         self.session_ids: list[str] = []
         # Chosen in the dialogs of a new chat, handed to the chat window it starts in.
         self.pending_size_skip = ""
-        self.chat_transcript = False
+        self.chat_transcribe = windows.config.transcribe
         self._build()
         self.refresh_sessions()
         self.Bind(wx.EVT_CLOSE, self.on_close)
@@ -145,6 +145,6 @@ class ChatListFrame(AppWindow, NewChatMixin, wx.Frame):
         """Starts the chat in a new chat window, shown only once the chat exists."""
         frame = self.windows.new_chat_window()
         frame.pending_size_skip, self.pending_size_skip = self.pending_size_skip, ""
-        frame.chat_transcript = self.chat_transcript
+        frame.chat_transcribe = self.chat_transcribe
         NewChatMixin._start_chat(frame, *args, **kwargs)
         self.windows.chat_started(frame)

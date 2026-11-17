@@ -398,20 +398,20 @@ class NewChatMixin:
         """Returns the question, profile name and the keys of the chosen tools, or None if cancelled. previous
         refills the dialog when the user came back from the size question."""
         question, profile = previous[:2] if previous else ("Describe this video.", self.config.profile)
-        # A new chat starts with all tools and without transcription through OpenRouter; coming back from
-        # the size question keeps the choices.
+        # A new chat starts with all tools and the transcript mode from Settings; coming back from the size
+        # question keeps the choices.
         tools = previous[2] if previous and len(previous) > 2 else None
-        transcript = getattr(self, "chat_transcript", False) if previous else False
         config = self.config
+        transcribe = getattr(self, "chat_transcribe", config.transcribe) if previous else config.transcribe
         with StartChatDialog(self, config.profiles, profile or NO_PROFILE, online=online, max_height=config.youtube_max_height,
                              auto_shrink=config.auto_shrink, shrink_target_mb=config.shrink_target_mb,
                              question=question, tools=tools, llama_cpp=config.provider == LLAMA_CPP,
-                             openrouter_key=bool(self.openrouter_key()), transcript=transcript) as dialog:
+                             openrouter_key=bool(self.openrouter_key()), transcribe=transcribe) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return None
             question, profile = dialog.value()
             tools = dialog.chosen_tools()
-            self.chat_transcript = config.provider == LLAMA_CPP and dialog.transcript.GetValue()
+            self.chat_transcribe = dialog.chosen_transcribe()
             # The profile and the advanced settings are preselected next time.
             chosen = replace(config, profile=profile or NO_PROFILE, youtube_max_height=dialog.max_height,
                              auto_shrink=dialog.auto_shrink, shrink_target_mb=dialog.shrink_target_mb)
@@ -426,7 +426,7 @@ class NewChatMixin:
         """tools holds the keys of the chosen tools (see tools.tool_key); None chooses all."""
         skip_model, self.pending_size_skip = self.pending_size_skip, ""
         provider = self.config.provider
-        openrouter_transcript = getattr(self, "chat_transcript", False)
+        transcribe = getattr(self, "chat_transcribe", self.config.transcribe)
         try:
             # Reading a large video can take a while, and one that does not fit into memory fails here.
             with wx.BusyCursor():
@@ -440,7 +440,7 @@ class NewChatMixin:
                     source_url=source_url, video_info=video_info,
                     # The first request decides whether this model needs a transcript of the sound.
                     transcript_state=TRANSCRIPT_PENDING, audio_only=self.config.audio_only_auto, sent_video=sent_video,
-                    provider=provider, openrouter_transcript=provider == LLAMA_CPP and openrouter_transcript)
+                    provider=provider, transcribe=transcribe)
         except (OSError, MemoryError) as error:
             wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded", wx.OK | wx.ICON_ERROR)
             return

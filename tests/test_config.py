@@ -162,3 +162,14 @@ def test_video_size_settings_round_trip_and_default_to_asking(tmp_path: Path):
     path.write_text('{"model": "m", "shrink_target_mb": 0}', encoding="utf-8")
     loaded = load_config(path)
     assert loaded.check_video_size is True and loaded.auto_shrink is False and loaded.shrink_target_mb == 16
+
+
+@pytest.mark.parametrize("stored, expected", [(None, "auto"), ("on", "on"), ("off", "off"), ("sometimes", "auto")])
+def test_the_transcript_mode_for_new_chats_round_trips_and_defaults_to_auto(tmp_path: Path, stored, expected):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"provider": "llama.cpp", **({"transcribe": stored} if stored else {})}),
+                    encoding="utf-8")
+    loaded = load_config(path)
+    assert loaded.transcribe == expected
+    save_config(path, loaded)
+    assert load_config(path).transcribe == expected

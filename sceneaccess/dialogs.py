@@ -12,6 +12,7 @@ from .config import AppConfig
 from .models import ModelCatalog
 from .prompts import BASE_SYSTEM_PROMPT, DEFAULT_PROFILES
 from .providers import OPENROUTER_URL, PROVIDER_LABELS, PROVIDERS
+from .session_store import TRANSCRIBE_LABELS, TRANSCRIBE_MODES
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import (DEFAULT_FILENAME_FIELDS, DEFAULT_MAX_HEIGHT, FILENAME_FIELD_NAMES, FILENAME_FIELDS,
                       MAX_HEIGHT_CHOICES, output_template)
@@ -353,6 +354,8 @@ class SettingsDialog(wx.Dialog):
         # Off: openrouter/auto may pick a model that cannot hear, which then gets a transcript instead.
         self.audio_only = wx.CheckBox(self, label="With openrouter/auto, use only models that hear the video's sound")
         self.audio_only.SetValue(config.audio_only_auto)
+        self.transcribe = wx.Choice(self, choices=[TRANSCRIBE_LABELS[mode] for mode in TRANSCRIBE_MODES])
+        self.transcribe.SetSelection(TRANSCRIBE_MODES.index(config.transcribe))
         self.youtube_cookies = config.youtube_cookies
         self.cookies_button = wx.Button(self)
         self._show_cookies()
@@ -379,6 +382,8 @@ class SettingsDialog(wx.Dialog):
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
                                ("Downloaded file name", self.filename_button), ("YouTube sign-in", self.cookies_button),
                                ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only),
+                               ("Transcript of the speech in new chats (through OpenRouter and ElevenLabs)",
+                                self.transcribe),
                                ("Providers and models", self.exclusions_button), ("Video size", size_row),
                                (tool_rounds_label, self.max_tool_rounds)):
             form.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -411,7 +416,8 @@ class SettingsDialog(wx.Dialog):
                        # Keep "default" as empty, so it keeps following the Videos folder.
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,
                        filename_fields=self.filename_fields, profiles=self.profiles,
-                       audio_only_auto=self.audio_only.GetValue(), youtube_cookies=self.youtube_cookies,
+                       audio_only_auto=self.audio_only.GetValue(),
+                       transcribe=TRANSCRIBE_MODES[self.transcribe.GetSelection()], youtube_cookies=self.youtube_cookies,
                        ignored_providers=self.ignored_providers, excluded_models=self.excluded_models,
                        check_video_size=self.check_size.GetValue(), size_check_skipped_models=self.skipped_models,
                        max_tool_rounds=max_tool_rounds)

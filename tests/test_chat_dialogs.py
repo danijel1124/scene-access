@@ -112,7 +112,7 @@ def test_chat_settings_follow_settings_by_default_or_keep_an_own_model():
                                                  {"openrouter": ["z-ai/glm-flash"]})
         assert dialog.use_default.GetLabel() == "Use the model from Settings (openrouter/auto)"
         assert dialog.value() == ("", True, False) and not dialog.model.IsEnabled()
-        assert dialog.provider_value() == ("openrouter", False) and dialog.provider_note.GetLabel() == ""
+        assert dialog.provider_value() == ("openrouter", "auto") and dialog.provider_note.GetLabel() == ""
         assert "61.0 MB once sent" in dialog.shrink.GetLabel()
         dialog.use_default.SetValue(False)
         dialog._update()
@@ -134,17 +134,20 @@ def test_chat_settings_move_a_chat_to_the_other_provider(monkeypatch):
     frame = wx.Frame(None)
     try:
         dialog = chat_dialogs.ChatSettingsDialog(frame, "a/one", SETTINGS_MODELS, False, 1_000, 16,
-                                                 provider="openrouter", openrouter_key=True)
-        assert dialog.audio_only.IsShown() and not dialog.transcript.IsShown()
+                                                 provider="openrouter", transcribe="on")
+        assert dialog.audio_only.IsShown() and dialog.transcribe.IsShown()
         dialog.provider.SetSelection(1)
         dialog._on_provider()
         # A model name belongs to one provider: the chat starts with the other one's model from Settings.
         assert dialog.value() == ("", False, False) and dialog.model.GetValue() == "default"
         assert dialog.use_default.GetLabel() == "Use the model from Settings (default)"
-        assert not dialog.audio_only.IsShown() and dialog.transcript.IsShown() and dialog.transcript.IsEnabled()
-        assert "llama.cpp server" in dialog.provider_note.GetLabel()
-        dialog.transcript.SetValue(True)
-        assert dialog.provider_value() == ("llama.cpp", True)
+        # The transcript mode does not depend on the provider.
+        assert not dialog.audio_only.IsShown() and dialog.transcribe.IsShown()
+        assert dialog.provider_value() == ("llama.cpp", "on")
+        assert "llama.cpp server" in dialog.provider_note.GetLabel() and "ElevenLabs" in dialog.provider_note.GetLabel()
+        dialog.transcribe.SetSelection(2)
+        dialog._update()
+        assert dialog.provider_value() == ("llama.cpp", "off") and "ElevenLabs" not in dialog.provider_note.GetLabel()
         dialog.Destroy()
     finally:
         frame.Destroy()
@@ -161,7 +164,6 @@ def test_moving_a_llama_cpp_chat_to_openrouter_asks_first(monkeypatch, answer):
         def Skip(self): skipped.append(True)
     try:
         dialog = chat_dialogs.ChatSettingsDialog(frame, "", SETTINGS_MODELS, False, 1_000, 16, provider="llama.cpp")
-        assert not dialog.transcript.IsEnabled()  # Transcription through OpenRouter needs its key.
         dialog._on_ok(Event())
         assert asked == [] and skipped == [True]  # Staying on the own server asks nothing.
         dialog.provider.SetSelection(0)

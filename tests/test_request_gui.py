@@ -78,7 +78,7 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
     # Only gui's own thread runs inline: the real tool starts subprocesses, whose reader threads
     # need the real threading.Thread.
     monkeypatch.setattr(gui, 'threading', types.SimpleNamespace(Thread=InlineThread))
-    monkeypatch.setattr(gui, 'needs_transcript', lambda *a: False)
+    monkeypatch.setattr(gui, 'wants_transcript', lambda *a: False)
     video = gui.Path(frame.current.source_path).with_name('real.mp4')
     subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-loglevel', 'error', '-f', 'lavfi', '-i',
                     'testsrc=duration=1:size=160x120:rate=5', '-pix_fmt', 'yuv420p', '-y', str(video)], check=True)
@@ -105,7 +105,7 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
 def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
     from sceneaccess.session_store import TRANSCRIPT_PENDING, TRANSCRIPT_FAILED
     monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
-    monkeypatch.setattr(gui, 'needs_transcript', lambda *a: True)
+    monkeypatch.setattr(gui, 'wants_transcript', lambda *a: True)
     frame.config = gui.replace(frame.config, ignored_providers=('elevenlabs',))
     frame.store.update_transcript(frame.current.id, gui.OWNER_ID, TRANSCRIPT_PENDING)
     frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)

@@ -8,7 +8,7 @@ from typing import Any
 
 from .models import AUTO_ROUTER, ModelCatalog
 from .providers import LLAMA_CPP
-from .session_store import VideoSession
+from .session_store import TRANSCRIBE_AUTO, TRANSCRIBE_ON, VideoSession
 from .tools import format_time, local_video, run_ffmpeg
 from .request_control import RequestControl
 
@@ -28,6 +28,12 @@ def needs_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
         return False
     # Unknown models, and openrouter/auto without the audio-only setting, may not hear; a transcript is safe.
     return catalog.hears_audio(session.model) is not True
+
+
+def wants_transcript(session: VideoSession, catalog: ModelCatalog) -> bool:
+    """Whether the chat's transcript mode asks for a transcript for the model answering now."""
+    return session.transcribe == TRANSCRIBE_ON or (session.transcribe == TRANSCRIBE_AUTO
+                                                   and needs_transcript(session, catalog))
 
 
 def extract_audio_chunks(video: Path, folder: Path, chunk_seconds: int | None = None,

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .prompts import DEFAULT_PROFILE, DEFAULT_PROFILES, UPGRADED_PROFILE_TEXTS
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, PROVIDERS
+from .session_store import TRANSCRIBE_AUTO, TRANSCRIBE_MODES
 from .video_size import DEFAULT_SHRINK_TARGET_MB
 from .youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
 
@@ -37,6 +38,8 @@ class AppConfig:
     profile: str = DEFAULT_PROFILE
     # With openrouter/auto, let new chats choose only from models that hear the video's sound.
     audio_only_auto: bool = False
+    # Transcript mode preselected for new chats (see session_store.TRANSCRIBE_MODES); existing chats keep theirs.
+    transcribe: str = TRANSCRIBE_AUTO
     # Where YouTube cookies come from: "" for none, a browser such as "firefox", or a cookies.txt path.
     youtube_cookies: str = ""
     # Provider slugs such as "google-ai-studio" that never answer, whatever the model.
@@ -84,6 +87,7 @@ def load_config(path: Path) -> AppConfig:
         model=str(values.get("model", AppConfig.model)),
         api_key=str(values.get("api_key", "")),
         provider=values["provider"] if values.get("provider") in PROVIDERS else OPENROUTER,
+        transcribe=values["transcribe"] if values.get("transcribe") in TRANSCRIBE_MODES else TRANSCRIBE_AUTO,
         llama_cpp_url=str(values.get("llama_cpp_url", "")),
         llama_cpp_model=str(values.get("llama_cpp_model", "")),
         llama_cpp_api_key=str(values.get("llama_cpp_api_key", "")),
@@ -158,6 +162,7 @@ def save_config(path: Path, config: AppConfig) -> None:
         "profiles": [{"name": name, "text": text} for name, text in config.profiles],
         "profile": config.profile,
         "audio_only_auto": config.audio_only_auto,
+        "transcribe": config.transcribe,
         "youtube_cookies": config.youtube_cookies,
         "ignored_providers": list(config.ignored_providers),
         "excluded_models": list(config.excluded_models),

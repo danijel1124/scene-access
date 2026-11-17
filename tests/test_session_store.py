@@ -505,8 +505,29 @@ def test_moving_a_chat_to_another_provider_stores_it_and_retries_a_skipped_trans
     moved = store.get_session(session.id, "local")
     assert (moved.provider, moved.tools, moved.transcript_state, moved.transcript) == ("openrouter", tools, "pending", "")
     store.update_transcript(session.id, "local", "done", "[00:01] Hello")
-    store.update_chat_settings(session.id, "local", "", False, provider="llama.cpp", openrouter_transcript=True)
+    store.update_chat_settings(session.id, "local", "", False, provider="llama.cpp", transcribe="on")
     back = store.get_session(session.id, "local")
     # A transcript that exists stays; the tools stay as they were when none are given.
-    assert (back.provider, back.openrouter_transcript, back.transcript, back.tools) == (
-        "llama.cpp", True, "[00:01] Hello", tools)
+    assert (back.provider, back.transcribe, back.transcript, back.tools) == ("llama.cpp", "on", "[00:01] Hello", tools)
+
+
+def test_the_transcript_mode_decides_which_models_get_the_transcript(tmp_path: Path):
+    from dataclasses import replace
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"fake-mp4-payload")
+    store = VideoSessionStore(tmp_path / "app-data")
+    session = store.create_session(owner_id="o", source_path=video, title="T", model="", initial_question="?")
+    store.update_transcript(session.id, "o", "done", "[00:01] Hello")
+
+    def sent(mode, hears):
+        store.update_chat_settings(session.id, "o", "", False, transcribe=mode)
+        stored = store.get_session(session.id, "o")
+        return "[00:01] Hello" in json.dumps(replace(stored, hears_sound=hears).messages)
+
+    assert sent("auto", hears=False) and not sent("auto", hears=True)
+    assert sent("on", hears=False) and sent("on", hears=True)
+    assert not sent("off", hears=False) and not sent("off", hears=True)
+    # Off only leaves the transcript out: it stays stored, so switching back never pays for it again.
+    back = store.get_session(session.id, "o")
+    assert (back.transcript_state, back.transcript) == ("done", "[00:01] Hello")
+    assert sent("auto", hears=False)

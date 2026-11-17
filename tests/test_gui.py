@@ -112,9 +112,10 @@ def test_a_transcript_is_added_at_the_end_without_asking_the_model(tmp_path, mon
         frame.add_transcript()
         assert asked and "OpenRouter API key" in asked[-1] and not frame.current.history
         frame.config = gui.replace(frame.config, api_key="openrouter-secret")
+        asked.clear()
         frame.add_transcript()
-        # A llama.cpp chat sends its sound only after asking.
-        assert "sends the video's sound" in asked[-1]
+        # Adding a transcript is the user's explicit choice, so it asks nothing, also in a llama.cpp chat.
+        assert asked == []
         assert frame.current.history[-1]["content"].endswith("[00:01] Hello")
         assert frame.history_items[-1].startswith("Transcript added later: 1 lines")
         assert frame.reader_texts[-1].endswith("[00:01] Hello") and frame.history_caret() == len(frame.history_items) - 1
@@ -202,7 +203,7 @@ def test_a_default_chat_sends_the_settings_model_and_gets_a_transcript_if_it_can
     monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
     monkeypatch.setattr(gui.threading, "Thread", InlineThread)
     monkeypatch.setattr(gui.wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
-    monkeypatch.setattr(gui, "needs_transcript", lambda session, _catalog: session.model == "z-ai/glm-flash")
+    monkeypatch.setattr(gui, "wants_transcript", lambda session, _catalog: session.model == "z-ai/glm-flash")
     monkeypatch.setattr(gui, "make_transcript", lambda _session, _client: "[00:01] Hello")
     payloads = []
 
@@ -339,7 +340,7 @@ def test_a_chat_from_before_tools_gets_the_prompt_and_tools(tmp_path, monkeypatc
 
 def test_a_failed_transcription_is_remembered_and_does_not_stop_the_answer(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui, "needs_transcript", lambda _session, _catalog: True)
+    monkeypatch.setattr(gui, "wants_transcript", lambda _session, _catalog: True)
 
     def fail(_session, _client):
         raise RuntimeError("HTTP 502: upstream audio operation failed")

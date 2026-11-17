@@ -34,7 +34,7 @@ from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
                     provider_tools, tool_definitions, tool_key, tools_for_provider)
-from .transcript import make_transcript, needs_transcript
+from .transcript import make_transcript, wants_transcript
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
 
@@ -446,21 +446,20 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         settings_models = {provider: self.config.model_for(provider) for provider in PROVIDER_LABELS}
         with ChatSettingsDialog(self, session.model, settings_models, session.audio_only, session.sent_video_size,
                                 self.config.shrink_target_mb, models, provider=session.provider,
-                                openrouter_transcript=session.openrouter_transcript,
-                                openrouter_key=bool(self.openrouter_key())) as dialog:
+                                transcribe=session.transcribe) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
             model, audio_only, shrink = dialog.value()
-            provider, openrouter_transcript = dialog.provider_value()
-        if (model, audio_only, provider, openrouter_transcript) != (
-                session.model, session.audio_only, session.provider, session.openrouter_transcript):
+            provider, transcribe = dialog.provider_value()
+        if (model, audio_only, provider, transcribe) != (
+                session.model, session.audio_only, session.provider, session.transcribe):
             # Moving to the other provider keeps the chosen tools, with that provider's web search; a
             # llama.cpp chat searches through OpenRouter, so without its key it gets no search, as when starting.
             tools = tools_for_provider(session.tools, provider) if provider != session.provider else None
             if tools is not None and provider == LLAMA_CPP and not self.openrouter_key():
                 tools = [tool for tool in tools if tool_key(tool) != WEB_SEARCH]
             self.store.update_chat_settings(session.id, OWNER_ID, model, audio_only, provider=provider,
-                                            openrouter_transcript=openrouter_transcript, tools=tools)
+                                            transcribe=transcribe, tools=tools)
         if shrink:
             self.shrink_stored_video()
         self.current = self.store.get_session(session.id, OWNER_ID)
@@ -677,11 +676,6 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             wx.MessageBox("ElevenLabs, which makes the transcript, is excluded in Settings, Providers and models.",
                           "Speech recognition excluded", wx.OK | wx.ICON_ERROR)
             return
-        if session.provider == LLAMA_CPP and not session.openrouter_transcript and wx.MessageBox(
-                "This chat runs on your own llama.cpp server. A transcript sends the video's sound, not the picture, "
-                "to OpenRouter and ElevenLabs. Make a transcript?", "Send the sound?",
-                wx.YES_NO | wx.ICON_WARNING) != wx.YES:
-            return
         self._request = control
         if self.windows:
             self.windows.requests[session.id] = control
@@ -812,19 +806,20 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                     client = openrouter
                 # A chat on "default" asks the model that is in Settings now.
                 session = self.store.get_session(session_id, OWNER_ID)
-                follows_settings = not session.model
                 session = replace(session, model=session.model or config.model_for(session.provider))
                 # Reject impossible routing before any potentially billable preprocessing. A llama.cpp
                 # server has no providers or router to choose from.
                 options = {} if llama_cpp else routing(session.model, session.audio_only, catalog,
                                                        config.ignored_providers, config.excluded_models)
-                if follows_settings and session.transcript_state == TRANSCRIPT_NONE and needs_transcript(session, catalog):
-                    # Settings now name a model that cannot hear, so this chat needs a transcript after all.
-                    session = replace(session, transcript_state=TRANSCRIPT_PENDING)
-                if session.transcript_state == TRANSCRIPT_PENDING:
-                    self._prepare_transcript(session, openrouter if llama_cpp else client, catalog)
-                    session = self.store.get_session(session_id, OWNER_ID)
-                    session = replace(session, model=session.model or config.model_for(session.provider))
+                # Decided for the model answering now, which may be another one than last time. A failed
+                # or skipped transcript is not tried again until Chat settings or the setup change.
+                if session.transcript_state in (TRANSCRIPT_NONE, TRANSCRIPT_PENDING):
+                    if wants_transcript(session, catalog):
+                        self._prepare_transcript(session, openrouter)
+                        session = self.store.get_session(session_id, OWNER_ID)
+                        session = replace(session, model=session.model or config.model_for(session.provider))
+                    elif session.transcript_state == TRANSCRIPT_PENDING:
+                        self.store.update_transcript(session_id, OWNER_ID, TRANSCRIPT_NONE)
                 # Only a model that takes in the sound gets the prompt's blocks about it; llama.cpp reads only
                 # the pictures of a video.
                 hears = not llama_cpp and (catalog.hears_audio(session.model) is True
@@ -906,20 +901,12 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.status.SetLabel("Request cancelled. Completed chat history is preserved; provider charges may still apply.")
         announce("Request cancelled.")
 
-    def _prepare_transcript(self, session: VideoSession, client: OpenRouterClient | None,
-                            catalog: ModelCatalog | None = None) -> None:
-        """Runs in the request thread: transcribes the sound once if the chat's model cannot hear it.
+    def _prepare_transcript(self, session: VideoSession, client: OpenRouterClient | None) -> None:
+        """Runs in the request thread: transcribes the sound once, as the chat's transcript mode asks.
         A failure never stops the answer; the chat remembers it, so it is not paid for on every question.
         client is OpenRouter, also for a llama.cpp chat; None if no OpenRouter key is configured."""
-        if not needs_transcript(session, catalog or self.catalog):
-            self.store.update_transcript(session.id, OWNER_ID, TRANSCRIPT_NONE)
-            return
         reason = ""
-        if session.provider == LLAMA_CPP and not session.openrouter_transcript:
-            reason = ('No transcript: this chat runs on your own llama.cpp server, which sees only the pictures, and '
-                      'transcription through OpenRouter was not chosen when the chat started, so the sound stays '
-                      'private. The model cannot hear the video.')
-        elif client is None:
+        if client is None:
             reason = ('Speech recognition skipped because no OpenRouter API key is configured. The model answers '
                       'without a transcript and cannot hear the video. After entering a key, Change prompt profile '
                       'and tools tries again.')
@@ -932,7 +919,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             shown, full = transcript_entry(TRANSCRIPT_FAILED, reason)
             wx.CallAfter(self._show_progress_item, session.id, shown, full=full)
             return
-        wx.CallAfter(self._show_progress_item, session.id, "Transcribing the video's speech for a model that cannot hear it…")
+        wx.CallAfter(self._show_progress_item, session.id, "Transcribing the video's speech…")
         try:
             text = make_transcript(session, client)
             self.store.update_transcript(session.id, OWNER_ID, TRANSCRIPT_DONE, text)

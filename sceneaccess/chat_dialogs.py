@@ -10,6 +10,7 @@ import wx
 from .dialogs import NO_PROFILE, AddModelDialog, youtube_quality_labels
 from .models import AUTO_ROUTER
 from .providers import LLAMA_CPP, OPENROUTER, PROVIDER_LABELS, PROVIDERS
+from .session_store import TRANSCRIBE_AUTO, TRANSCRIBE_HEADING, TRANSCRIBE_LABELS, TRANSCRIBE_MODES, TRANSCRIBE_OFF
 from .tools import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME
 from .video_size import DEFAULT_SHRINK_TARGET_MB, SIZE_LIMIT, base64_size, megabytes
 from .youtube import DEFAULT_MAX_HEIGHT, MAX_HEIGHT_CHOICES
@@ -143,19 +144,27 @@ class StoredSizeDialog(wx.Dialog):
         self.message.SetFocus()
 
 
+def transcribe_choice(parent: wx.Window, mode: str) -> tuple[wx.StaticText, wx.Choice]:
+    """The heading and choice of a chat's transcript mode, the same for both providers. The heading is created
+    first, so screen readers announce it as the choice's name."""
+    heading = wx.StaticText(parent, label=TRANSCRIBE_HEADING)
+    choice = wx.Choice(parent, choices=[TRANSCRIBE_LABELS[name] for name in TRANSCRIBE_MODES])
+    choice.SetSelection(TRANSCRIBE_MODES.index(mode))
+    return heading, choice
+
+
 class ChatSettingsDialog(wx.Dialog):
-    """The open chat's provider and own model, whether openrouter/auto may pick only hearing models, whether a
-    llama.cpp chat may transcribe through OpenRouter, and shrinking its video."""
+    """The open chat's provider and own model, whether openrouter/auto may pick only hearing models, its
+    transcript mode, and shrinking its video. Changes apply from the next question on."""
 
     def __init__(self, parent: wx.Window, model: str, settings_models: dict[str, str], audio_only: bool,
                  sent_size: int, shrink_target_mb: int, models: dict[str, list[str]] | None = None, *,
-                 provider: str = OPENROUTER, openrouter_transcript: bool = False, openrouter_key: bool = False):
+                 provider: str = OPENROUTER, transcribe: str = TRANSCRIBE_AUTO):
         """settings_models and models hold per provider the model in Settings and the models to find. provider
         is the chat's provider; choosing another one here moves the chat to it."""
         super().__init__(parent, title="Chat settings")
         self.settings_models, self.models = settings_models, models or {}
         self.chat_provider = self.shown_provider = provider
-        self.openrouter_key = openrouter_key
         provider_label = wx.StaticText(self, label="Provider of this chat")
         self.provider = wx.Choice(self, choices=[PROVIDER_LABELS[name] for name in PROVIDERS])
         self.provider.SetSelection(PROVIDERS.index(provider))
@@ -167,20 +176,19 @@ class ChatSettingsDialog(wx.Dialog):
         self.find = wx.Button(self, label="Find model…")
         self.audio_only = wx.CheckBox(self, label="With openrouter/auto, use only models that hear the video's sound")
         self.audio_only.SetValue(audio_only)
-        self.transcript = wx.CheckBox(self, label="Transcribe the speech through OpenRouter and ElevenLabs "
-                                                  "(sends the video's sound; needs an OpenRouter API key)")
-        self.transcript.SetValue(openrouter_transcript)
+        transcribe_label, self.transcribe = transcribe_choice(self, transcribe)
+        self.transcribe.Bind(wx.EVT_CHOICE, lambda _event: self._update())
         self.shrink = wx.CheckBox(self, label=f"Shrink the stored video ({megabytes(sent_size)} once sent) to at most "
                                               f"{shrink_target_mb} MB")
-        note = wx.StaticText(self, label="A new provider, a new model or a shrunk video makes the next question send "
-                                         "the video uncached once, so it costs more. If the model may then be one that "
-                                         "cannot hear, that question first transcribes the speech, if allowed (about "
-                                         "$0.11 per hour of sound).")
+        note = wx.StaticText(self, label="A new provider, a new model, another transcript mode or a shrunk video makes "
+                                         "the next question send the video uncached once, so it costs more. If that "
+                                         "question needs a transcript the chat does not have yet, it first transcribes "
+                                         "the speech (about $0.11 per hour of sound).")
         note.Wrap(580)
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
         for control in (provider_label, self.provider, self.provider_note, self.use_default, model_label, self.model,
-                        self.find, self.audio_only, self.transcript, self.shrink, note):
+                        self.find, self.audio_only, transcribe_label, self.transcribe, self.shrink, note):
             layout.Add(control, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
         self.SetSizer(layout)
@@ -196,10 +204,12 @@ class ChatSettingsDialog(wx.Dialog):
         model = "" if self.use_default.GetValue() else self.model.GetValue().strip()
         return model, self.audio_only.GetValue(), self.shrink.GetValue()
 
-    def provider_value(self) -> tuple[str, bool]:
-        """The chat's provider, and whether a llama.cpp chat may transcribe its speech through OpenRouter."""
-        provider = PROVIDERS[self.provider.GetSelection()]
-        return provider, provider == LLAMA_CPP and self.transcript.GetValue()
+    def provider_value(self) -> tuple[str, str]:
+        """The chat's provider and its transcript mode."""
+        return PROVIDERS[self.provider.GetSelection()], TRANSCRIBE_MODES[self.transcribe.GetSelection()]
+
+    def _sends_sound(self) -> bool:
+        return TRANSCRIBE_MODES[self.transcribe.GetSelection()] != TRANSCRIBE_OFF
 
     def _on_provider(self) -> None:
         provider = PROVIDERS[self.provider.GetSelection()]
@@ -216,15 +226,14 @@ class ChatSettingsDialog(wx.Dialog):
         for control in (self.model, self.find):
             control.Enable(not self.use_default.GetValue())
         self.audio_only.Show(provider == OPENROUTER)
-        self.transcript.Show(provider == LLAMA_CPP)
-        self.transcript.Enable(self.openrouter_key)
         if provider == self.chat_provider:
             text = ""
         elif provider == OPENROUTER:
-            text = ("From the next question on, this chat's video is sent to OpenRouter, and its sound to "
-                    "ElevenLabs if the model cannot hear.")
+            text = "From the next question on, this chat's video is sent to OpenRouter."
         else:
             text = "From the next question on, this chat goes to your own llama.cpp server."
+        if text and self._sends_sound():
+            text += " Its sound goes to ElevenLabs when the transcript mode asks for a transcript."
         self.provider_note.SetLabel(text)
         self.provider_note.Wrap(580)
         self.GetSizer().Fit(self)
@@ -240,11 +249,12 @@ class ChatSettingsDialog(wx.Dialog):
         if not self.use_default.GetValue() and not self.model.GetValue().strip():
             wx.MessageBox("Enter a model or use the model from Settings.", "No model", wx.OK | wx.ICON_ERROR, self)
             return
+        sound = (" and, when the transcript mode asks for a transcript, its sound to ElevenLabs"
+                 if self._sends_sound() else "")
         if self.chat_provider == LLAMA_CPP and self.shown_provider == OPENROUTER and wx.MessageBox(
                 "This chat ran on your own llama.cpp server. From the next question on, its video is sent to "
-                "OpenRouter and the model provider, and, if the model cannot hear, its sound to ElevenLabs for a "
-                "transcript. Move the chat to OpenRouter?", "Send the video to OpenRouter?",
-                wx.YES_NO | wx.ICON_WARNING, self) != wx.YES:
+                f"OpenRouter and the model provider{sound}. Move the chat to OpenRouter?",
+                "Send the video to OpenRouter?", wx.YES_NO | wx.ICON_WARNING, self) != wx.YES:
             return
         event.Skip()
 
@@ -256,10 +266,10 @@ class StartChatDialog(wx.Dialog):
                  max_height: int = DEFAULT_MAX_HEIGHT, auto_shrink: bool = False,
                  shrink_target_mb: int = DEFAULT_SHRINK_TARGET_MB, question: str = "Describe this video.",
                  tools: Collection[str] | None = None, llama_cpp: bool = False, openrouter_key: bool = False,
-                 transcript: bool = False):
+                 transcribe: str = TRANSCRIBE_AUTO):
         """tools preselects the chat's tools by key (None: all). A chat on the user's own llama.cpp server
-        (llama_cpp) searches the web and transcribes through OpenRouter, which needs openrouter_key;
-        transcript preselects that transcription."""
+        (llama_cpp) searches the web through OpenRouter, which needs openrouter_key. transcribe preselects the
+        chat's transcript mode, by default the one in Settings."""
         super().__init__(parent, title="Start a video chat", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.profiles = profiles
         self.online = online
@@ -291,19 +301,15 @@ class StartChatDialog(wx.Dialog):
         self.toggle_tools = wx.Button(self)
         self.toggle_tools.Bind(wx.EVT_BUTTON, self._on_toggle_tools)
         self._show_toggle()
-        # Not a tool: preprocessing. Off by default, so a llama.cpp chat's sound stays private unless chosen.
-        self.transcript = wx.CheckBox(self, label="Transcribe the speech through OpenRouter and ElevenLabs "
-                                                  "(sends the video's sound; needs an OpenRouter API key)")
-        self.transcript.SetValue(transcript and openrouter_key)
-        self.transcript.Enable(openrouter_key)
-        self.transcript.Show(llama_cpp)
+        # Not a tool: preprocessing, for both providers.
+        transcribe_label, self.transcribe = transcribe_choice(self, transcribe)
         advanced = wx.Button(self, label="Advanced…")
         buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         layout = wx.BoxSizer(wx.VERTICAL)
         shown_boxes = [(box, 0) for box in self.tool_boxes.values() if box.IsShown()]
         for control, proportion in ((question_label, 0), (self.question, 1), (profile_label, 0), (self.profile, 0),
                                     (text_label, 0), (self.profile_text, 1), (note, 0), (tools_heading, 0),
-                                    *shown_boxes, (self.toggle_tools, 0), *([(self.transcript, 0)] if llama_cpp else [])):
+                                    *shown_boxes, (self.toggle_tools, 0), (transcribe_label, 0), (self.transcribe, 0)):
             layout.Add(control, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(advanced, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
         layout.Add(buttons, 0, wx.EXPAND | wx.ALL, 12)
@@ -324,6 +330,10 @@ class StartChatDialog(wx.Dialog):
     def chosen_tools(self) -> tuple[str, ...]:
         """The keys of the tools chosen for this chat, see tools.tool_key."""
         return tuple(key for key, box in self.tool_boxes.items() if key in self.available and box.GetValue())
+
+    def chosen_transcribe(self) -> str:
+        """The transcript mode chosen for this chat, see session_store.TRANSCRIBE_MODES."""
+        return TRANSCRIBE_MODES[self.transcribe.GetSelection()]
 
     def _show_toggle(self) -> None:
         self.toggle_tools.SetLabel("Deselect all tools" if self.chosen_tools() else "Select all tools")
