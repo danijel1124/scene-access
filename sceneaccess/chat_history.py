@@ -125,7 +125,8 @@ def section_items(sections: dict[str, Any] | None, answered: bool = True) -> lis
         label = f"Section {entry['index'] + 1} ({span}{checked}{state})"
         items.append(_folded(label, entry["text"]))
         if review and review.get("found"):
-            items.append(_folded(f"Check of section {entry['index'] + 1}, found",
+            by = f" by {review['reviewer_model']}" if review.get("reviewer_model") else ""
+            items.append(_folded(f"Check of section {entry['index'] + 1}{by}, found",
                                  f"{review['found']}\n\nThe first description:\n\n{review.get('first_text', '')}"))
     if answered and (sections or {}).get("joined"):
         items.append(_folded("Sections joined without the model", sections["joined"]))

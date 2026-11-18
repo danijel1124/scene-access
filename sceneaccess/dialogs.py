@@ -339,6 +339,9 @@ class SettingsDialog(wx.Dialog):
         self.llama_cpp_api_key = wx.TextCtrl(self, value=config.llama_cpp_api_key, style=wx.TE_PASSWORD)
         sections_label = "llama.cpp: describe longer videos in sections of at most this many seconds (0 = whole video)"
         self.llama_cpp_sections = wx.TextCtrl(self, value=str(config.llama_cpp_section_seconds), name=sections_label)
+        reviewer_label = ("Sections: OpenRouter model that checks each section's description, gets only text "
+                          "(empty = the chat's own model)")
+        self.section_reviewer = wx.TextCtrl(self, value=config.section_reviewer_model, name=reviewer_label)
         tool_rounds_label = "Maximum tool rounds per answer (0 disables tools)"
         # A text field avoids the platform-dependent upper bound of a native spin control.
         self.max_tool_rounds = wx.TextCtrl(self, value=str(config.max_tool_rounds), name=tool_rounds_label)
@@ -382,6 +385,7 @@ class SettingsDialog(wx.Dialog):
                                ("llama.cpp model (optional)", self.llama_cpp_model),
                                ("llama.cpp API key (optional)", self.llama_cpp_api_key),
                                (sections_label, self.llama_cpp_sections),
+                               (reviewer_label, self.section_reviewer),
                                ("YouTube quality", self.youtube_quality), ("Download folder", self.download_dir),
                                ("Downloaded file name", self.filename_button), ("YouTube sign-in", self.cookies_button),
                                ("Prompt profiles", self.profiles_button), ("Sound", self.audio_only),
@@ -417,6 +421,7 @@ class SettingsDialog(wx.Dialog):
                        llama_cpp_model=self.llama_cpp_model.GetValue().strip(),
                        llama_cpp_api_key=self.llama_cpp_api_key.GetValue().strip(),
                        llama_cpp_section_seconds=section_seconds,
+                       section_reviewer_model=self.section_reviewer.GetValue().strip(),
                        youtube_max_height=self.heights[self.youtube_quality.GetSelection()],
                        # Keep "default" as empty, so it keeps following the Videos folder.
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,

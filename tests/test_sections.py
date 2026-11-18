@@ -241,6 +241,35 @@ def test_a_section_that_only_retells_is_checked_and_described_anew_with_its_vide
     assert shown[3].startswith("Sections joined without the model")
 
 
+def test_a_reviewer_model_of_its_own_checks_with_text_only(tmp_path: Path):
+    from sceneaccess.sections import Reviewer
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=2)
+    writer = Scripted(describe=["00:01 A cup.", "00:31 A plate."], fix=["00:02 She lifts a cup."])
+    checks = []
+
+    class OtherModel:
+        def run_turn(self, session, messages, run_tool, on_event=None, routing=None, max_tool_rounds=6,
+                     on_delta=None):
+            checks.append((session.model, routing, messages))
+            answer = "- 00:01: says nothing about what is seen." if len(checks) == 1 else "OK"
+            return Turn(entries=[{"role": "assistant", "content": answer}],
+                        completion=Completion(answer, session.model, 1, None, None))
+
+    describe_in_sections(writer, session, "Describe it.", cut, Runner,
+                         lambda progress: store.save_sections(session.id, "o", progress), duration=60.0,
+                         reviewer=Reviewer(OtherModel(), "vendor/reviewer", {"provider": {"sort": "price"}}))
+    # The checks went to the reviewer, with its model and routing and without the video; the writer was asked
+    # only to describe, once anew where the reviewer found something.
+    assert [(model, routing) for model, routing, _messages in checks] == [("vendor/reviewer", {"provider": {"sort": "price"}})] * 2
+    assert all("video_url" not in json.dumps(messages) for _model, _routing, messages in checks)
+    assert not any("You are the reviewer" in json.dumps(messages) for messages in writer.requests)
+    progress = store.get_session(session.id, "o").sections
+    assert progress["sections"][0]["text"] == "00:02 She lifts a cup."
+    rows = chat_history_rows("Describe it.", [{"role": "assistant", "content": "Whole."}], sections=progress)
+    assert any(row[0].startswith("Check of section 1 by vendor/reviewer, found") for row in rows)
+
+
 def test_a_description_stopped_before_its_check_is_checked_when_continued(tmp_path: Path):
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)

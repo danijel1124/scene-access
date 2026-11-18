@@ -31,7 +31,7 @@ from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .session_store import TRANSCRIBE_MODES, VideoSession, VideoSessionStore
 from .tools import ToolRunner, provider_tools
-from .sections import cut_sections, describe_in_sections, needs_sections, section_sound, video_duration
+from .sections import Reviewer, cut_sections, describe_in_sections, needs_sections, section_sound, video_duration
 from .transcript import model_hears, sound_parts, wants_transcript, with_sound
 
 
@@ -73,10 +73,14 @@ def show_chat(session: VideoSession, out: TextIO) -> None:
 
 
 def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextIO, transcribe: str = "",
-            section_seconds: int | None = None) -> None:
+            section_seconds: int | None = None, reviewer: str | None = None) -> None:
     """transcribe sets the copy's transcript mode; empty keeps the chat's. section_seconds describes a longer
-    video in sections of at most that length, as the app does; None keeps the chat's, 0 sends it whole."""
+    video in sections of at most that length, as the app does; None keeps the chat's, 0 sends it whole.
+    reviewer is the OpenRouter model that checks the sections; None keeps the one in Settings, empty the
+    model that wrote them."""
     config = load_config(data_dir / "config.json")
+    if reviewer is not None:
+        config = replace(config, section_reviewer_model=reviewer)
     catalog = ModelCatalog(OPENROUTER_URL)
     work = Path(tempfile.mkdtemp(prefix="sceneaccess-compare-"))
     try:
@@ -89,7 +93,9 @@ def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextI
                        section_seconds=session.section_seconds if section_seconds is None else section_seconds)
         print(f"{session.title} | transcript mode {copy.transcribe}, {session.transcript_state} | "
               f"system prompt updated: {copy.system_prompt != session.system_prompt} | "
-              f"sections: {copy.section_seconds or 'none'}", file=out)
+              f"sections: {copy.section_seconds or 'none'}"
+              + (f", checked by {config.section_reviewer_model or 'the same model'}" if copy.section_seconds else ""),
+              file=out)
         for name in models:
             compare_one(config, catalog, copy, name, out)
     finally:
@@ -153,13 +159,24 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
 
     tooled = replace(session, tools=provider_tools(session.tools, provider))
     try:
+        reviewer = None
+        if sectioned and config.section_reviewer_model:
+            key = resolve_openrouter_key(config)
+            if not key:
+                raise ValueError(f"The reviewer model {config.section_reviewer_model} runs on OpenRouter, and no "
+                                 "OpenRouter API key is configured.")
+            reviewer = Reviewer(OpenRouterClient(key, ignored_providers=config.ignored_providers),
+                                config.section_reviewer_model,
+                                routing(config.section_reviewer_model, False, catalog, config.ignored_providers,
+                                        config.excluded_models))
         if sectioned:
             # As in the app, but the progress stays with this comparison.
             turn = describe_in_sections(
                 client, tooled, session.initial_question, cut_sections(session, duration),
                 lambda: ToolRunner(session, config.youtube_cookies), lambda _progress: None, duration=duration,
                 sound=(lambda section: section_sound(session, section)) if track else None,
-                on_event=step, on_delta=piece, routing=options, max_tool_rounds=config.max_tool_rounds)
+                on_event=step, on_delta=piece, routing=options, max_tool_rounds=config.max_tool_rounds,
+                reviewer=reviewer)
         else:
             turn = client.run_turn(tooled, messages, runner.run, step, options, max_tool_rounds=config.max_tool_rounds,
                                    on_delta=piece)
@@ -192,6 +209,9 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
                                 help="transcript mode for this comparison only (default: the chat's)")
     compare_parser.add_argument("--sections", type=int, metavar="SECONDS",
                                 help="describe a longer video in sections of at most this many seconds (0: whole)")
+    compare_parser.add_argument("--reviewer", metavar="MODEL",
+                                help='OpenRouter model that checks the sections (default: Settings; "" for the same '
+                                     "model)")
     args = parser.parse_args(argv)
     data_dir = args.data_dir or default_data_dir()
     store = open_store(data_dir / "config.json", OWNER_ID, LEGACY_OWNER_ID)
@@ -200,7 +220,8 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     elif args.command == "show":
         show_chat(find_chat(store, args.chat), out)
     else:
-        compare(data_dir, find_chat(store, args.chat), args.models, out, args.transcribe or "", args.sections)
+        compare(data_dir, find_chat(store, args.chat), args.models, out, args.transcribe or "", args.sections,
+                args.reviewer)
     return 0
 
 

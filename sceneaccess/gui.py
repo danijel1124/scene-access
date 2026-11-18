@@ -31,7 +31,7 @@ from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
                     provider_tools, tool_definitions, tool_key, tools_for_provider)
-from .sections import cut_sections, describe_in_sections, needs_sections, section_sound, video_duration
+from .sections import Reviewer, cut_sections, describe_in_sections, needs_sections, section_sound, video_duration
 from .transcript import make_transcript, model_hears, sound_parts, wants_transcript, with_sound
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
@@ -900,6 +900,14 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                                                           search_options) if openrouter else None))
 
                 tooled = replace(session, tools=provider_tools(session.tools, session.provider))
+                reviewer = None
+                if sectioned and config.section_reviewer_model:
+                    if not openrouter:
+                        raise ValueError(f"The reviewer model {config.section_reviewer_model} in Settings runs on "
+                                         "OpenRouter, and no OpenRouter API key is configured.")
+                    reviewer = Reviewer(openrouter, config.section_reviewer_model,
+                                        routing(config.section_reviewer_model, False, catalog,
+                                                config.ignored_providers, config.excluded_models))
                 if sectioned:
                     # Each section's sound goes along for a model on a llama.cpp server that hears.
                     turn = describe_in_sections(
@@ -907,7 +915,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                         lambda progress: self.store.save_sections(session_id, OWNER_ID, progress), duration=duration,
                         sound=(lambda section: section_sound(session, section, control)) if hears and llama_cpp else None,
                         on_event=on_event, on_delta=on_delta, routing=options, max_tool_rounds=config.max_tool_rounds,
-                        model_name=served_model)
+                        model_name=served_model, reviewer=reviewer)
                 else:
                     runner = new_runner()
                     turn = client.run_turn(tooled, messages, runner.run, on_event, options,

@@ -31,6 +31,15 @@ TRANSCRIPT_LINE = re.compile(r"^\[(\d+(?::\d{2}){1,2})\]")
 
 
 @dataclass(frozen=True)
+class Reviewer:
+    """Who checks the sections' descriptions, when not the model that wrote them: a client, its model and the
+    routing for it, e.g. an OpenRouter model for a chat on the user's own server. It gets only text."""
+    client: Any
+    model: str
+    routing: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
 class Section:
     index: int
     start: float
@@ -134,12 +143,12 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
                          duration: float, sound: Callable[[Section], list[dict[str, Any]]] | None = None,
                          on_event: EventHandler | None = None, on_delta: DeltaHandler | None = None,
                          routing: dict[str, Any] | None = None, max_tool_rounds: int = 6,
-                         model_name: str = "", review: bool = True) -> Turn:
+                         model_name: str = "", review: bool = True, reviewer: Reviewer | None = None) -> Turn:
     """Describes each section not yet described, saving the progress after each one, then asks for the answer
     to question for the whole video. new_runner gives a tools.ToolRunner per section; its images are not kept,
     as only the descriptions are stored. sound gives a section's sound for a model that gets it apart from the
-    video; model_name see progress_key. With review, each description is checked (see section_review.py) and,
-    if anything was found, described anew once. Before the last request the sections are also stored joined
+    video; model_name see progress_key. With review, each description is checked (see section_review.py), by
+    reviewer if given, else by the same model, and, if anything was found, described anew once. Before the last request the sections are also stored joined
     without a model, as "joined". Returns the turn of the last request, whose answer answers question and whose
     usage counts all requests."""
     notify = on_event or (lambda _kind, _text: None)
@@ -177,13 +186,17 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         # The check has no video and no chat, so it judges only the text against the rules and what is said.
         notify("section", f"Checking section {number}")
         found = mechanical_findings(entry["text"], heard, section.start, section.end)
-        check = client.run_turn(replace(session, tools=[]), review_messages(
-            entry["text"], heard if session.sends_transcript else None, number, section.start, section.end,
-            question),
-            lambda *_: None, on_event, routing, max_tool_rounds=0, on_delta=on_delta)
+        check = (reviewer.client if reviewer else client).run_turn(
+            replace(session, tools=[], **({"model": reviewer.model} if reviewer else {})),
+            review_messages(entry["text"], heard if session.sends_transcript else None, number, section.start,
+                            section.end, question),
+            lambda *_: None, on_event, reviewer.routing if reviewer else routing, max_tool_rounds=0,
+            on_delta=on_delta)
         found += reviewer_findings(check.completion.answer)
         entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())
-        entry["review"] = {"found": "\n".join(found), "reviewer": check.completion.answer.strip()}
+        entry["review"] = {"found": "\n".join(found), "reviewer": check.completion.answer.strip(),
+                           # Named only when another model checked, so the Chat history says who.
+                           "reviewer_model": check.completion.model if reviewer else ""}
         if found:
             notify("section", f"Describing section {number} again: the check found {len(found)} problems")
             turn = ask(section, described[:position], heard, fix_request(entry["text"], found))

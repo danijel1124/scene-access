@@ -175,6 +175,14 @@ def test_the_section_length_for_llama_cpp_round_trips_and_defaults_to_whole_vide
     assert load_config(path).llama_cpp_section_seconds == expected
 
 
+def test_the_section_reviewer_model_round_trips_and_defaults_to_the_chats_own(tmp_path: Path):
+    path = tmp_path / "config.json"
+    path.write_text('{"model": "m"}', encoding="utf-8")
+    assert load_config(path).section_reviewer_model == ""
+    save_config(path, AppConfig(section_reviewer_model="google/gemini-3-flash"))
+    assert load_config(path).section_reviewer_model == "google/gemini-3-flash"
+
+
 @pytest.mark.parametrize("stored, expected", [(None, "auto"), ("on", "on"), ("off", "off"), ("sometimes", "auto")])
 def test_the_transcript_mode_for_new_chats_round_trips_and_defaults_to_auto(tmp_path: Path, stored, expected):
     path = tmp_path / "config.json"
