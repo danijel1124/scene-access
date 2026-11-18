@@ -22,18 +22,24 @@ TRANSCRIPT_TEXT = re.compile(r"^\[[\d:]+\]\s*")
 # zeigt ihr spezielles Schneidebrett.", stayed below 0.5. What is retold in other words or another language
 # scores near 0; the reviewer finds that.
 RETOLD_SIMILARITY = 0.7
-# Words that say what someone says, in German and English, e.g. "Sie erwähnt", "während sie über den Deckel
-# spricht", "She mentions". "zeigt" (shows, points) is about what is seen and stays out.
-SPEECH = re.compile(r"\b(erwähn\w*|sprich\w*|spricht|redet|sagt|erklär\w*|erzähl\w*|betont|meint|"
-                    r"beschreibt, (dass|wie|warum)|mention\w*|talks? about|speaks? about|says?|explain\w*|"
-                    r"tells?|emphasi[sz]\w*)\b", re.IGNORECASE)
+# Words that almost always mean speech, in German and English, e.g. "Sie erwähnt", "während sie über den Deckel
+# spricht", "She mentions". Words that also fit what is seen stay with the reviewer, which sees the context:
+# "says" (a sign that says "Open"), "betont" (the make-up stresses her eyes), "spricht in die Kamera".
+SPEECH = re.compile(r"\b(erwähn\w*|(spricht|sprechen|redet|reden) (über|von)|"
+                    # In a German subordinate clause the verb comes last: "während sie über das Drehen spricht".
+                    r"(über|von) (\w+ ){1,4}(spricht|sprechen|redet|reden)|erzähl\w*|(sagt|erklärt|meint),? "
+                    r"(dass|wie|warum)|mention\w*|(talks?|talking|speaks?|speaking) (about|of)|"
+                    r"(says|explains?|tells?)( us)? (that|how|why))\b", re.IGNORECASE)
 # A line at the start of a section this alike to one at the end of the section before says the same again.
 REPEATED_SIMILARITY = 0.85
 # A reviewer's whole answer when it finds nothing.
 NOTHING_FOUND = "OK"
-NOTHING_LISTED = re.compile(r"^\W*(ok|none|no (problems?|issues?|violations?|errors?)|nothing( found)?|"
+NOTHING_LISTED = re.compile(r"^\W*(ok|okay|fine|good|correct|yes|ja|passt|in ordnung|none|"
+                            r"no (problems?|issues?|violations?|errors?)( found)?|nothing( found)?|"
                             r"keine?( (verstöße|fehler|probleme|beanstandungen))?( gefunden)?|nichts( gefunden)?)"
                             r"\W*$", re.IGNORECASE)
+# What a reviewer may put before its verdict on a line: the line's time, or one of the four questions ("a.").
+LINE_PREFIX = re.compile(r"^\W*(\d{1,2}:\d{2}(:\d{2})?\W*)?([a-d][.)]\s*)?(\w+( \w+)?\s*[:?]\s*)?", re.IGNORECASE)
 
 # Who the reviewer is and what it does: its own system prompt, as it is a model of its own in this request
 # and must not take the describer's prompt for its task (user's wish, 18.11.2026).
@@ -50,11 +56,14 @@ REVIEWER_SYSTEM_PROMPT = (
     "also as \"while she talks about …\"? The blind person hears the speech, so any of it is a problem.\n"
     "   c. Is it in the language of the question?\n"
     "   d. Is a word misspelt, e.g. a digit inside a word?\n"
-    "3. Note the line only if one of the questions finds a problem. If you are unsure, the line is fine.\n"
-    "4. Then answer at once.\n\n"
+    "3. Decide each question once. Note the line only if one of the questions finds a problem. If you are unsure, "
+    "the line is fine.\n"
+    "4. When you reach the last line, the check is over: write your answer at once.\n\n"
+    "What you have decided is checked and closed: never think about a line or a question again once you have "
+    "decided it, and never go back up the list, not even to ask whether there are other problems. A problem you "
+    "found is noted and done; finding it again adds nothing.\n\n"
     "Over-analysing is the mistake to avoid: one pass is enough, and checking longer does not make the check "
-    "better. Do not go back to a line you have checked, do not check a line twice, and do not sort the lines into "
-    "kinds such as actions or details. Do not judge whether what is described is true, as you cannot see it, and "
+    "better. Do not sort the lines into kinds such as actions or details. Do not judge whether what is described is true, as you cannot see it, and "
     "do not rewrite the description.\n\n"
     "Your answer: every line with a problem, one per line starting with \"- \", with the time of the line and the "
     "question it fails. If no line has a problem, answer only " + NOTHING_FOUND + ".")
@@ -62,7 +71,7 @@ REVIEW_TASK = ("Part {number} of the video, from {start} to {end}. The question:
                "The description:\n\n{text}\n\nThe transcript of this part:\n\n{heard}")
 FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found these problems:\n\n{found}\n\n"
             "Write the description of this part anew and fix them: where you repeated what is said, describe what "
-            "can be seen at that time instead.")
+            "can be seen at that time instead. Write the corrected description once, without drafts.")
 
 
 def _content(line: str) -> str:
@@ -137,9 +146,11 @@ def reviewer_findings(answer: str) -> list[str]:
     found nothing, however it says so: a model answering in the question's language writes "OK, keine Fehler."
     or "**OK**" as often as OK, and taking that for a finding would describe every section twice."""
     listed = [line.strip()[2:].strip() for line in answer.splitlines() if line.strip().startswith(("- ", "* ", "• "))]
-    # Nothing found, written as a list line: "- Keine Verstöße.", "- None." A finding such as "- Keine Zeitangabe
-    # bei 00:13" names what is missing, so only such a line alone counts as nothing found.
-    return [f"- {line}" for line in listed if line and not NOTHING_LISTED.match(line)]
+    # Nothing found, written as a list line: "- Keine Verstöße.", "- None.", also after the line's time or one of
+    # the four questions, as a model going through them writes "- 00:13: OK" or "* a. Time: Yes". A finding
+    # such as "- Keine Zeitangabe bei 00:13" names what is missing, so only such a word alone counts as nothing.
+    return [f"- {line}" for line in listed
+            if line and not NOTHING_LISTED.match(line) and not NOTHING_LISTED.match(LINE_PREFIX.sub("", line, count=1))]
 
 
 def fix_request(text: str, found: list[str]) -> str:

@@ -120,17 +120,30 @@ def section_items(sections: dict[str, Any] | None, answered: bool = True) -> lis
     for entry in described:
         span = f"{format_time(round(entry['start']))} to {format_time(round(entry['end']))}"
         review = entry.get("review")
-        checked = "" if review is None else (", described again after the check" if review.get("found")
-                                             else ", checked")
-        label = f"Section {entry['index'] + 1} ({span}{checked}{state})"
+        label = f"Section {entry['index'] + 1} ({span}{_checked(review)}{state})"
         items.append(_folded(label, entry["text"]))
-        if review and review.get("found"):
+        if review and (review.get("found") or review.get("failed")):
             by = f" by {review['reviewer_model']}" if review.get("reviewer_model") else ""
+            failed = f"The model's check was {review['failed']}; only the mechanical check counted.\n\n" \
+                if review.get("failed") else ""
+            first = (f"\n\nThe first description:\n\n{review['first_text']}" if review.get("first_text")
+                     else "\n\nDescribing the section again failed, so this description stays."
+                     if review.get("fix_failed") else "")
             items.append(_folded(f"Check of section {entry['index'] + 1}{by}, found",
-                                 f"{review['found']}\n\nThe first description:\n\n{review.get('first_text', '')}"))
+                                 f"{failed}{review.get('found') or 'Nothing found.'}{first}"))
     if answered and (sections or {}).get("joined"):
         items.append(_folded("Sections joined without the model", sections["joined"]))
     return items
+
+
+def _checked(review: dict[str, Any] | None) -> str:
+    """What a section's label says about its check: never "checked" for a check that did not finish."""
+    if review is None:
+        return ""
+    if review.get("found"):
+        return (", check found problems, describing it again failed" if review.get("fix_failed")
+                else ", described again after the check")
+    return ", check failed" if review.get("failed") else ", checked"
 
 
 def _folded(label: str, text: str) -> tuple[str, str]:

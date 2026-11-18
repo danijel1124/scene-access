@@ -378,6 +378,19 @@ def test_streamed_tool_calls_and_reasoning_go_back_as_without_streaming(tmp_path
     assert turn.entries[-1]["sources"] == [{"title": "A", "url": "https://example.com/a"}]
 
 
+def test_an_answer_cut_off_at_the_token_limit_says_so(tmp_path: Path):
+    _store, session = _tool_session(tmp_path)
+    # llama.cpp sends why the answer ended in the last chunk with a choice; "length" means it was cut off.
+    cut = [_delta(reasoning="Wait, let me check again."), {"choices": [{"delta": {}, "finish_reason": "length"}]}]
+    turn = OpenRouterClient("k", opener=lambda request, timeout: StreamResponse(cut)).run_turn(
+        session, session.messages, lambda *_: None, on_delta=lambda *_: None)
+    assert turn.completion.cut_off and turn.completion.answer == ""
+    done = [_delta(content="A jacket."), {"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+    turn = OpenRouterClient("k", opener=lambda request, timeout: StreamResponse(done)).run_turn(
+        session, session.messages, lambda *_: None, on_delta=lambda *_: None)
+    assert not turn.completion.cut_off and turn.completion.finish_reason == "stop"
+
+
 def test_a_server_that_does_not_stream_still_gives_the_whole_answer(tmp_path: Path):
     _store, session = _tool_session(tmp_path)
 

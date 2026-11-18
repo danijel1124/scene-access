@@ -40,6 +40,13 @@ class Completion:
     tools_unavailable: bool = False
     # The provider that served the answer, e.g. CoreWeave. Each provider keeps its own cache.
     provider: str = ""
+    # Why the answer ended: "stop" when done, "length" when cut off at the token or context limit.
+    finish_reason: str = ""
+
+    @property
+    def cut_off(self) -> bool:
+        """True when the answer did not end on its own; whatever it holds is not a whole answer."""
+        return self.finish_reason == "length"
 
     def usage_record(self) -> dict[str, Any]:
         return {
@@ -101,6 +108,7 @@ def _read_stream(response: Any, on_delta: DeltaHandler) -> dict[str, Any]:
     details: dict[tuple[Any, Any], dict[str, Any]] = {}
     annotations: list[dict[str, Any]] = []
     data: dict[str, Any] = {}
+    finish_reason = None
     unstreamed, streamed = [], False
     for raw in response:
         line = raw.decode("utf-8").strip()
@@ -116,6 +124,7 @@ def _read_stream(response: Any, on_delta: DeltaHandler) -> dict[str, Any]:
             return {"error": chunk["error"]}
         data.update({key: chunk[key] for key in ("model", "provider", "usage") if chunk.get(key)})
         for choice in chunk.get("choices") or []:
+            finish_reason = choice.get("finish_reason") or finish_reason
             delta = choice.get("delta") or {}
             # llama.cpp calls the reasoning reasoning_content, OpenRouter reasoning.
             thinking = delta.get("reasoning_content") or delta.get("reasoning")
@@ -149,7 +158,7 @@ def _read_stream(response: Any, on_delta: DeltaHandler) -> dict[str, Any]:
         message["reasoning_details"] = list(details.values())
     if annotations:
         message["annotations"] = annotations
-    return {**data, "choices": [{"message": message}]}
+    return {**data, "choices": [{"message": message, "finish_reason": finish_reason}]}
 
 
 class OpenRouterClient:
@@ -408,6 +417,7 @@ def _completion(data: dict[str, Any], session: VideoSession, responses: list[dic
         requests=len(responses),
         tools_unavailable=tools_unavailable,
         provider=str(data.get("provider") or ""),
+        finish_reason=str(data["choices"][0].get("finish_reason") or ""),
     )
 
 

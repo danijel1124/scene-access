@@ -202,8 +202,53 @@ class Scripted:
         kind = ("merge" if "give the one answer" in text else "check" if "You are the reviewer" in text
                 else "fix" if "Your first description" in text else "describe")
         answer = self.answers[kind].pop(0) if kind != "merge" else "Whole."
+        # An answer given as CUT is what a server sends when the token or context limit stops it.
+        finish = "length" if answer is CUT else "stop"
+        answer = "" if answer is CUT else answer
         return Turn(entries=[{"role": "assistant", "content": answer, "thinking": f"{kind} thoughts"}],
-                    completion=Completion(answer, "m", 1, None, None))
+                    completion=Completion(answer, "m", 1, None, None, finish_reason=finish))
+
+
+CUT = object()
+
+
+def test_a_check_cut_off_never_passes_and_only_the_mechanical_check_counts(tmp_path: Path):
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=2)
+    model = Scripted(describe=["00:01 A cup.", "00:31 Sie erwähnt den Teller."], check=[CUT, CUT],
+                     fix=["00:32 She lifts a plate."])
+    describe_in_sections(model, session, "Describe it.", cut, Runner,
+                         lambda progress: store.save_sections(session.id, "o", progress), duration=60.0)
+    first, second = store.get_session(session.id, "o").sections["sections"]
+    # Nothing mechanical in section 1 and its check cut off: it stays, marked as not checked.
+    assert first["review"]["failed"] == "cut off at the token limit" and first["review"]["found"] == ""
+    # Section 2 is described anew for what the mechanical check found, the cut-off check aside.
+    assert "says what is said" in second["review"]["found"] and second["text"] == "00:32 She lifts a plate."
+    rows = [row[0] for row in chat_history_rows("Describe it.", [{"role": "assistant", "content": "Whole."}],
+                                                 sections=store.get_session(session.id, "o").sections)]
+    assert any(row.startswith("Section 1 (00:00 to 00:30, check failed)") for row in rows)
+    assert not any(row.startswith("Section 1 (00:00 to 00:30, checked)") for row in rows)
+
+
+def test_a_description_cut_off_is_not_stored_and_one_described_anew_cut_off_keeps_the_first(tmp_path: Path):
+    from sceneaccess.sections import SectionCutOff
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=2)
+
+    def save(progress):
+        store.save_sections(session.id, "o", progress)
+
+    with pytest.raises(SectionCutOff, match="section 2 was cut off"):
+        describe_in_sections(Scripted(describe=["00:01 A cup.", CUT], check=["OK"]), session, "Describe it.", cut,
+                             Runner, save, duration=60.0)
+    assert [entry["index"] for entry in store.get_session(session.id, "o").sections["sections"]] == [0]
+    describe_in_sections(Scripted(describe=["00:31 Sie erwähnt den Teller."], check=["OK"], fix=[CUT]),
+                         store.get_session(session.id, "o"), "Describe it.", cut, Runner, save, duration=60.0)
+    second = store.get_session(session.id, "o").sections["sections"][1]
+    assert second["text"] == "00:31 Sie erwähnt den Teller." and second["review"]["fix_failed"] is True
+    rows = [row[0] for row in chat_history_rows("Describe it.", [{"role": "assistant", "content": "Whole."}],
+                                                 sections=store.get_session(session.id, "o").sections)]
+    assert any("check found problems, describing it again failed" in row for row in rows)
 
 
 def test_a_section_that_only_retells_is_checked_and_described_anew_with_its_video(tmp_path: Path):
@@ -306,8 +351,12 @@ def test_the_mechanical_check_finds_repeated_speech_and_wrong_times():
     assert mechanical_findings("00:26 Sie zeigt auf einen Akku-Staubsauger an der Wand.", heard, 0, 30) == []
     # Saying what someone talks about is not: the blind person hears it.
     for line in ("00:09 Sie erwähnt den Deckel.", "00:19 Sie hält die Tube, während sie über das Drehen spricht.",
-                 "00:26 She mentions a corded vacuum cleaner.", "00:23 Sie erklärt ihre Handgriffe."):
+                 "00:26 She mentions a corded vacuum cleaner.", "00:23 Sie erklärt, wie sie die Tube hält."):
         assert "says what is said" in mechanical_findings(line, heard, 0, 30)[0], line
+    # Words that also fit what is seen are left to the reviewer, which sees the context.
+    for line in ('00:05 Ein Schild an der Tür says "Open".', "00:06 Das Make-up betont ihre Augen.",
+                 "00:07 Sie spricht in die Kamera und lächelt.", "00:08 Sie zeigt auf den Deckel."):
+        assert mechanical_findings(line, "", 0, 30) == [], line
 
 
 def test_the_sections_are_joined_without_what_repeats_where_two_meet():
@@ -331,6 +380,10 @@ def test_a_reviewer_that_finds_nothing_lists_nothing():
         assert reviewer_findings(nothing) == []
     # A finding that starts with such a word still names what is wrong.
     assert reviewer_findings("- Keine Zeitangabe bei 00:13.") == ["- Keine Zeitangabe bei 00:13."]
+    # A reviewer going through the lines and its four questions writes a verdict for each; those that are fine
+    # are no findings.
+    assert reviewer_findings("- 00:13: OK\n* a. Time: Yes\n- 00:15: No issues\n- 00:19: spricht über das Drehen") == [
+        "- 00:19: spricht über das Drehen"]
     assert reviewer_findings("Problems:\n- 00:13: retells\n* 00:26: quotes") == ["- 00:13: retells", "- 00:26: quotes"]
 
 

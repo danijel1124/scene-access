@@ -30,6 +30,10 @@ LIMIT_MARGIN = 0.98
 TRANSCRIPT_LINE = re.compile(r"^\[(\d+(?::\d{2}){1,2})\]")
 
 
+class SectionCutOff(RuntimeError):
+    """A section's description ended at the token limit or empty; the sections before it are stored."""
+
+
 @dataclass(frozen=True)
 class Reviewer:
     """Who checks the sections' descriptions, when not the model that wrote them: a client, its model and the
@@ -124,9 +128,11 @@ SECTION_TASK = ("\n\nYour task: describe part {number} of {count}, from {span}, 
                 "Give every time as mm:ss in the whole video, between {start} and {end}, at the moments when "
                 "something changes in the picture, not at the times of the transcript. Mention what goes on from "
                 "the part before only if something new happens.\n\n"
-                "How to work: look at the part, then write the description once. Do not draft the list several "
-                "times, do not check each line against the transcript, and do not go back over what you wrote; "
-                "over-analysing is the mistake to avoid, and thinking longer does not make the description better. "
+                "How to work: look at the part, then write the description once, from its start to its end. A "
+                "moment you have described is done: never think about it again, and when you reach the end of the "
+                "part, the description is finished. Do not draft the list several times, do not check each line "
+                "against the transcript, and do not go back over what you wrote; over-analysing is the mistake to "
+                "avoid, and thinking longer does not make the description better. "
                 "Start right away with the first time, with nothing before it; do not repeat this task, the "
                 "transcript or what you wrote about earlier parts. Answer in the language of the question: "
                 "{question}")
@@ -190,6 +196,12 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         if position >= len(described):
             notify("section", f"Section {number} of {len(sections)}, {span}")
             turn = ask(section, described[:position], heard)
+            if turn.completion.cut_off or not turn.completion.answer.strip():
+                # Not stored: a description cut off at the token limit is no description, and sending the first
+                # question again continues with this section.
+                raise SectionCutOff(f"The description of section {number} was "
+                                    f"{'cut off at the token limit' if turn.completion.cut_off else 'empty'}; "
+                                    "the sections before it are kept. Send the first question again to continue.")
             described.append({"index": section.index, "start": section.start, "end": section.end,
                               "text": without_part_heading(turn.completion.answer),
                               "thinking": turn.entries[-1].get("thinking", ""),
@@ -207,18 +219,27 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
                             section.end, question),
             lambda *_: None, on_event, reviewer.routing if reviewer else routing, max_tool_rounds=0,
             on_delta=on_delta)
-        found += reviewer_findings(check.completion.answer)
+        # A check cut off or empty never passes: only the mechanical check counts then, and the Chat history says
+        # the check failed (Gemma 4 12B once thought until the context was full and wrote nothing).
+        failed = ("cut off at the token limit" if check.completion.cut_off
+                  else "empty" if not check.completion.answer.strip() else "")
+        if not failed:
+            found += reviewer_findings(check.completion.answer)
         entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())
         entry["review"] = {"found": "\n".join(found), "reviewer": check.completion.answer.strip(),
                            # Named only when another model checked, so the Chat history says who.
-                           "reviewer_model": check.completion.model if reviewer else ""}
+                           "reviewer_model": check.completion.model if reviewer else "", "failed": failed}
         if found:
             notify("section", f"Describing section {number} again: the check found {len(found)} problems")
             turn = ask(section, described[:position], heard, fix_request(entry["text"], found))
-            entry["review"].update(first_text=entry["text"], first_thinking=entry.get("thinking", ""))
-            entry["text"] = without_part_heading(turn.completion.answer)
-            entry["thinking"] = turn.entries[-1].get("thinking", "")
             entry["usage"] = _added(entry["usage"], turn.completion.usage_record())
+            if turn.completion.cut_off or not turn.completion.answer.strip():
+                # The first description stays; a cut-off one would be worse than one with known problems.
+                entry["review"]["fix_failed"] = True
+            else:
+                entry["review"].update(first_text=entry["text"], first_thinking=entry.get("thinking", ""))
+                entry["text"] = without_part_heading(turn.completion.answer)
+                entry["thinking"] = turn.entries[-1].get("thinking", "")
         save(progress)
     progress["joined"] = joined_without_repeats(described)
     save(progress)
