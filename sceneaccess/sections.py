@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 from .openrouter import DeltaHandler, EventHandler, Turn
 from .request_control import RequestControl
-from .section_review import (fix_request, joined_without_repeats, mechanical_findings, review_request,
+from .section_review import (fix_request, joined_without_repeats, mechanical_findings, review_messages,
                              reviewer_findings)
 from .session_store import SECTION_FILE_PREFIX, TRANSCRIPT_HELP, VideoSession, joined_sections
 from .tools import format_time, local_video, run_ffmpeg, video_size_and_duration
@@ -177,9 +177,9 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         # The check has no video and no chat, so it judges only the text against the rules and what is said.
         notify("section", f"Checking section {number}")
         found = mechanical_findings(entry["text"], heard, section.start, section.end)
-        check = client.run_turn(replace(session, tools=[]), [{"role": "user", "content": review_request(
+        check = client.run_turn(replace(session, tools=[]), review_messages(
             entry["text"], heard if session.sends_transcript else None, number, section.start, section.end,
-            question)}],
+            question),
             lambda *_: None, on_event, routing, max_tool_rounds=0, on_delta=on_delta)
         found += reviewer_findings(check.completion.answer)
         entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())

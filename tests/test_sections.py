@@ -196,7 +196,7 @@ class Scripted:
         self.requests.append(messages)
         if self.fail_on and self.fail_on in text:
             raise RuntimeError("fixture: server restarted")
-        kind = ("merge" if "give the one answer" in text else "check" if "You check a description" in text
+        kind = ("merge" if "give the one answer" in text else "check" if "You are the reviewer" in text
                 else "fix" if "Your first description" in text else "describe")
         answer = self.answers[kind].pop(0) if kind != "merge" else "Whole."
         return Turn(entries=[{"role": "assistant", "content": answer, "thinking": f"{kind} thoughts"}],
@@ -215,8 +215,10 @@ def test_a_section_that_only_retells_is_checked_and_described_anew_with_its_vide
     requests = [json.dumps(messages) for messages in model.requests]
     # The check sees neither the video nor the chat: only the description, the transcript and the rules.
     check = model.requests[1]
-    assert len(check) == 1 and check[0]["role"] == "user" and "video_url" not in requests[1]
-    assert "Hello there my dear friends." in requests[1] and "between 00:00 and 00:30" in requests[1]
+    # Its own system prompt tells it who it is; the describer's prompt ("Base.") is not sent to it.
+    assert [message["role"] for message in check] == ["system", "user"] and "video_url" not in requests[1]
+    assert check[0]["content"].startswith("You are the reviewer") and "Base." not in requests[1]
+    assert "Hello there my dear friends." in requests[1] and "from 00:00 to 00:30" in requests[1]
     # Both checks found something, so the section went back to the model with its video and what was found.
     fix = requests[2]
     assert "video_url" in fix and "Your first description" in fix and "describe part 1 of 2" in fix
@@ -246,14 +248,14 @@ def test_a_description_stopped_before_its_check_is_checked_when_continued(tmp_pa
     def save(progress):
         store.save_sections(session.id, "o", progress)
 
-    failing = Scripted(fail_on="You check a description of part 1", describe=["00:01 A cup."])
+    failing = Scripted(fail_on="Part 1 of the video", describe=["00:01 A cup."])
     with pytest.raises(RuntimeError):
         describe_in_sections(failing, session, "Describe it.", cut, Runner, save, duration=60.0)
     model = Scripted(describe=["00:31 A plate."], check=["OK", "OK"])
     describe_in_sections(model, store.get_session(session.id, "o"), "Describe it.", cut, Runner, save, duration=60.0)
     kinds = [json.dumps(messages) for messages in model.requests]
     # Section 1 is not described again, only checked.
-    assert "You check a description of part 1" in kinds[0] and "describe part 1 of 2" not in " ".join(kinds)
+    assert "Part 1 of the video" in kinds[0] and "describe part 1 of 2" not in " ".join(kinds)
     assert [entry["review"]["found"] for entry in store.get_session(session.id, "o").sections["sections"]] == ["", ""]
 
 
@@ -297,7 +299,10 @@ def test_a_reviewer_that_finds_nothing_lists_nothing():
 
 
 def test_the_reviewer_is_not_told_nothing_is_said_when_it_gets_no_transcript():
-    from sceneaccess.section_review import review_request
+    from sceneaccess.section_review import review_messages
+
+    def review_request(*args):
+        return review_messages(*args)[1]["content"]
     assert "nothing is said in this part" in review_request("00:01 A cup.", "", 1, 0, 30, "Describe it.")
     without = review_request("00:01 A cup.", None, 1, 0, 30, "Describe it.")
     assert "no transcript is available" in without and "nothing is said" not in without

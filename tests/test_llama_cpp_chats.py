@@ -210,7 +210,7 @@ def section_reply(text, merged='The whole video.'):
     """What a model that keeps the rules answers to a request for a video in sections: OK to a check, a description
     starting at its part's first time, the merged answer to the last request."""
     import re
-    if 'You check a description' in text:
+    if 'You are the reviewer' in text:
         return 'OK'
     if 'give the one answer' in text:
         return merged
@@ -245,7 +245,7 @@ def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(
     frame._send('Describe it.', initial=True)
     # Each section is described and checked, then all are put together.
     assert frame.errors == [] and len(requests) == 5
-    assert 'describe part 1 of 2' in requests[0] and 'You check a description of part 1' in requests[1]
+    assert 'describe part 1 of 2' in requests[0] and 'You are the reviewer' in requests[1] and 'Part 1 of the video' in requests[1]
     assert 'describe part 2 of 2' in requests[2] and 'video_url' not in requests[1]
     stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
     assert [entry['text'] for entry in stored.sections['sections']] == ['00:00 Part 1.', '00:30 Part 2.']

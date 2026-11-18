@@ -30,15 +30,23 @@ NOTHING_LISTED = re.compile(r"^\W*(ok|none|no (problems?|issues?|violations?|err
                             r"keine?( (verstöße|fehler|probleme|beanstandungen))?( gefunden)?|nichts( gefunden)?)"
                             r"\W*$", re.IGNORECASE)
 
-REVIEW_TASK = (
-    "You check a description of part {number} of a video for a blind person; the part runs from {start} to {end}. "
-    "A model that saw the video wrote it. You do not see the video; below the description is an automatic "
-    "transcript of what is said in this part.\n\nThe rules: the description says what can be seen, the actions, "
-    "aids, objects and details; it does not retell or quote what is said, as the person hears that anyway. Every "
-    "line starts with a time as mm:ss between {start} and {end}, in order. It is in the language of this "
-    "question: {question}\n\nList every line that breaks a rule, one per line starting with \"- \", with the time "
-    "of the line and the rule it breaks. If no line breaks a rule, answer only {ok}.\n\nThe description:\n\n{text}"
-    "\n\nThe transcript of this part:\n\n{heard}")
+# Who the reviewer is and what it does: its own system prompt, as it is a model of its own in this request
+# and must not take the describer's prompt for its task (user's wish, 18.11.2026).
+REVIEWER_SYSTEM_PROMPT = (
+    "You are the reviewer in SceneAccess, an app that describes videos for blind people. Another model watched "
+    "a part of a video and described it; you check that description before the blind person gets it. You do not "
+    "see the video and do not describe it yourself. You get the description, the time span of the part, the "
+    "question the description answers and, if there is one, an automatic transcript of what is said in the part.\n\n"
+    "The rules a description must keep:\n"
+    "- It says what can be seen: the actions, aids, objects and details. It does not retell or quote what is said, "
+    "as the blind person hears that anyway; naming what is said only to explain what is seen is fine.\n"
+    "- Every line starts with a time as mm:ss within the part, and the times are in order.\n"
+    "- It is in the language of the question.\n\n"
+    "List every line that breaks a rule, one per line starting with \"- \", with the time of the line and the rule "
+    "it breaks. Do not judge whether what is described is true, as you cannot see it, and do not rewrite the "
+    "description. If no line breaks a rule, answer only " + NOTHING_FOUND + ".")
+REVIEW_TASK = ("Part {number} of the video, from {start} to {end}. The question: {question}\n\n"
+               "The description:\n\n{text}\n\nThe transcript of this part:\n\n{heard}")
 FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found these problems:\n\n{found}\n\n"
             "Write the description of this part anew and fix them: where you repeated what is said, describe what "
             "can be seen at that time instead.")
@@ -96,14 +104,17 @@ def mechanical_findings(text: str, heard: str, start: float, end: float) -> list
     return found
 
 
-def review_request(text: str, heard: str | None, number: int, start: float, end: float, question: str) -> str:
-    """heard is the transcript of the part, or None when the chat sends no transcript: then the reviewer must
-    not take speech the description mentions for made up."""
+def review_messages(text: str, heard: str | None, number: int, start: float, end: float,
+                    question: str) -> list[dict[str, Any]]:
+    """The reviewer's request: its own system prompt, then the part to check. heard is the transcript of the
+    part, or None when the chat sends no transcript: then the reviewer must not take speech the description
+    mentions for made up."""
     if heard is None:
         heard = "(no transcript is available; the model may have heard the speech itself)"
-    return REVIEW_TASK.format(number=number, start=format_time(round(start)), end=format_time(round(end)),
-                              question=question, ok=NOTHING_FOUND, text=text.strip(),
+    part = REVIEW_TASK.format(number=number, start=format_time(round(start)), end=format_time(round(end)),
+                              question=question, text=text.strip(),
                               heard=heard.strip() or "(nothing is said in this part)")
+    return [{"role": "system", "content": REVIEWER_SYSTEM_PROMPT}, {"role": "user", "content": part}]
 
 
 def reviewer_findings(answer: str) -> list[str]:
