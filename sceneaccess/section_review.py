@@ -22,6 +22,11 @@ TRANSCRIPT_TEXT = re.compile(r"^\[[\d:]+\]\s*")
 # zeigt ihr spezielles Schneidebrett.", stayed below 0.5. What is retold in other words or another language
 # scores near 0; the reviewer finds that.
 RETOLD_SIMILARITY = 0.7
+# Words that say what someone says, in German and English, e.g. "Sie erwähnt", "während sie über den Deckel
+# spricht", "She mentions". "zeigt" (shows, points) is about what is seen and stays out.
+SPEECH = re.compile(r"\b(erwähn\w*|sprich\w*|spricht|redet|sagt|erklär\w*|erzähl\w*|betont|meint|"
+                    r"beschreibt, (dass|wie|warum)|mention\w*|talks? about|speaks? about|says?|explain\w*|"
+                    r"tells?|emphasi[sz]\w*)\b", re.IGNORECASE)
 # A line at the start of a section this alike to one at the end of the section before says the same again.
 REPEATED_SIMILARITY = 0.85
 # A reviewer's whole answer when it finds nothing.
@@ -37,14 +42,22 @@ REVIEWER_SYSTEM_PROMPT = (
     "a part of a video and described it; you check that description before the blind person gets it. You do not "
     "see the video and do not describe it yourself. You get the description, the time span of the part, the "
     "question the description answers and, if there is one, an automatic transcript of what is said in the part.\n\n"
-    "The rules a description must keep:\n"
-    "- It says what can be seen: the actions, aids, objects and details. It does not retell or quote what is said, "
-    "as the blind person hears that anyway; naming what is said only to explain what is seen is fine.\n"
-    "- Every line starts with a time as mm:ss within the part, and the times are in order.\n"
-    "- It is in the language of the question.\n\n"
-    "List every line that breaks a rule, one per line starting with \"- \", with the time of the line and the rule "
-    "it breaks. Do not judge whether what is described is true, as you cannot see it, and do not rewrite the "
-    "description. If no line breaks a rule, answer only " + NOTHING_FOUND + ".")
+    "How to check, once and in this order:\n"
+    "1. Go through the description line by line, from top to bottom, exactly once.\n"
+    "2. For each line, ask only these four questions:\n"
+    "   a. Does it start with a time as mm:ss within the part, later than the line before?\n"
+    "   b. Does it say anything about the speech: what is said, quoted, mentioned, explained or talked about, "
+    "also as \"while she talks about …\"? The blind person hears the speech, so any of it is a problem.\n"
+    "   c. Is it in the language of the question?\n"
+    "   d. Is a word misspelt, e.g. a digit inside a word?\n"
+    "3. Note the line only if one of the questions finds a problem. If you are unsure, the line is fine.\n"
+    "4. Then answer at once.\n\n"
+    "Over-analysing is the mistake to avoid: one pass is enough, and checking longer does not make the check "
+    "better. Do not go back to a line you have checked, do not check a line twice, and do not sort the lines into "
+    "kinds such as actions or details. Do not judge whether what is described is true, as you cannot see it, and "
+    "do not rewrite the description.\n\n"
+    "Your answer: every line with a problem, one per line starting with \"- \", with the time of the line and the "
+    "question it fails. If no line has a problem, answer only " + NOTHING_FOUND + ".")
 REVIEW_TASK = ("Part {number} of the video, from {start} to {end}. The question: {question}\n\n"
                "The description:\n\n{text}\n\nThe transcript of this part:\n\n{heard}")
 FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found these problems:\n\n{found}\n\n"
@@ -93,12 +106,14 @@ def mechanical_findings(text: str, heard: str, start: float, end: float) -> list
             else:
                 # Only a time within the part sets the order; one outside it is reported already.
                 last = at
-        # Quoting what is said is fine when it explains what is seen; a line that is the speech and little else
-        # is not.
         if len(content.split()) >= 4 and any(_alike(content, words) >= RETOLD_SIMILARITY or
                                              (len(content) <= len(words) * 1.3 and content in words)
                                              for words in spoken):
             found.append(f"- {line}: this only repeats what is said; describe what can be seen instead.")
+        elif SPEECH.search(TIME_AT_START.sub("", line)):
+            # The blind person hears the speech, so saying what someone talks about adds nothing (user's wish).
+            found.append(f"- {line}: this says what is said, which the blind person hears; describe what can be "
+                         "seen instead, or leave the moment out.")
     if not timed:
         found.append("- The description gives no times; start each line with the time as mm:ss.")
     return found

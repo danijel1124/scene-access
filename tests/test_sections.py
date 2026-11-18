@@ -302,8 +302,12 @@ def test_the_mechanical_check_finds_repeated_speech_and_wrong_times():
     assert "out of order" in mechanical_findings("00:20 Eins.\n00:10 Zwei.", "", 0, 30)[0]
     assert mechanical_findings("Nur Text ohne Zeit.", "", 0, 30) == [
         "- The description gives no times; start each line with the time as mm:ss."]
-    # Seeing and naming what is said is fine.
+    # Saying what is seen is fine.
     assert mechanical_findings("00:26 Sie zeigt auf einen Akku-Staubsauger an der Wand.", heard, 0, 30) == []
+    # Saying what someone talks about is not: the blind person hears it.
+    for line in ("00:09 Sie erwähnt den Deckel.", "00:19 Sie hält die Tube, während sie über das Drehen spricht.",
+                 "00:26 She mentions a corded vacuum cleaner.", "00:23 Sie erklärt ihre Handgriffe."):
+        assert "says what is said" in mechanical_findings(line, heard, 0, 30)[0], line
 
 
 def test_the_sections_are_joined_without_what_repeats_where_two_meet():

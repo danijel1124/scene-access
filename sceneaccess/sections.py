@@ -118,11 +118,18 @@ def progress_key(session: VideoSession, question: str, model_name: str = "") -> 
 SECTION_TASK = ("\n\nYour task: describe part {number} of {count}, from {span}, of the video, which is {total} long "
                 "and comes in {count} parts, each with its own picture and sound. The video is what counts: describe "
                 "what can be seen in it, the actions, aids, objects and details that matter. What is said, and the "
-                "transcript, only help to understand it; do not retell them. "
-                "Give every time as mm:ss in the whole video, between {start} and {end}. Mention what goes on "
-                "from the part before only if something new happens. Start right away with the first time; do not "
-                "repeat this task, the transcript or what you wrote about earlier parts. Answer in the language of "
-                "the question: {question}")
+                "transcript, only help to understand it; do not retell them. The blind person hears the speech, so "
+                "no line says what she or he says, mentions, explains or talks about, not even as \"while she talks "
+                "about …\"; if nothing new can be seen at a moment, leave that moment out. "
+                "Give every time as mm:ss in the whole video, between {start} and {end}, at the moments when "
+                "something changes in the picture, not at the times of the transcript. Mention what goes on from "
+                "the part before only if something new happens.\n\n"
+                "How to work: look at the part, then write the description once. Do not draft the list several "
+                "times, do not check each line against the transcript, and do not go back over what you wrote; "
+                "over-analysing is the mistake to avoid, and thinking longer does not make the description better. "
+                "Start right away with the first time, with nothing before it; do not repeat this task, the "
+                "transcript or what you wrote about earlier parts. Answer in the language of the question: "
+                "{question}")
 # The video's title tells what it is about, e.g. "Mein Einarmiger Alltag", which a model seeing only a few
 # pictures may miss; it is a hint, not something to describe (user's wish, 18.11.2026).
 TITLE_HINT = ("The video's title, only to help understand what can be seen; describe nothing from it that cannot "
