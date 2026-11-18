@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .openrouter import AnswerCutOff, DeltaHandler, EventHandler, Turn
+from .providers import LLAMA_CPP
 from .request_control import RequestControl
 from .section_review import (fix_request, joined_without_repeats, mechanical_findings, review_messages,
                              reviewer_findings)
-from .session_store import SECTION_FILE_PREFIX, TRANSCRIPT_HELP, VideoSession, joined_sections
+from .session_store import SECTION_FILE_PREFIX, TITLE_HINT, TRANSCRIPT_HELP, VideoSession, joined_sections
 from .tools import format_time, local_video, run_ffmpeg, video_size_and_duration
 from .transcript import sound_parts
 
@@ -132,10 +133,6 @@ SECTION_TASK = ("\n\nYour task: describe part {number} of {count}, from {span}, 
                 "Start right away with the first time, with nothing before it; do not repeat this task, the "
                 "transcript or what you wrote about earlier parts. Answer in the language of the question: "
                 "{question}")
-# The video's title tells what it is about, e.g. "Mein Einarmiger Alltag", which a model seeing only a few
-# pictures may miss; it is a hint, not something to describe (user's wish, 18.11.2026).
-TITLE_HINT = ("The video's title, only to help understand what can be seen; describe nothing from it that cannot "
-              "be seen: {title}")
 # The merge has no video, so the title must not add anything the sections do not say.
 MERGE_TITLE_HINT = ("The video's title, only to help understand the descriptions; add nothing from it that they do "
                     "not say: {title}")
@@ -210,12 +207,16 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         # The check has no video and no chat, so it judges only the text against the rules and what is said.
         notify("section", f"Checking section {number}")
         found = mechanical_findings(entry["text"], heard, section.start, section.end)
+        # The same model on the user's own server checks without thinking: with it, Gemma 4 12B went over the
+        # same lines again and again, however the prompt asked it to stop (user's wish, 18.11.2026).
+        check_routing = (reviewer.routing if reviewer else
+                         {**(routing or {}), "chat_template_kwargs": {"enable_thinking": False}}
+                         if session.provider == LLAMA_CPP else routing)
         check = (reviewer.client if reviewer else client).run_turn(
             replace(session, tools=[], **({"model": reviewer.model} if reviewer else {})),
             review_messages(entry["text"], heard if session.sends_transcript else None, number, section.start,
-                            section.end, question),
-            lambda *_: None, on_event, reviewer.routing if reviewer else routing, max_tool_rounds=0,
-            on_delta=on_delta)
+                            section.end, question, session.title),
+            lambda *_: None, on_event, check_routing, max_tool_rounds=0, on_delta=on_delta)
         # A check cut off or empty never passes: only the mechanical check counts then, and the Chat history says
         # the check failed (Gemma 4 12B once thought until the context was full and wrote nothing).
         failed = ("cut off at the token limit" if check.completion.cut_off

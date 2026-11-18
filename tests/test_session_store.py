@@ -43,10 +43,11 @@ def test_chats_from_the_tools_release_get_no_transcript_so_their_cache_stays_val
 
     assert session.system_prompt == "Base." and session.source_url == "https://youtu.be/x"
     assert session.transcript_state == "none" and session.transcript == "" and session.audio_only is False
-    assert [part["type"] for part in session.messages[1]["content"]] == ["text", "video_url"]
+    # The video, then the question and the title as a hint; no transcript.
+    assert [part["type"] for part in session.messages[1]["content"]] == ["video_url", "text", "text"]
 
 
-def test_the_transcript_is_sent_before_the_video_so_it_is_cached_with_it(tmp_path: Path):
+def test_the_transcript_is_cached_together_with_the_video(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")
     store = VideoSessionStore(tmp_path / "app-data")
@@ -57,9 +58,11 @@ def test_the_transcript_is_sent_before_the_video_so_it_is_cached_with_it(tmp_pat
     store.update_transcript(session.id, "o", "done", "[00:01] Hello.")
     content = store.get_session(session.id, "o").messages[0]["content"]
 
-    assert [part["type"] for part in content] == ["text", "text", "video_url"]
-    assert content[1]["text"].endswith("[00:01] Hello.") and "may contain errors" in content[1]["text"]
-    assert "cache_control" in content[2]
+    # The video first, as Gemma 4's model card asks, then question, transcript and title; the cache breakpoint
+    # on the last of them caches the transcript with the video.
+    assert [part["type"] for part in content] == ["video_url", "text", "text", "text"]
+    assert content[2]["text"].endswith("[00:01] Hello.") and "may contain errors" in content[2]["text"]
+    assert [index for index, part in enumerate(content) if "cache_control" in part] == [3]
 
 
 def test_changing_the_setup_decides_about_the_transcript_again_and_a_link_can_be_added(tmp_path: Path):
@@ -136,8 +139,8 @@ def test_create_session_keeps_private_data_url_after_source_is_deleted(tmp_path:
 
     assert restored.source_missing is True
     assert restored.video_data_url == "data:video/mp4;base64," + base64.b64encode(b"fake-mp4-payload").decode("ascii")
-    assert restored.messages[0]["content"][1]["type"] == "video_url"
-    assert restored.messages[0]["content"][1]["cache_control"] == {"type": "ephemeral"}
+    assert restored.messages[0]["content"][0]["type"] == "video_url"
+    assert restored.messages[0]["content"][-1]["cache_control"] == {"type": "ephemeral"}
     assert "cache_control" not in restored.messages[0]
 
 
@@ -154,7 +157,7 @@ def test_follow_up_appends_only_new_question_to_cacheable_history(tmp_path: Path
     messages = store.build_follow_up_messages(session.id, "matrix:room-a", "Is it glossy?")
 
     assert [message["role"] for message in messages] == ["user", "assistant", "user"]
-    assert messages[0]["content"][1]["video_url"]["url"].startswith("data:video/mp4;base64,")
+    assert messages[0]["content"][0]["video_url"]["url"].startswith("data:video/mp4;base64,")
     assert messages[-1] == {"role": "user", "content": "Is it glossy?"}
 
 
@@ -447,7 +450,8 @@ def test_without_the_first_answer_the_video_and_the_next_question_become_one_mes
     messages = store.get_session(session.id, "o").messages
     # Roles still alternate, which chat templates such as Gemma's require.
     assert [message["role"] for message in messages] == ["user", "assistant"]
-    assert [part["type"] for part in messages[0]["content"]] == ["text", "video_url", "text"]
+    assert messages[0]["content"][0]["type"] == "video_url"
+    assert [part["type"] for part in messages[0]["content"][1:]] == ["text"] * (len(messages[0]["content"]) - 1)
     assert messages[0]["content"][-1]["text"] == "Second?"
 
 

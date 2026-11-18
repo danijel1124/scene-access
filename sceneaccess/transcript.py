@@ -70,14 +70,14 @@ def sound_parts(session: VideoSession, control: RequestControl | None = None, *,
 
 
 def with_sound(messages: list[dict[str, Any]], parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """messages with the sound parts right after the video, in the message that carries it."""
+    """messages with the sound parts at the end of the message that carries the video: after its text, as
+    Gemma 4's model card asks."""
     result, placed = [], not parts
     for message in messages:
         content = message.get("content")
         if not placed and isinstance(content, list):
-            videos = [index for index, part in enumerate(content) if part.get("type") == "video_url"]
-            if videos:
-                message = {**message, "content": [*content[:videos[0] + 1], *parts, *content[videos[0] + 1:]]}
+            if any(part.get("type") == "video_url" for part in content):
+                message = {**message, "content": [*content, *parts]}
                 placed = True
         result.append(message)
     return result

@@ -42,7 +42,7 @@ NOTHING_LISTED = re.compile(r"^\W*(ok|okay|fine|good|correct|no|nein|passt|in or
                             r"keine?( (verstöße|fehler|probleme|beanstandungen))?( gefunden)?|nichts( gefunden)?)"
                             r"\W*$", re.IGNORECASE)
 # What a reviewer may put before its verdict on a line: the line's time, or one of the four questions ("a.").
-LINE_PREFIX = re.compile(r"^\W*(\d{1,2}:\d{2}(:\d{2})?\W*)?([a-d][.)]\s*)?(\w+( \w+)?\s*[:?]\s*)?", re.IGNORECASE)
+LINE_PREFIX = re.compile(r"^\W*(\d{1,2}:\d{2}(:\d{2})?\W*)?([a-e][.)]\s*)?(\w+( \w+)?\s*[:?]\s*)?", re.IGNORECASE)
 
 # Who the reviewer is and what it does: its own system prompt, as it is a model of its own in this request
 # and must not take the describer's prompt for its task (user's wish, 18.11.2026).
@@ -50,15 +50,18 @@ REVIEWER_SYSTEM_PROMPT = (
     "You are the reviewer in SceneAccess, an app that describes videos for blind people. Another model watched "
     "a part of a video and described it; you check that description before the blind person gets it. You do not "
     "see the video and do not describe it yourself. You get the description, the time span of the part, the "
-    "question the description answers and, if there is one, an automatic transcript of what is said in the part.\n\n"
+    "question the description answers, the video's title and, if there is one, an automatic transcript of what is "
+    "said in the part.\n\n"
     "How to check, once and in this order:\n"
     "1. Go through the description line by line, from top to bottom, exactly once.\n"
-    "2. For each line, ask only these four questions; for each, yes means a problem and no means fine:\n"
+    "2. For each line, ask only these five questions; for each, yes means a problem and no means fine:\n"
     "   a. Is its time missing, not mm:ss, outside the part, or not later than the line before?\n"
     "   b. Does it say anything about the speech: what is said, quoted, mentioned, explained or talked about, "
     "also as \"while she talks about …\"? The blind person hears the speech, so any of it is a problem.\n"
     "   c. Is it in another language than the question?\n"
     "   d. Is a word misspelt, e.g. a digit inside a word?\n"
+    "   e. Does it clearly contradict the title or the transcript, e.g. both hands for a person the title calls "
+    "one-armed, or an object the speaker says she does not have?\n"
     "3. Decide each question once. Note the line only if one of the questions finds a problem. If you are unsure, "
     "the line is fine.\n"
     "4. When you reach the last line, the check is over: write your answer at once.\n\n"
@@ -66,11 +69,12 @@ REVIEWER_SYSTEM_PROMPT = (
     "decided it, and never go back up the list, not even to ask whether there are other problems. A problem you "
     "found is noted and done; finding it again adds nothing.\n\n"
     "Over-analysing is the mistake to avoid: one pass is enough, and checking longer does not make the check "
-    "better. Do not sort the lines into kinds such as actions or details. Do not judge whether what is described is true, as you cannot see it, and "
-    "do not rewrite the description.\n\n"
+    "better. Do not sort the lines into kinds such as actions or details. Apart from question e, do not judge "
+    "whether what is described is true, as you cannot see it, and do not rewrite the description.\n\n"
     "Your answer: every line with a problem, one per line starting with \"- \", with the time of the line and the "
     "question it fails. If no line has a problem, answer only " + NOTHING_FOUND + ".")
-REVIEW_TASK = ("Part {number} of the video, from {start} to {end}. The question: {question}\n\n"
+REVIEW_TASK = ("Part {number} of the video, from {start} to {end}. The question: {question}\n"
+               "The video's title: {title}\n\n"
                "The description:\n\n{text}\n\nThe transcript of this part:\n\n{heard}")
 FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found these problems:\n\n{found}\n\n"
             "Write the description of this part anew and fix them: where you repeated what is said, describe what "
@@ -132,14 +136,14 @@ def mechanical_findings(text: str, heard: str, start: float, end: float) -> list
 
 
 def review_messages(text: str, heard: str | None, number: int, start: float, end: float,
-                    question: str) -> list[dict[str, Any]]:
+                    question: str, title: str = "") -> list[dict[str, Any]]:
     """The reviewer's request: its own system prompt, then the part to check. heard is the transcript of the
     part, or None when the chat sends no transcript: then the reviewer must not take speech the description
     mentions for made up."""
     if heard is None:
         heard = "(no transcript is available; the model may have heard the speech itself)"
     part = REVIEW_TASK.format(number=number, start=format_time(round(start)), end=format_time(round(end)),
-                              question=question, text=text.strip(),
+                              question=question, title=title or "(none)", text=text.strip(),
                               heard=heard.strip() or "(nothing is said in this part)")
     return [{"role": "system", "content": REVIEWER_SYSTEM_PROMPT}, {"role": "user", "content": part}]
 

@@ -160,7 +160,8 @@ def test_a_llama_cpp_model_that_hears_gets_the_sound_as_a_track_and_no_transcrip
     for call in calls:
         user = next(message for message in call['messages'] if isinstance(message.get('content'), list))
         kinds = [part['type'] for part in user['content']]
-        assert kinds[kinds.index('video_url') + 1] == 'input_audio'
+        # As Gemma 4's model card asks: the video first, the sound after the text.
+        assert kinds[0] == 'video_url' and kinds[-1] == 'input_audio'
         # It also gets the prompt's block about other sounds, as a model that hears.
         assert 'You also hear the video' in call['messages'][0]['content']
     assert frame.store.get_session(frame.current.id, gui.OWNER_ID).transcript_state == TRANSCRIPT_NONE

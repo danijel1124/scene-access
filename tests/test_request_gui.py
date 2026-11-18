@@ -33,7 +33,8 @@ def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, mon
     monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
     sent = []
     def answer(client, session, messages, *args, **kwargs):
-        sent.append(messages[0]['content'][0]['text'])
+        # The question is the first text, after the video.
+        sent.append(next(part['text'] for part in messages[0]['content'] if part['type'] == 'text'))
         if len(sent) == 1:
             raise RuntimeError('Fixture provider failure')
         return Turn(entries=[{'role':'assistant','content':'Answer'}], completion=Completion('Answer','fixture',1,None,None))

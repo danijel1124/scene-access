@@ -76,6 +76,48 @@ def test_a_copied_part_heading_is_cut_from_a_sections_description():
     assert without_part_heading("00:00 Part 1 of her day.") == "00:00 Part 1 of her day."
 
 
+def test_a_whole_video_comes_before_its_text_and_its_sound_after_it(tmp_path: Path):
+    from sceneaccess.transcript import with_sound
+    store, session = _session(tmp_path, seconds=0, transcribe="on")
+    store.update_transcript(session.id, "o", "done", "[00:05] Hello.")
+    session = store.get_session(session.id, "o")
+    content = with_sound(session.messages, [{"type": "input_audio", "input_audio": {"data": "x", "format": "mp3"}}]
+                         )[-1]["content"]
+    # As Gemma 4's model card asks: the video, then the question, transcript and title, then the sound.
+    assert [part["type"] for part in content] == ["video_url", "text", "text", "text", "input_audio"]
+    assert content[1]["text"] == "Describe it." and "[00:05] Hello." in content[2]["text"]
+    assert content[3]["text"].endswith("describe nothing from it that cannot be seen: T")
+    # The cache breakpoint is on the last part before the sound, so everything up to it is cached together.
+    assert [index for index, part in enumerate(content) if "cache_control" in part] == [3]
+
+
+def test_the_reviewer_on_the_users_own_server_checks_without_thinking(tmp_path: Path):
+    store, session = _session(tmp_path, seconds=30, provider="llama.cpp")
+    cut = _fixture_sections(session, count=1)
+    routings = []
+
+    class Routed(Scripted):
+        def run_turn(self, session, messages, run_tool, on_event=None, routing=None, **kwargs):
+            routings.append((json.dumps(messages), routing))
+            return super().run_turn(session, messages, run_tool, on_event, routing, **kwargs)
+
+    describe_in_sections(Routed(describe=["00:01 A cup."], check=["OK"]), session, "Describe it.", cut, Runner,
+                         lambda _progress: None, duration=30.0)
+    check = [routing for text, routing in routings if "You are the reviewer" in text]
+    describe = [routing for text, routing in routings if "describe part 1 of 1" in text]
+    assert check == [{"chat_template_kwargs": {"enable_thinking": False}}]
+    # The describer still thinks.
+    assert describe and all("chat_template_kwargs" not in (routing or {}) for routing in describe)
+
+
+def test_the_reviewer_gets_the_title_and_may_report_a_contradiction_to_it():
+    from sceneaccess.section_review import REVIEWER_SYSTEM_PROMPT, review_messages
+    part = review_messages("00:09 Sie hält die Tube mit beiden Händen.", "", 1, 0, 30, "Beschreibe das Video.",
+                           "Mein Einarmiger Alltag")[1]["content"]
+    assert "The video's title: Mein Einarmiger Alltag" in part
+    assert "e. Does it clearly contradict the title or the transcript" in REVIEWER_SYSTEM_PROMPT
+
+
 def test_a_model_that_hears_is_not_told_it_cannot_hear(tmp_path: Path):
     store, session = _session(tmp_path, seconds=0, transcribe="on")
     store.update_transcript(session.id, "o", "done", "[00:05] Hello.")
