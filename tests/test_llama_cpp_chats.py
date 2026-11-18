@@ -298,7 +298,11 @@ def test_sending_the_first_question_again_keeps_it_instead_of_what_was_typed(fra
     assert frame.errors and frame.resend_button.IsShown()
     # What one types after a failure, such as "let's try again", is not the question.
     frame.question.SetValue("let's try again")
+    focused = []
+    monkeypatch.setattr(frame.send_button, 'SetFocus', lambda: focused.append('send'))
     frame.on_resend(None)
+    # The pressed button is disabled while the request runs, so the focus goes to "Cancel request".
+    assert focused == ['send']
     stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
     assert stored.initial_question == original and "let's try again" not in sent[-1]
     assert json.dumps(original)[1:-1] in sent[-1] and stored.history[-1]['content'] == 'Answer.'

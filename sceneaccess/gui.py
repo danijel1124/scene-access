@@ -786,6 +786,9 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         if not self._ask_about_stored_size():
             return
         self._send(self.current.initial_question, initial=True)
+        # This button is disabled while the request runs and hidden once it is answered, which would leave the
+        # focus nowhere and the screen reader silent; the send button, "Cancel request" while it runs, can stop it.
+        self.send_button.SetFocus()
 
     def _send(self, question: str, *, initial: bool) -> None:
         if not self.current or self._request:

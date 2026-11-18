@@ -156,7 +156,8 @@ def test_a_description_that_stops_continues_with_the_next_section(tmp_path: Path
     assert "describe part 3 of 3" in texts[1]
     assert "give the one answer" in texts[2] and "video_url" not in texts[2] and "input_audio" not in texts[2]
     # The title goes along as a hint, to the sections and to the merge.
-    assert "look again: T\"" in texts[0] and "look again: T" in texts[2]
+    assert "nothing from it that cannot be seen: T\"" in texts[0]
+    assert "add nothing from it that they do not say: T" in texts[2]
     # The task comes last, after the video and the sound it refers to.
     assert model.requests[0][1][-1]["content"][-1]["text"].startswith("Your task: describe part 2 of 3")
     assert turn.completion.answer == "The whole video."

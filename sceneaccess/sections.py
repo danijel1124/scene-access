@@ -125,8 +125,11 @@ SECTION_TASK = ("\n\nYour task: describe part {number} of {count}, from {span}, 
                 "the question: {question}")
 # The video's title tells what it is about, e.g. "Mein Einarmiger Alltag", which a model seeing only a few
 # pictures may miss; it is a hint, not something to describe (user's wish, 18.11.2026).
-TITLE_HINT = ("The video's title, as a hint to what it is about; describe only what can be seen, and where the "
-              "picture and the title seem to disagree, look again: {title}")
+TITLE_HINT = ("The video's title, only to help understand what can be seen; describe nothing from it that cannot "
+              "be seen: {title}")
+# The merge has no video, so the title must not add anything the sections do not say.
+MERGE_TITLE_HINT = ("The video's title, only to help understand the descriptions; add nothing from it that they do "
+                    "not say: {title}")
 MERGE_TASK = ("\n\nYour task: give the one answer for the whole video, which is {total} long, as if you had seen it "
               "at once: put your descriptions of the parts above together in order, keep every detail and every "
               "time, and leave out only what repeats where two parts meet. Do not mention the parts. Answer in the "
@@ -213,7 +216,7 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     progress["joined"] = joined_without_repeats(described)
     save(progress)
     notify("section", f"Putting the {len(sections)} sections together")
-    text = (joined_sections(described) + ("\n\n" + TITLE_HINT.format(title=session.title) if session.title else "")
+    text = (joined_sections(described) + ("\n\n" + MERGE_TITLE_HINT.format(title=session.title) if session.title else "")
             + MERGE_TASK.format(total=total, question=question))
     turn = client.run_turn(replace(session, tools=[]), [*session.system_messages, {"role": "user", "content": text}],
                            lambda *_: None, on_event, routing, max_tool_rounds=0, on_delta=on_delta)
