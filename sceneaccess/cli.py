@@ -72,15 +72,19 @@ def show_chat(session: VideoSession, out: TextIO) -> None:
         print(f"\n{full}", file=out)
 
 
+SAME_REVIEWER = "same"
+
+
 def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextIO, transcribe: str = "",
             section_seconds: int | None = None, reviewer: str | None = None) -> None:
     """transcribe sets the copy's transcript mode; empty keeps the chat's. section_seconds describes a longer
     video in sections of at most that length, as the app does; None keeps the chat's, 0 sends it whole.
-    reviewer is the OpenRouter model that checks the sections; None keeps the one in Settings, empty the
+    reviewer is the OpenRouter model that checks the sections; None keeps the one in Settings, "same" the
     model that wrote them."""
     config = load_config(data_dir / "config.json")
     if reviewer is not None:
-        config = replace(config, section_reviewer_model=reviewer)
+        # "same" rather than an empty argument, which Windows PowerShell does not pass on.
+        config = replace(config, section_reviewer_model="" if reviewer == SAME_REVIEWER else reviewer)
     catalog = ModelCatalog(OPENROUTER_URL)
     work = Path(tempfile.mkdtemp(prefix="sceneaccess-compare-"))
     try:
@@ -210,8 +214,8 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     compare_parser.add_argument("--sections", type=int, metavar="SECONDS",
                                 help="describe a longer video in sections of at most this many seconds (0: whole)")
     compare_parser.add_argument("--reviewer", metavar="MODEL",
-                                help='OpenRouter model that checks the sections (default: Settings; "" for the same '
-                                     "model)")
+                                help=f"OpenRouter model that checks the sections (default: Settings; {SAME_REVIEWER} "
+                                     "for the model that wrote them)")
     args = parser.parse_args(argv)
     data_dir = args.data_dir or default_data_dir()
     store = open_store(data_dir / "config.json", OWNER_ID, LEGACY_OWNER_ID)

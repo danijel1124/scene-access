@@ -261,6 +261,26 @@ def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(
     assert 'The whole video.' not in requests[-1] and 'Part 1.' in requests[-1] and 'video_url' not in requests[-1]
 
 
+def test_a_reviewer_model_without_an_openrouter_key_stops_before_any_section_is_sent(frame, monkeypatch):
+    from sceneaccess.sections import Section
+    from sceneaccess.session_store import SECTION_FILE_PREFIX
+    frame.config = gui.replace(frame.config, api_key='', section_reviewer_model='vendor/reviewer')
+    frame.current = frame.store.create_session(
+        owner_id=gui.OWNER_ID, source_path=frame.video, title='Long', model='', initial_question='Describe it.',
+        system_prompt='Base.', tools=tool_definitions(online_video=False, web_search=False), provider=LLAMA_CPP,
+        transcribe=TRANSCRIBE_OFF, section_seconds=30)
+    path = frame.current.directory / f'{SECTION_FILE_PREFIX}30s-000.mp4'
+    path.write_bytes(b'section')
+    monkeypatch.setattr(gui, 'video_duration', lambda session: 60.0)
+    monkeypatch.setattr(gui, 'cut_sections', lambda session, duration, control=None: [Section(0, 0.0, 60.0, path)])
+    requests = []
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', lambda *a, **kw: requests.append(a))
+    frame._send('Describe it.', initial=True)
+    # Checking with the wrong model would be worse than not starting: the error says which model needs the key.
+    assert requests == [] and any('vendor/reviewer' in error and 'OpenRouter API key' in error
+                                  for error in frame.errors)
+
+
 class ServerModel:
     """A llama.cpp server running one model, which does not hear."""
     def __init__(self, name): self.name = name
