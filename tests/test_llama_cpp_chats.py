@@ -206,6 +206,18 @@ def test_a_streamed_answer_shows_live_and_stays_in_view_when_the_request_fails(f
     assert any('connection lost' in error for error in frame.errors)
 
 
+def section_reply(text, merged='The whole video.'):
+    """What a model that keeps the rules answers to a request for a video in sections: OK to a check, a description
+    starting at its part's first time, the merged answer to the last request."""
+    import re
+    if 'You check a description' in text:
+        return 'OK'
+    if 'give the one answer' in text:
+        return merged
+    found = re.search(r'describe part (\d+) of \d+, from (\d\d:\d\d)', text)
+    return f'{found.group(2)} Part {found.group(1)}.' if found else 'A later answer.'
+
+
 def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(frame, monkeypatch):
     from sceneaccess.sections import Section
     from sceneaccess.session_store import SECTION_FILE_PREFIX
@@ -226,17 +238,21 @@ def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(
     def answer(client, session, messages, run_tool, on_event=None, routing=None, **kwargs):
         text = json.dumps(messages)
         requests.append(text)
-        reply = 'The whole video.' if 'give the one answer' in text else f'Part {len(requests)}.'
+        reply = section_reply(text)
         return Turn(entries=[{'role': 'assistant', 'content': reply}], completion=Completion(reply, 'm', 1, None, None))
 
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answer)
     frame._send('Describe it.', initial=True)
-    assert frame.errors == [] and len(requests) == 3
-    assert 'describe part 1 of 2' in requests[0] and 'describe part 2 of 2' in requests[1]
+    # Each section is described and checked, then all are put together.
+    assert frame.errors == [] and len(requests) == 5
+    assert 'describe part 1 of 2' in requests[0] and 'You check a description of part 1' in requests[1]
+    assert 'describe part 2 of 2' in requests[2] and 'video_url' not in requests[1]
     stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
-    assert [entry['text'] for entry in stored.sections['sections']] == ['Part 1.', 'Part 2.']
+    assert [entry['text'] for entry in stored.sections['sections']] == ['00:00 Part 1.', '00:30 Part 2.']
     assert stored.history[-1]['content'] == 'The whole video.'
-    assert any(item.startswith('Section 1 (00:00 to 00:30)') for item in frame.history_items)
+    assert any(item.startswith('Section 1 (00:00 to 00:30, checked)') for item in frame.history_items)
+    assert any(item.startswith('Sections joined without the model, Enter shows it: 00:00 Part 1. 00:30 Part 2.')
+               for item in frame.history_items), frame.history_items
     frame._send('And then?', initial=False)
     assert 'video_url' not in requests[-1] and 'The whole video.' in requests[-1]
     # With the first answer hidden, a later question still gets what the sections said.
@@ -275,7 +291,7 @@ def test_a_stopped_description_continues_on_sending_again_but_not_with_another_m
         requests.append(text)
         if server['fail'] and 'describe part 2 of 2' in text:
             raise RuntimeError('fixture: server restarted')
-        reply = 'Whole.' if 'give the one answer' in text else f'Part {len(requests)}.'
+        reply = section_reply(text, merged='Whole.')
         return Turn(entries=[{'role': 'assistant', 'content': reply}], completion=Completion(reply, 'm', 1, None, None))
 
     def parts_asked(since):

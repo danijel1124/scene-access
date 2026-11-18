@@ -118,12 +118,24 @@ def section_items(sections: dict[str, Any] | None, answered: bool = True) -> lis
     state = "" if answered else ", unfinished"
     items = []
     for entry in described:
-        span = f"{format_time(entry['start'])} to {format_time(entry['end'])}"
-        words = entry["text"].split()
-        beginning = " ".join(words[:THINKING_PREVIEW_WORDS]) + (" …" if len(words) > THINKING_PREVIEW_WORDS else "")
-        label = f"Section {entry['index'] + 1} ({span}{state})"
-        items.append((f"{label}, Enter shows it: {beginning}", f"{label}:\n\n{entry['text'].strip()}"))
+        span = f"{format_time(round(entry['start']))} to {format_time(round(entry['end']))}"
+        review = entry.get("review")
+        checked = "" if review is None else (", described again after the check" if review.get("found")
+                                             else ", checked")
+        label = f"Section {entry['index'] + 1} ({span}{checked}{state})"
+        items.append(_folded(label, entry["text"]))
+        if review and review.get("found"):
+            items.append(_folded(f"Check of section {entry['index'] + 1}, found",
+                                 f"{review['found']}\n\nThe first description:\n\n{review.get('first_text', '')}"))
+    if answered and (sections or {}).get("joined"):
+        items.append(_folded("Sections joined without the model", sections["joined"]))
     return items
+
+
+def _folded(label: str, text: str) -> tuple[str, str]:
+    words = text.split()
+    beginning = " ".join(words[:THINKING_PREVIEW_WORDS]) + (" …" if len(words) > THINKING_PREVIEW_WORDS else "")
+    return f"{label}, Enter shows it: {beginning}", f"{label}:\n\n{text.strip()}"
 
 
 def thinking_item(thinking: str, label: str = "Model's thinking") -> tuple[str, str, str]:

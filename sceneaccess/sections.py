@@ -1,6 +1,8 @@
 """A video too long for the model in one piece, described in sections: each section of at most the chat's
 section length gets its own request with its own picture and sound, the matching part of the transcript and
-everything said about the sections before it; a last request puts the descriptions together into the answer.
+everything said about the sections before it; each description is checked and, if anything was found,
+described anew (see section_review.py); a last request puts the descriptions together into the answer, and they
+are also kept joined without a model.
 
 Each section's description is stored as soon as it is done, together with what it was made for (question,
 model, prompt, section length, transcript mode). A description that stops, because it was cancelled, failed or
@@ -17,6 +19,8 @@ from typing import Any, Callable
 
 from .openrouter import DeltaHandler, EventHandler, Turn
 from .request_control import RequestControl
+from .section_review import (fix_request, joined_without_repeats, mechanical_findings, review_request,
+                             reviewer_findings)
 from .session_store import SECTION_FILE_PREFIX, TRANSCRIPT_HELP, VideoSession, joined_sections
 from .tools import format_time, local_video, run_ffmpeg, video_size_and_duration
 from .transcript import sound_parts
@@ -130,12 +134,14 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
                          duration: float, sound: Callable[[Section], list[dict[str, Any]]] | None = None,
                          on_event: EventHandler | None = None, on_delta: DeltaHandler | None = None,
                          routing: dict[str, Any] | None = None, max_tool_rounds: int = 6,
-                         model_name: str = "") -> Turn:
+                         model_name: str = "", review: bool = True) -> Turn:
     """Describes each section not yet described, saving the progress after each one, then asks for the answer
     to question for the whole video. new_runner gives a tools.ToolRunner per section; its images are not kept,
     as only the descriptions are stored. sound gives a section's sound for a model that gets it apart from the
-    video; model_name see progress_key. Returns the turn of the last request, whose answer answers question and
-    whose usage counts all requests."""
+    video; model_name see progress_key. With review, each description is checked (see section_review.py) and,
+    if anything was found, described anew once. Before the last request the sections are also stored joined
+    without a model, as "joined". Returns the turn of the last request, whose answer answers question and whose
+    usage counts all requests."""
     notify = on_event or (lambda _kind, _text: None)
     key = progress_key(session, question, model_name)
     stored = session.sections if session.sections and session.sections.get("key") == key else None
@@ -143,35 +149,50 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     described = progress["sections"]
     # Whole seconds only: the model copies the format, and tenths are noise on a braille display.
     total = format_time(round(duration))
-    for section in sections[len(described):]:
-        start, end = format_time(round(section.start)), format_time(round(section.end))
-        span = f"{start} to {end}"
-        notify("section", f"Section {section.index + 1} of {len(sections)}, {span}")
-        parts: list[dict[str, Any]] = []
-        if described:
-            parts.append({"type": "text", "text": "What you wrote about the parts before:\n\n" + joined_sections(described)})
-        heard = transcript_between(session.transcript, section.start, section.end) if session.sends_transcript else ""
-        if heard:
-            parts.append({"type": "text", "text": "An automatic transcript of what is said in this part; speech "
-                                                  "recognition may contain errors, times are those of the whole "
-                                                  f"video. {TRANSCRIPT_HELP}\n\n" + heard})
-        data = base64.b64encode(section.path.read_bytes()).decode("ascii")
-        parts.append({"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{data}"}})
-        parts += sound(section) if sound else []
-        parts.append({"type": "text", "text": SECTION_TASK.format(
-            number=section.index + 1, count=len(sections), span=span, total=total, start=start, end=end,
-            question=question).strip()})
+
+    def ask(section: Section, before: list[dict[str, Any]], heard: str, fix: str = "") -> Turn:
         runner = new_runner()
         try:
-            turn = client.run_turn(session, [*session.system_messages, {"role": "user", "content": parts}],
+            parts = _section_parts(section, len(sections), total, question, before, heard, sound, fix)
+            return client.run_turn(session, [*session.system_messages, {"role": "user", "content": parts}],
                                    runner.run, on_event, routing, max_tool_rounds=max_tool_rounds, on_delta=on_delta)
         finally:
             runner.cleanup_files()
-        described.append({"index": section.index, "start": section.start, "end": section.end,
-                          "text": without_part_heading(turn.completion.answer),
-                          "thinking": turn.entries[-1].get("thinking", ""),
-                          "usage": turn.completion.usage_record()})
+
+    for position, section in enumerate(sections):
+        number = section.index + 1
+        span = f"{format_time(round(section.start))} to {format_time(round(section.end))}"
+        heard = transcript_between(session.transcript, section.start, section.end) if session.sends_transcript else ""
+        if position >= len(described):
+            notify("section", f"Section {number} of {len(sections)}, {span}")
+            turn = ask(section, described[:position], heard)
+            described.append({"index": section.index, "start": section.start, "end": section.end,
+                              "text": without_part_heading(turn.completion.answer),
+                              "thinking": turn.entries[-1].get("thinking", ""),
+                              "usage": turn.completion.usage_record()})
+            save(progress)
+        entry = described[position]
+        if not review or "review" in entry:
+            continue
+        # The check has no video and no chat, so it judges only the text against the rules and what is said.
+        notify("section", f"Checking section {number}")
+        found = mechanical_findings(entry["text"], heard, section.start, section.end)
+        check = client.run_turn(replace(session, tools=[]), [{"role": "user", "content": review_request(
+            entry["text"], heard, number, section.start, section.end, question)}],
+            lambda *_: None, on_event, routing, max_tool_rounds=0, on_delta=on_delta)
+        found += reviewer_findings(check.completion.answer)
+        entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())
+        entry["review"] = {"found": "\n".join(found), "reviewer": check.completion.answer.strip()}
+        if found:
+            notify("section", f"Describing section {number} again: the check found {len(found)} problems")
+            turn = ask(section, described[:position], heard, fix_request(entry["text"], found))
+            entry["review"].update(first_text=entry["text"], first_thinking=entry.get("thinking", ""))
+            entry["text"] = without_part_heading(turn.completion.answer)
+            entry["thinking"] = turn.entries[-1].get("thinking", "")
+            entry["usage"] = _added(entry["usage"], turn.completion.usage_record())
         save(progress)
+    progress["joined"] = joined_without_repeats(described)
+    save(progress)
     notify("section", f"Putting the {len(sections)} sections together")
     text = joined_sections(described) + MERGE_TASK.format(total=total, question=question)
     turn = client.run_turn(replace(session, tools=[]), [*session.system_messages, {"role": "user", "content": text}],
@@ -182,3 +203,34 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
                          prompt_tokens=turn.completion.prompt_tokens + sum(int(u.get("prompt_tokens") or 0) for u in usages))
     turn.entries[-1]["usage"] = completion.usage_record()
     return Turn(entries=turn.entries, completion=completion)
+
+
+def _section_parts(section: Section, count: int, total: str, question: str, before: list[dict[str, Any]],
+                   heard: str, sound: Callable[[Section], list[dict[str, Any]]] | None,
+                   fix: str = "") -> list[dict[str, Any]]:
+    """What a section's request holds: the descriptions of the parts before, its transcript, picture and sound,
+    for a description anew the first one and what the check found, and last the task."""
+    start, end = format_time(round(section.start)), format_time(round(section.end))
+    parts: list[dict[str, Any]] = []
+    if before:
+        parts.append({"type": "text", "text": "What you wrote about the parts before:\n\n" + joined_sections(before)})
+    if heard:
+        parts.append({"type": "text", "text": "An automatic transcript of what is said in this part; speech "
+                                              "recognition may contain errors, times are those of the whole "
+                                              f"video. {TRANSCRIPT_HELP}\n\n" + heard})
+    data = base64.b64encode(section.path.read_bytes()).decode("ascii")
+    parts.append({"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{data}"}})
+    parts += sound(section) if sound else []
+    if fix:
+        parts.append({"type": "text", "text": fix.strip()})
+    parts.append({"type": "text", "text": SECTION_TASK.format(
+        number=section.index + 1, count=count, span=f"{start} to {end}", total=total, start=start, end=end,
+        question=question).strip()})
+    return parts
+
+
+def _added(usage: dict[str, Any] | None, more: dict[str, Any]) -> dict[str, Any]:
+    """Two requests' usage as one, for a section that was checked or described anew."""
+    usage = usage or {}
+    return {**usage, "requests": int(usage.get("requests") or 1) + int(more.get("requests") or 1),
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0) + int(more.get("prompt_tokens") or 0)}

@@ -137,7 +137,8 @@ def test_a_description_that_stops_continues_with_the_next_section(tmp_path: Path
 
     failing = Recorder(fail_at=2)
     with pytest.raises(RuntimeError, match="server restarted"):
-        describe_in_sections(failing, session, "Describe it.", cut, Runner, save, duration=90.0, sound=sound)
+        describe_in_sections(failing, session, "Describe it.", cut, Runner, save, duration=90.0, sound=sound,
+                             review=False)
     # The first section was kept as soon as it was described.
     assert [len(progress["sections"]) for progress in saved] == [1]
     first = json.dumps(failing.requests[0][1])
@@ -148,7 +149,7 @@ def test_a_description_that_stops_continues_with_the_next_section(tmp_path: Path
 
     model = Recorder()
     turn = describe_in_sections(model, store.get_session(session.id, "o"), "Describe it.", cut, Runner, save,
-                                duration=90.0, sound=sound)
+                                duration=90.0, sound=sound, review=False)
     # Continued with parts 2 and 3, each knowing what was said before, then put together without a video.
     texts = [json.dumps(messages) for _session, messages in model.requests]
     assert "describe part 2 of 3" in texts[0] and "Description 1." in texts[0] and "[00:40] Middle." in texts[0]
@@ -181,6 +182,114 @@ def test_progress_for_another_question_or_model_is_not_continued(tmp_path: Path)
     describe_in_sections(model, store.get_session(session.id, "o"), "Describe it.", cut, Runner, lambda _progress: None,
                          duration=60.0, model_name="another.gguf")
     assert "describe part 1 of 2" in json.dumps(model.requests[0][1])
+
+
+class Scripted:
+    """A model that answers each request with the next answer given for its kind: "describe", "check" or "fix";
+    raises at a request whose text has fail_on in it."""
+
+    def __init__(self, fail_on=None, **answers):
+        self.requests, self.answers, self.fail_on = [], {kind: list(texts) for kind, texts in answers.items()}, fail_on
+
+    def run_turn(self, session, messages, run_tool, on_event=None, routing=None, max_tool_rounds=6, on_delta=None):
+        text = json.dumps(messages)
+        self.requests.append(messages)
+        if self.fail_on and self.fail_on in text:
+            raise RuntimeError("fixture: server restarted")
+        kind = ("merge" if "give the one answer" in text else "check" if "You check a description" in text
+                else "fix" if "Your first description" in text else "describe")
+        answer = self.answers[kind].pop(0) if kind != "merge" else "Whole."
+        return Turn(entries=[{"role": "assistant", "content": answer, "thinking": f"{kind} thoughts"}],
+                    completion=Completion(answer, "m", 1, None, None))
+
+
+def test_a_section_that_only_retells_is_checked_and_described_anew_with_its_video(tmp_path: Path):
+    store, session = _session(tmp_path, seconds=30, transcribe="on")
+    store.update_transcript(session.id, "o", "done", "[00:05] Hello there my dear friends.\n[00:40] Look.")
+    session = store.get_session(session.id, "o")
+    cut = _fixture_sections(session, count=2)
+    model = Scripted(describe=['00:05 "Hello there my dear friends."', "00:30 She holds a sieve.\n00:40 She points."],
+                     check=["- 00:05: retells what is said.", "OK"], fix=["00:05 She waves into the camera."])
+    turn = describe_in_sections(model, session, "Describe it.", cut, Runner,
+                                lambda progress: store.save_sections(session.id, "o", progress), duration=60.0)
+    requests = [json.dumps(messages) for messages in model.requests]
+    # The check sees neither the video nor the chat: only the description, the transcript and the rules.
+    check = model.requests[1]
+    assert len(check) == 1 and check[0]["role"] == "user" and "video_url" not in requests[1]
+    assert "Hello there my dear friends." in requests[1] and "between 00:00 and 00:30" in requests[1]
+    # Both checks found something, so the section went back to the model with its video and what was found.
+    fix = requests[2]
+    assert "video_url" in fix and "Your first description" in fix and "describe part 1 of 2" in fix
+    assert "only repeats what is said" in fix and "retells what is said" in fix
+    progress = store.get_session(session.id, "o").sections
+    first, second = progress["sections"]
+    assert first["text"] == "00:05 She waves into the camera." and first["thinking"] == "fix thoughts"
+    assert first["review"]["first_text"] == '00:05 "Hello there my dear friends."'
+    assert second["review"]["found"] == "" and second["text"].startswith("00:30 She holds")
+    # The next section knows the description anew, not the first one.
+    assert "She waves" in requests[3] and "Hello there my dear" not in requests[3].split("video_url")[0]
+    assert progress["joined"] == "00:05 She waves into the camera.\n00:30 She holds a sieve.\n00:40 She points."
+    # Every request counts: describe, check and fix, describe and check, and the merge.
+    assert turn.completion.requests == 6 and len(model.requests) == 6
+    rows = chat_history_rows("Describe it.", [{"role": "assistant", "content": "Whole."}], sections=progress)
+    shown = [row[0] for row in rows if row[3] == SECTION]
+    assert shown[0].startswith("Section 1 (00:00 to 00:30, described again after the check)")
+    assert shown[1].startswith("Check of section 1, found, Enter shows it:")
+    assert shown[2].startswith("Section 2 (00:30 to 01:00, checked)")
+    assert shown[3].startswith("Sections joined without the model")
+
+
+def test_a_description_stopped_before_its_check_is_checked_when_continued(tmp_path: Path):
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=2)
+
+    def save(progress):
+        store.save_sections(session.id, "o", progress)
+
+    failing = Scripted(fail_on="You check a description of part 1", describe=["00:01 A cup."])
+    with pytest.raises(RuntimeError):
+        describe_in_sections(failing, session, "Describe it.", cut, Runner, save, duration=60.0)
+    model = Scripted(describe=["00:31 A plate."], check=["OK", "OK"])
+    describe_in_sections(model, store.get_session(session.id, "o"), "Describe it.", cut, Runner, save, duration=60.0)
+    kinds = [json.dumps(messages) for messages in model.requests]
+    # Section 1 is not described again, only checked.
+    assert "You check a description of part 1" in kinds[0] and "describe part 1 of 2" not in " ".join(kinds)
+    assert [entry["review"]["found"] for entry in store.get_session(session.id, "o").sections["sections"]] == ["", ""]
+
+
+def test_the_mechanical_check_finds_repeated_speech_and_wrong_times():
+    from sceneaccess.section_review import mechanical_findings
+    heard = "[00:00] So und dann mach ich das drauf.\n[00:26] Ich kann keinen Kabelstaubsauger haben."
+    found = mechanical_findings('00:00 "So und dann mach ich das drauf."\n00:09 Sie hält eine Tube hoch.\n'
+                                "00:33.0 Ein Staubsauger.\n00:13 Sie zeigt auf den Deckel.", heard, 0, 28.1)
+    assert len(found) == 3
+    assert "only repeats what is said" in found[0] and "without tenths" in found[1] and "outside the part" in found[2]
+    # A time outside the part does not make the next ones out of order; a time before the one before does.
+    assert "out of order" in mechanical_findings("00:20 Eins.\n00:10 Zwei.", "", 0, 30)[0]
+    assert mechanical_findings("Nur Text ohne Zeit.", "", 0, 30) == [
+        "- The description gives no times; start each line with the time as mm:ss."]
+    # Seeing and naming what is said is fine.
+    assert mechanical_findings("00:26 Sie zeigt auf einen Akku-Staubsauger an der Wand.", heard, 0, 30) == []
+
+
+def test_the_sections_are_joined_without_what_repeats_where_two_meet():
+    from sceneaccess.section_review import joined_without_repeats
+    joined = joined_without_repeats([
+        {"text": "00:44 Sie hält ein Sieb hoch.\n00:51 Sie deutet auf ihre Prothese an der linken Hand."},
+        {"text": "00:56 Sie deutet auf ihre Prothese an der linken Hand.\n01:00 Töpfe.\n"
+                 "01:20 Sie hält ein Sieb hoch."}])
+    # Lines that differ in one word of a few are different lines.
+    assert joined_without_repeats([{"text": "00:10 Part 1."}, {"text": "00:30 Part 2."}]) == "00:10 Part 1.\n00:30 Part 2."
+    # Something that happens again later in a section stays.
+    assert joined.splitlines() ==["00:44 Sie hält ein Sieb hoch.", "00:51 Sie deutet auf ihre Prothese an der linken "
+                                   "Hand.", "01:00 Töpfe.", "01:20 Sie hält ein Sieb hoch."]
+
+
+def test_a_reviewer_that_finds_nothing_lists_nothing():
+    from sceneaccess.section_review import reviewer_findings
+    assert reviewer_findings("OK") == reviewer_findings(" ok. ") == []
+    assert reviewer_findings("Problems:\n- 00:13: retells\n* 00:26: quotes") == ["- 00:13: retells", "- 00:26: quotes"]
+    assert reviewer_findings("The times are wrong.") == ["- The times are wrong."]
 
 
 def test_a_chat_described_in_sections_sends_no_video_with_later_questions(tmp_path: Path):
@@ -219,7 +328,7 @@ def test_the_chat_history_shows_the_sections_folded():
                                         {"index": 1, "start": 28.3, "end": 56.7, "text": "Short."}]}
     rows = chat_history_rows("Describe it.", [], sections=progress)
     items = [(shown, full) for shown, full, _index, kind in rows if kind == SECTION]
-    assert items[0][0].startswith("Section 1 (00:00 to 00:28.3, unfinished), Enter shows it: word word")
+    assert items[0][0].startswith("Section 1 (00:00 to 00:28, unfinished), Enter shows it: word word")
     assert items[0][0].endswith("…") and items[0][1].endswith("word word")
     answered = chat_history_rows("Describe it.", [{"role": "assistant", "content": "All."}], sections=progress)
     assert "unfinished" not in answered[1][0]
