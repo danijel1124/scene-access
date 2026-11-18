@@ -158,8 +158,10 @@ def test_a_description_that_stops_continues_with_the_next_section(tmp_path: Path
     # The title goes along as a hint, to the sections and to the merge.
     assert "nothing from it that cannot be seen: T\"" in texts[0]
     assert "add nothing from it that they do not say: T" in texts[2]
-    # The task comes last, after the video and the sound it refers to.
-    assert model.requests[0][1][-1]["content"][-1]["text"].startswith("Your task: describe part 2 of 3")
+    # As Gemma 4's model card asks: the video first, then the text with the task last, the sound after it.
+    content = model.requests[0][1][-1]["content"]
+    assert content[0]["type"] == "video_url" and content[-1]["type"] == "input_audio"
+    assert content[-2]["text"].startswith("Your task: describe part 2 of 3")
     assert turn.completion.answer == "The whole video."
     # The usage counts the sections' requests too: three here, the first one's request that failed not.
     assert turn.completion.requests == 4

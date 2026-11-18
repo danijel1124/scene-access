@@ -433,6 +433,9 @@ def stream_server():
                 self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode("utf-8"))
                 self.wfile.flush()
                 time.sleep(0.05)
+            # As llama.cpp ends an answer stopped at the token limit.
+            self.wfile.write(f"data: {json.dumps({'choices': [{'delta': {}, 'finish_reason': 'length'}]})}\n\n"
+                             .encode("utf-8"))
             self.wfile.write(b"data: [DONE]\n\n")
 
         def log_message(self, *args):
@@ -455,6 +458,8 @@ def test_a_request_that_can_be_cancelled_streams_through_its_worker_process(tmp_
         session, session.messages, lambda *_: None, on_delta=lambda kind, text: pieces.append((kind, text)))
     assert pieces == [("thinking", "Thinking."), ("text", "Half "), ("text", "done.")]
     assert turn.completion.answer == "Half done."
+    # Why the answer ended comes through the worker process too, the way the app sends.
+    assert turn.completion.cut_off
 
 
 def test_cancelling_a_streamed_request_stops_it_at_once(tmp_path: Path, stream_server):

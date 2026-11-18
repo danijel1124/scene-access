@@ -265,19 +265,18 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
 def _section_parts(section: Section, count: int, total: str, question: str, before: list[dict[str, Any]],
                    heard: str, sound: Callable[[Section], list[dict[str, Any]]] | None,
                    fix: str = "", title: str = "") -> list[dict[str, Any]]:
-    """What a section's request holds: the descriptions of the parts before, its transcript, picture and sound,
-    for a description anew the first one and what the check found, and last the task."""
+    """What a section's request holds, in the order Gemma 4's model card asks for, the picture before the text and
+    the sound after it: the section's video; the descriptions of the parts before, its transcript, for a
+    description anew the first one and what the check found, the title and the task; last its sound."""
     start, end = format_time(round(section.start)), format_time(round(section.end))
-    parts: list[dict[str, Any]] = []
+    data = base64.b64encode(section.path.read_bytes()).decode("ascii")
+    parts: list[dict[str, Any]] = [{"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{data}"}}]
     if before:
         parts.append({"type": "text", "text": "What you wrote about the parts before:\n\n" + joined_sections(before)})
     if heard:
         parts.append({"type": "text", "text": "An automatic transcript of what is said in this part; speech "
                                               "recognition may contain errors, times are those of the whole "
                                               f"video. {TRANSCRIPT_HELP}\n\n" + heard})
-    data = base64.b64encode(section.path.read_bytes()).decode("ascii")
-    parts.append({"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{data}"}})
-    parts += sound(section) if sound else []
     if fix:
         parts.append({"type": "text", "text": fix.strip()})
     if title:
@@ -285,7 +284,7 @@ def _section_parts(section: Section, count: int, total: str, question: str, befo
     parts.append({"type": "text", "text": SECTION_TASK.format(
         number=section.index + 1, count=count, span=f"{start} to {end}", total=total, start=start, end=end,
         question=question).strip()})
-    return parts
+    return parts + (sound(section) if sound else [])
 
 
 def _added(usage: dict[str, Any] | None, more: dict[str, Any]) -> dict[str, Any]:

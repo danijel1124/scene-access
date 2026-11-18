@@ -67,12 +67,16 @@ def descendants(root: int) -> set[int]:
             times[pid] = started(pid)
         return times[pid]
 
+    root_start = start_of(root)
     while changed:
         changed = False
         for pid, parent in parents.items():
             if parent in found and pid not in found:
                 child, father = start_of(pid), start_of(parent)
-                if child is None or father is None or child < father:
+                # Left out only when known to be older than its parent or than pytest; a process whose start
+                # cannot be read counts, as a needless stop of the tests is better than a window missed.
+                if child is not None and ((father is not None and child < father)
+                                          or (root_start is not None and child < root_start)):
                     continue
                 found.add(pid)
                 changed = True
@@ -97,7 +101,8 @@ with open(log_path, "w", encoding="utf-8") as log:
         if seen:
             # Only the processes checked to be pytest's own: taskkill /T follows the same reused IDs and could
             # end a program of the user's.
-            for pid in sorted(watched, key=lambda pid: pid != tests.pid):
+            # Asked again: a process may have started since the windows were checked.
+            for pid in sorted(descendants(tests.pid), key=lambda pid: pid != tests.pid):
                 subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
             break
         time.sleep(0.2)
