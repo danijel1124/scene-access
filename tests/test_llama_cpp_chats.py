@@ -309,6 +309,22 @@ def test_sending_the_first_question_again_keeps_it_instead_of_what_was_typed(fra
     assert frame.question.GetValue() == "let's try again" and not frame.resend_button.IsShown()
 
 
+def test_an_answer_cut_off_at_the_token_limit_is_not_stored_but_stays_in_view(frame, monkeypatch):
+    start(frame)
+
+    def cut_off(client, session, messages, run_tool, on_event=None, routing=None, on_delta=None, **kwargs):
+        on_delta('text', 'Half of the')
+        return Turn(entries=[{'role': 'assistant', 'content': 'Half of the'}],
+                    completion=Completion('Half of the', 'm', 1, None, None, finish_reason='length'))
+
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', cut_off)
+    frame._send('Describe it.', initial=True)
+    assert any('cut off at the token limit' in error for error in frame.errors)
+    assert frame.store.get_session(frame.current.id, gui.OWNER_ID).history == []
+    assert any(item.startswith('Unfinished, not saved: model wrote: Half of the') for item in frame.history_items)
+    assert frame.resend_button.IsShown()
+
+
 class ServerModel:
     """A llama.cpp server running one model, which does not hear."""
     def __init__(self, name): self.name = name

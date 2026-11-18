@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from .openrouter import DeltaHandler, EventHandler, Turn
+from .openrouter import AnswerCutOff, DeltaHandler, EventHandler, Turn
 from .request_control import RequestControl
 from .section_review import (fix_request, joined_without_repeats, mechanical_findings, review_messages,
                              reviewer_findings)
@@ -28,10 +28,6 @@ from .transcript import sound_parts
 # Sections end a little before the limit, as encoding can make a cut a few hundredths of a second longer.
 LIMIT_MARGIN = 0.98
 TRANSCRIPT_LINE = re.compile(r"^\[(\d+(?::\d{2}){1,2})\]")
-
-
-class SectionCutOff(RuntimeError):
-    """A section's description ended at the token limit or empty; the sections before it are stored."""
 
 
 @dataclass(frozen=True)
@@ -199,7 +195,8 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
             if turn.completion.cut_off or not turn.completion.answer.strip():
                 # Not stored: a description cut off at the token limit is no description, and sending the first
                 # question again continues with this section.
-                raise SectionCutOff(f"The description of section {number} was "
+                notify("section", f"Section {number} was {'cut off' if turn.completion.cut_off else 'empty'}")
+                raise AnswerCutOff(f"The description of section {number} was "
                                     f"{'cut off at the token limit' if turn.completion.cut_off else 'empty'}; "
                                     "the sections before it are kept. Send the first question again to continue.")
             described.append({"index": section.index, "start": section.start, "end": section.end,
@@ -223,7 +220,9 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         # the check failed (Gemma 4 12B once thought until the context was full and wrote nothing).
         failed = ("cut off at the token limit" if check.completion.cut_off
                   else "empty" if not check.completion.answer.strip() else "")
-        if not failed:
+        if failed:
+            notify("section", f"The check of section {number} was {failed}; only the mechanical check counts")
+        else:
             found += reviewer_findings(check.completion.answer)
         entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())
         entry["review"] = {"found": "\n".join(found), "reviewer": check.completion.answer.strip(),
@@ -248,6 +247,13 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
             + MERGE_TASK.format(total=total, question=question))
     turn = client.run_turn(replace(session, tools=[]), [*session.system_messages, {"role": "user", "content": text}],
                            lambda *_: None, on_event, routing, max_tool_rounds=0, on_delta=on_delta)
+    if turn.completion.cut_off or not turn.completion.answer.strip():
+        # Every section and check is stored, so sending the first question again only puts them together anew.
+        notify("section", "Putting the sections together was cut off" if turn.completion.cut_off
+               else "Putting the sections together gave no answer")
+        raise AnswerCutOff("Putting the sections together was "
+                            f"{'cut off at the token limit' if turn.completion.cut_off else 'empty'}; every section "
+                            "is kept. Send the first question again to put them together anew.")
     # The usage line under the answer counts every request it took, the sections' included.
     usages = [entry.get("usage") or {} for entry in described]
     completion = replace(turn.completion, requests=turn.completion.requests + sum(int(u.get("requests") or 1) for u in usages),

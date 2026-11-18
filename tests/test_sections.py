@@ -230,15 +230,41 @@ def test_a_check_cut_off_never_passes_and_only_the_mechanical_check_counts(tmp_p
     assert not any(row.startswith("Section 1 (00:00 to 00:30, checked)") for row in rows)
 
 
+def test_putting_the_sections_together_cut_off_is_no_answer_and_sending_again_only_merges(tmp_path: Path):
+    from sceneaccess.openrouter import AnswerCutOff
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=2)
+
+    class MergeCut(Scripted):
+        def run_turn(self, session, messages, *args, **kwargs):
+            if "give the one answer" in json.dumps(messages):
+                self.requests.append(messages)
+                return Turn(entries=[{"role": "assistant", "content": ""}],
+                            completion=Completion("", "m", 1, None, None, finish_reason="length"))
+            return super().run_turn(session, messages, *args, **kwargs)
+
+    def save(progress):
+        store.save_sections(session.id, "o", progress)
+
+    with pytest.raises(AnswerCutOff, match="Putting the sections together was cut off"):
+        describe_in_sections(MergeCut(describe=["00:01 A cup.", "00:31 A plate."], check=["OK", "OK"]), session,
+                             "Describe it.", cut, Runner, save, duration=60.0)
+    model = Scripted()
+    turn = describe_in_sections(model, store.get_session(session.id, "o"), "Describe it.", cut, Runner, save,
+                                duration=60.0)
+    # Every section and check was kept, so the only request is the merge.
+    assert len(model.requests) == 1 and turn.completion.answer == "Whole."
+
+
 def test_a_description_cut_off_is_not_stored_and_one_described_anew_cut_off_keeps_the_first(tmp_path: Path):
-    from sceneaccess.sections import SectionCutOff
+    from sceneaccess.openrouter import AnswerCutOff
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)
 
     def save(progress):
         store.save_sections(session.id, "o", progress)
 
-    with pytest.raises(SectionCutOff, match="section 2 was cut off"):
+    with pytest.raises(AnswerCutOff, match="section 2 was cut off"):
         describe_in_sections(Scripted(describe=["00:01 A cup.", CUT], check=["OK"]), session, "Describe it.", cut,
                              Runner, save, duration=60.0)
     assert [entry["index"] for entry in store.get_session(session.id, "o").sections["sections"]] == [0]
@@ -351,11 +377,15 @@ def test_the_mechanical_check_finds_repeated_speech_and_wrong_times():
     assert mechanical_findings("00:26 Sie zeigt auf einen Akku-Staubsauger an der Wand.", heard, 0, 30) == []
     # Saying what someone talks about is not: the blind person hears it.
     for line in ("00:09 Sie erwähnt den Deckel.", "00:19 Sie hält die Tube, während sie über das Drehen spricht.",
-                 "00:26 She mentions a corded vacuum cleaner.", "00:23 Sie erklärt, wie sie die Tube hält."):
+                 "00:26 She mentions a corded vacuum cleaner.", "00:23 Sie erklärt, wie sie die Tube hält.",
+                 "00:19 Sie hält die Tube, während sie über das „Draufdrehen“ spricht.",
+                 "00:23 She says she can manage it.", "00:15 Sie betont, dass der Deckel oft einzeln liegt.",
+                 "00:19 Sie beschreibt das Aufdrehen als mühsam."):
         assert "says what is said" in mechanical_findings(line, heard, 0, 30)[0], line
     # Words that also fit what is seen are left to the reviewer, which sees the context.
     for line in ('00:05 Ein Schild an der Tür says "Open".', "00:06 Das Make-up betont ihre Augen.",
-                 "00:07 Sie spricht in die Kamera und lächelt.", "00:08 Sie zeigt auf den Deckel."):
+                 "00:07 Sie spricht in die Kamera und lächelt.", "00:08 Sie zeigt auf den Deckel.",
+                 "00:09 Sie beschreibt mit der Hand einen Kreis.", "00:10 Sie zeigt, dass sie nur einen Arm hat."):
         assert mechanical_findings(line, "", 0, 30) == [], line
 
 
@@ -382,8 +412,11 @@ def test_a_reviewer_that_finds_nothing_lists_nothing():
     assert reviewer_findings("- Keine Zeitangabe bei 00:13.") == ["- Keine Zeitangabe bei 00:13."]
     # A reviewer going through the lines and its four questions writes a verdict for each; those that are fine
     # are no findings.
-    assert reviewer_findings("- 00:13: OK\n* a. Time: Yes\n- 00:15: No issues\n- 00:19: spricht über das Drehen") == [
+    assert reviewer_findings("- 00:13: OK\n* a. Problem: No\n- 00:15: No issues\n- 00:19: spricht über das Drehen") == [
         "- 00:19: spricht über das Drehen"]
+    # The questions ask for problems, so yes is a finding and no is not, whatever the question.
+    assert reviewer_findings("- 00:19: b. Speech: Yes\n- 00:13: b. Speech: No\n* d. Misspelt: nein") == [
+        "- 00:19: b. Speech: Yes"]
     assert reviewer_findings("Problems:\n- 00:13: retells\n* 00:26: quotes") == ["- 00:13: retells", "- 00:26: quotes"]
 
 

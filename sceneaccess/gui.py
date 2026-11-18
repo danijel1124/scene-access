@@ -21,7 +21,7 @@ from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSetti
 from .dialogs import NO_PROFILE
 from .models import AUTO_ROUTER, ModelCatalog, llama_cpp_catalog, routing
 from .new_chat import NewChatMixin, url_from_clipboard
-from .openrouter import LLAMA_CPP_READ_TIMEOUT, OpenRouterClient
+from .openrouter import LLAMA_CPP_READ_TIMEOUT, OpenRouterClient, check_whole
 from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .request_control import RequestControl, RequestCancelled
 from .prompts import current_system_prompt, system_prompt
@@ -942,6 +942,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                     runner = new_runner()
                     turn = client.run_turn(tooled, messages, runner.run, on_event, options,
                                            max_tool_rounds=config.max_tool_rounds, on_delta=on_delta)
+                    # Not stored: a cut-off answer would read as a whole one; what streamed stays in view.
+                    check_whole(turn.completion)
                 control.check_cancelled()
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)

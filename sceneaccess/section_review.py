@@ -25,16 +25,19 @@ RETOLD_SIMILARITY = 0.7
 # Words that almost always mean speech, in German and English, e.g. "Sie erwähnt", "während sie über den Deckel
 # spricht", "She mentions". Words that also fit what is seen stay with the reviewer, which sees the context:
 # "says" (a sign that says "Open"), "betont" (the make-up stresses her eyes), "spricht in die Kamera".
-SPEECH = re.compile(r"\b(erwähn\w*|(spricht|sprechen|redet|reden) (über|von)|"
-                    # In a German subordinate clause the verb comes last: "während sie über das Drehen spricht".
-                    r"(über|von) (\w+ ){1,4}(spricht|sprechen|redet|reden)|erzähl\w*|(sagt|erklärt|meint),? "
-                    r"(dass|wie|warum)|mention\w*|(talks?|talking|speaks?|speaking) (about|of)|"
+# Measured on every line the Gemma runs wrote (18.11.2026): no line about what is seen was reported.
+SPEECH = re.compile(r"\b(erwähn\w*|erläuter\w*|(spricht|sprechen|redet|reden) (über|von)|"
+                    # In a German subordinate clause the verb comes last: "während sie über das „Drehen“ spricht".
+                    r"(über|von) ([\w„“\"'»«-]+ ){1,4}(spricht|sprechen|redet|reden)|erzähl\w*|"
+                    r"(sagt|erklärt|meint|betont),? (dass|wie|warum)|beschreibt (\w+ ){1,4}als|"
+                    r"mention\w*|(talks?|talking|speaks?|speaking) (about|of)|says (she|he|they)|noting (that|it)|"
                     r"(says|explains?|tells?)( us)? (that|how|why))\b", re.IGNORECASE)
 # A line at the start of a section this alike to one at the end of the section before says the same again.
 REPEATED_SIMILARITY = 0.85
 # A reviewer's whole answer when it finds nothing.
 NOTHING_FOUND = "OK"
-NOTHING_LISTED = re.compile(r"^\W*(ok|okay|fine|good|correct|yes|ja|passt|in ordnung|none|"
+# "no" and "nein" too: the four questions ask for problems, so no means fine; yes is a finding.
+NOTHING_LISTED = re.compile(r"^\W*(ok|okay|fine|good|correct|no|nein|passt|in ordnung|none|"
                             r"no (problems?|issues?|violations?|errors?)( found)?|nothing( found)?|"
                             r"keine?( (verstöße|fehler|probleme|beanstandungen))?( gefunden)?|nichts( gefunden)?)"
                             r"\W*$", re.IGNORECASE)
@@ -50,11 +53,11 @@ REVIEWER_SYSTEM_PROMPT = (
     "question the description answers and, if there is one, an automatic transcript of what is said in the part.\n\n"
     "How to check, once and in this order:\n"
     "1. Go through the description line by line, from top to bottom, exactly once.\n"
-    "2. For each line, ask only these four questions:\n"
-    "   a. Does it start with a time as mm:ss within the part, later than the line before?\n"
+    "2. For each line, ask only these four questions; for each, yes means a problem and no means fine:\n"
+    "   a. Is its time missing, not mm:ss, outside the part, or not later than the line before?\n"
     "   b. Does it say anything about the speech: what is said, quoted, mentioned, explained or talked about, "
     "also as \"while she talks about …\"? The blind person hears the speech, so any of it is a problem.\n"
-    "   c. Is it in the language of the question?\n"
+    "   c. Is it in another language than the question?\n"
     "   d. Is a word misspelt, e.g. a digit inside a word?\n"
     "3. Decide each question once. Note the line only if one of the questions finds a problem. If you are unsure, "
     "the line is fine.\n"

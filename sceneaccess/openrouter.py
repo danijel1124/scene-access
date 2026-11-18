@@ -60,6 +60,16 @@ class Completion:
         }
 
 
+class AnswerCutOff(RuntimeError):
+    """An answer ended at the token or context limit, or empty: it is not stored as an answer."""
+
+
+def check_whole(completion: Completion, what: str = "The answer") -> None:
+    """Raises AnswerCutOff for an answer that is cut off or empty, so it is never stored as a whole one."""
+    if completion.cut_off or not completion.answer.strip():
+        raise AnswerCutOff(f"{what} was {'cut off at the token limit' if completion.cut_off else 'empty'}.")
+
+
 @dataclass
 class Turn:
     """Everything one question added to the chat, ready to be stored, and the final answer's data."""

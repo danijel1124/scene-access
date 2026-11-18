@@ -23,10 +23,31 @@ class PROCESSENTRY32W(ctypes.Structure):
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(ctypes.c_ulonglong)] * 4
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def started(pid: int) -> int | None:
+    """When the process started, in Windows file time, or None if it cannot be asked."""
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        created, ended, kernel, user = (ctypes.c_ulonglong() for _ in range(4))
+        ok = kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(ended), ctypes.byref(kernel),
+                                      ctypes.byref(user))
+        return created.value if ok else None
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def descendants(root: int) -> set[int]:
-    """root and every process it started, directly or not."""
+    """root and every process it started, directly or not. A process only counts as started by another if it
+    started later: Windows reuses process IDs, so the user's Firefox, whose parent ended yesterday, once looked
+    like a child of pytest because a test process got that parent's old ID (18.11.2026)."""
     parents: dict[int, int] = {}
     snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     try:
@@ -39,10 +60,20 @@ def descendants(root: int) -> set[int]:
     finally:
         kernel32.CloseHandle(snapshot)
     found, changed = {root}, True
+    times: dict[int, int | None] = {}
+
+    def start_of(pid: int) -> int | None:
+        if pid not in times:
+            times[pid] = started(pid)
+        return times[pid]
+
     while changed:
         changed = False
         for pid, parent in parents.items():
             if parent in found and pid not in found:
+                child, father = start_of(pid), start_of(parent)
+                if child is None or father is None or child < father:
+                    continue
                 found.add(pid)
                 changed = True
     return found
@@ -64,7 +95,10 @@ with open(log_path, "w", encoding="utf-8") as log:
 
         win32gui.EnumWindows(check, None)
         if seen:
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(tests.pid)], capture_output=True)
+            # Only the processes checked to be pytest's own: taskkill /T follows the same reused IDs and could
+            # end a program of the user's.
+            for pid in sorted(watched, key=lambda pid: pid != tests.pid):
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
             break
         time.sleep(0.2)
     tests.wait()

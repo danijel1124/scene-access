@@ -188,8 +188,9 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         if not shown["text"]:
             # Not streamed, e.g. by a server that does not stream: the answer comes in one piece.
             print(f"\n{completion.answer}", file=out)
+        cut = " | CUT OFF at the token limit, not a whole answer" if completion.cut_off else ""
         print(f"\n\nTime: {time.monotonic() - started:.0f} s | answered by {completion.model} | requests "
-              f"{completion.requests} | prompt tokens {completion.prompt_tokens}", file=out, flush=True)
+              f"{completion.requests} | prompt tokens {completion.prompt_tokens}{cut}", file=out, flush=True)
     except Exception as error:
         print(f"\n\nFailed after {time.monotonic() - started:.0f} s: {error}", file=out, flush=True)
     finally:
