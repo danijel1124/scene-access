@@ -281,6 +281,30 @@ def test_a_reviewer_model_without_an_openrouter_key_stops_before_any_section_is_
                                   for error in frame.errors)
 
 
+def test_sending_the_first_question_again_keeps_it_instead_of_what_was_typed(frame, monkeypatch):
+    start(frame)
+    original = frame.current.initial_question
+    sent = []
+
+    def fail_first(client, session, messages, run_tool, on_event=None, routing=None, **kwargs):
+        sent.append(json.dumps(messages))
+        if len(sent) == 1:
+            raise RuntimeError('fixture: provider error')
+        return Turn(entries=[{'role': 'assistant', 'content': 'Answer.'}],
+                    completion=Completion('Answer.', 'm', 1, None, None))
+
+    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', fail_first)
+    frame._send(original, initial=True)
+    assert frame.errors and frame.resend_button.IsShown()
+    # What one types after a failure, such as "let's try again", is not the question.
+    frame.question.SetValue("let's try again")
+    frame.on_resend(None)
+    stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    assert stored.initial_question == original and "let's try again" not in sent[-1]
+    assert json.dumps(original)[1:-1] in sent[-1] and stored.history[-1]['content'] == 'Answer.'
+    assert frame.question.GetValue() == "let's try again" and not frame.resend_button.IsShown()
+
+
 class ServerModel:
     """A llama.cpp server running one model, which does not hear."""
     def __init__(self, name): self.name = name

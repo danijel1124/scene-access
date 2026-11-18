@@ -262,6 +262,10 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.chat_list = wx.ListBox(panel, style=wx.LB_EXTENDED)
         self.question = wx.TextCtrl(panel, style=wx.TE_MULTILINE)
         self.send_button = wx.Button(panel, label="Send question")
+        # Shown only while the first question has no stored answer, e.g. after it failed: sends it again unchanged.
+        # Typing something else instead would replace the first question, as "try again" did once.
+        self.resend_button = wx.Button(panel, label="Send first question again")
+        self.resend_button.Hide()
         self.pause_button = wx.Button(panel, label="Pause request")
         self.pause_button.Hide()
         self.chat_settings_button = wx.Button(panel, label="Chat settings")
@@ -279,6 +283,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         layout.Add(self.question, 0, wx.EXPAND | wx.ALL, 8)
         requests = wx.BoxSizer(wx.HORIZONTAL)
         requests.Add(self.send_button, 0, wx.RIGHT, 8)
+        requests.Add(self.resend_button, 0, wx.RIGHT, 8)
         requests.Add(self.pause_button, 0)
         layout.Add(requests, 0, wx.ALIGN_RIGHT | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         chat = wx.BoxSizer(wx.HORIZONTAL)
@@ -293,6 +298,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.chat_settings_button.Bind(wx.EVT_BUTTON, lambda _event: self.change_chat_settings())
         self.transcript_button.Bind(wx.EVT_BUTTON, lambda _event: self.add_transcript())
         self.send_button.Bind(wx.EVT_BUTTON, self.on_send)
+        self.resend_button.Bind(wx.EVT_BUTTON, self.on_resend)
         self.pause_button.Bind(wx.EVT_BUTTON, self.on_pause)
         self.chat_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda _event: self.open_selected_message())
         self.chat_list.Bind(wx.EVT_CONTEXT_MENU, self.on_history_menu)
@@ -594,6 +600,10 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         if self.prompt_button.IsShown() != outdated:
             self.prompt_button.Show(outdated)
             self.prompt_button.GetParent().Layout()
+        unanswered = not session.history and bool(session.initial_question)
+        if self.resend_button.IsShown() != unanswered:
+            self.resend_button.Show(unanswered)
+            self.resend_button.GetParent().Layout()
         self._set_chat_mutation_buttons()
 
     def on_history_menu(self, event: wx.ContextMenuEvent) -> None:
@@ -748,7 +758,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
 
     def _set_chat_mutation_buttons(self) -> None:
         busy = self._chat_busy()
-        for button in (self.setup_button, self.prompt_button, self.update_path_button, self.transcript_button):
+        for button in (self.setup_button, self.prompt_button, self.update_path_button, self.transcript_button,
+                       self.resend_button):
             button.Enable(not busy)
         self.chat_settings_button.Enable(not busy and not getattr(self, '_loading_chat_settings', False))
 
@@ -767,6 +778,14 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             return
         self.question.Clear()
         self._send(question, initial=not self.current.history)
+
+    def on_resend(self, _event: wx.CommandEvent | None) -> None:
+        """Sends the stored first question again, unchanged; what is typed in the question field stays there."""
+        if not self.current or self.current.history or not self.current.initial_question or self._request:
+            return
+        if not self._ask_about_stored_size():
+            return
+        self._send(self.current.initial_question, initial=True)
 
     def _send(self, question: str, *, initial: bool) -> None:
         if not self.current or self._request:

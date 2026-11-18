@@ -123,6 +123,10 @@ SECTION_TASK = ("\n\nYour task: describe part {number} of {count}, from {span}, 
                 "from the part before only if something new happens. Start right away with the first time; do not "
                 "repeat this task, the transcript or what you wrote about earlier parts. Answer in the language of "
                 "the question: {question}")
+# The video's title tells what it is about, e.g. "Mein Einarmiger Alltag", which a model seeing only a few
+# pictures may miss; it is a hint, not something to describe (user's wish, 18.11.2026).
+TITLE_HINT = ("The video's title, as a hint to what it is about; describe only what can be seen, and where the "
+              "picture and the title seem to disagree, look again: {title}")
 MERGE_TASK = ("\n\nYour task: give the one answer for the whole video, which is {total} long, as if you had seen it "
               "at once: put your descriptions of the parts above together in order, keep every detail and every "
               "time, and leave out only what repeats where two parts meet. Do not mention the parts. Answer in the "
@@ -162,7 +166,8 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     def ask(section: Section, before: list[dict[str, Any]], heard: str, fix: str = "") -> Turn:
         runner = new_runner()
         try:
-            parts = _section_parts(section, len(sections), total, question, before, heard, sound, fix)
+            parts = _section_parts(section, len(sections), total, question, before, heard, sound, fix,
+                                   session.title)
             return client.run_turn(session, [*session.system_messages, {"role": "user", "content": parts}],
                                    runner.run, on_event, routing, max_tool_rounds=max_tool_rounds, on_delta=on_delta)
         finally:
@@ -208,7 +213,8 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     progress["joined"] = joined_without_repeats(described)
     save(progress)
     notify("section", f"Putting the {len(sections)} sections together")
-    text = joined_sections(described) + MERGE_TASK.format(total=total, question=question)
+    text = (joined_sections(described) + ("\n\n" + TITLE_HINT.format(title=session.title) if session.title else "")
+            + MERGE_TASK.format(total=total, question=question))
     turn = client.run_turn(replace(session, tools=[]), [*session.system_messages, {"role": "user", "content": text}],
                            lambda *_: None, on_event, routing, max_tool_rounds=0, on_delta=on_delta)
     # The usage line under the answer counts every request it took, the sections' included.
@@ -221,7 +227,7 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
 
 def _section_parts(section: Section, count: int, total: str, question: str, before: list[dict[str, Any]],
                    heard: str, sound: Callable[[Section], list[dict[str, Any]]] | None,
-                   fix: str = "") -> list[dict[str, Any]]:
+                   fix: str = "", title: str = "") -> list[dict[str, Any]]:
     """What a section's request holds: the descriptions of the parts before, its transcript, picture and sound,
     for a description anew the first one and what the check found, and last the task."""
     start, end = format_time(round(section.start)), format_time(round(section.end))
@@ -237,6 +243,8 @@ def _section_parts(section: Section, count: int, total: str, question: str, befo
     parts += sound(section) if sound else []
     if fix:
         parts.append({"type": "text", "text": fix.strip()})
+    if title:
+        parts.append({"type": "text", "text": TITLE_HINT.format(title=title)})
     parts.append({"type": "text", "text": SECTION_TASK.format(
         number=section.index + 1, count=count, span=f"{start} to {end}", total=total, start=start, end=end,
         question=question).strip()})
