@@ -178,7 +178,8 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         notify("section", f"Checking section {number}")
         found = mechanical_findings(entry["text"], heard, section.start, section.end)
         check = client.run_turn(replace(session, tools=[]), [{"role": "user", "content": review_request(
-            entry["text"], heard, number, section.start, section.end, question)}],
+            entry["text"], heard if session.sends_transcript else None, number, section.start, section.end,
+            question)}],
             lambda *_: None, on_event, routing, max_tool_rounds=0, on_delta=on_delta)
         found += reviewer_findings(check.completion.answer)
         entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())

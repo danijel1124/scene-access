@@ -287,9 +287,17 @@ def test_the_sections_are_joined_without_what_repeats_where_two_meet():
 
 def test_a_reviewer_that_finds_nothing_lists_nothing():
     from sceneaccess.section_review import reviewer_findings
-    assert reviewer_findings("OK") == reviewer_findings(" ok. ") == []
+    # However a model says it found nothing, in the question's language too, it is no finding.
+    for nothing in ("OK", " ok. ", "**OK**", "OK, keine Fehler.", "Keine Verstöße gefunden.", ""):
+        assert reviewer_findings(nothing) == []
     assert reviewer_findings("Problems:\n- 00:13: retells\n* 00:26: quotes") == ["- 00:13: retells", "- 00:26: quotes"]
-    assert reviewer_findings("The times are wrong.") == ["- The times are wrong."]
+
+
+def test_the_reviewer_is_not_told_nothing_is_said_when_it_gets_no_transcript():
+    from sceneaccess.section_review import review_request
+    assert "nothing is said in this part" in review_request("00:01 A cup.", "", 1, 0, 30, "Describe it.")
+    without = review_request("00:01 A cup.", None, 1, 0, 30, "Describe it.")
+    assert "no transcript is available" in without and "nothing is said" not in without
 
 
 def test_a_chat_described_in_sections_sends_no_video_with_later_questions(tmp_path: Path):

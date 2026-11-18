@@ -16,9 +16,11 @@ from .tools import format_time
 
 TIME_AT_START = re.compile(r"^\W*(\d{1,2}):(\d{2})(?::(\d{2}))?(\.\d+)?\W*")
 TRANSCRIPT_TEXT = re.compile(r"^\[[\d:]+\]\s*")
-# How alike a description line and a transcript line must be to count as repeated: wording such as
-# "Sie sagt: So und dann mach ich das drauf." against "So und dann mach ich das drauf." scores far above it,
-# a description of what is seen far below.
+# How alike a description line and a transcript line must be, word by word, to count as repeated. Measured on
+# Gemma 4 12B's real sections (18.11.2026): transcript lines copied into the description 1.00, "Sie erwähnt,
+# dass die Klopapierrolle auf der linken Seite sein muss." 0.74, while lines about what is seen, such as "Sie
+# zeigt ihr spezielles Schneidebrett.", stayed below 0.5. What is retold in other words or another language
+# scores near 0; the reviewer finds that.
 RETOLD_SIMILARITY = 0.7
 # A line at the start of a section this alike to one at the end of the section before says the same again.
 REPEATED_SIMILARITY = 0.85
@@ -91,19 +93,23 @@ def mechanical_findings(text: str, heard: str, start: float, end: float) -> list
     return found
 
 
-def review_request(text: str, heard: str, number: int, start: float, end: float, question: str) -> str:
+def review_request(text: str, heard: str | None, number: int, start: float, end: float, question: str) -> str:
+    """heard is the transcript of the part, or None when the chat sends no transcript: then the reviewer must
+    not take speech the description mentions for made up."""
+    if heard is None:
+        heard = "(no transcript is available; the model may have heard the speech itself)"
     return REVIEW_TASK.format(number=number, start=format_time(round(start)), end=format_time(round(end)),
                               question=question, ok=NOTHING_FOUND, text=text.strip(),
                               heard=heard.strip() or "(nothing is said in this part)")
 
 
 def reviewer_findings(answer: str) -> list[str]:
-    """The problems a reviewer listed; none when it answered that it found nothing."""
-    answer = answer.strip()
-    if not answer or answer.rstrip(".!").upper() == NOTHING_FOUND:
-        return []
-    listed = [line.strip() for line in answer.splitlines() if line.strip().startswith(("-", "*", "•"))]
-    return [f"- {line.lstrip('-*• ').strip()}" for line in listed] or [f"- {answer}"]
+    """The problems a reviewer listed, one per line starting with "- " as asked. An answer without such lines
+    found nothing, however it says so: a model answering in the question's language writes "OK, keine Fehler."
+    or "**OK**" as often as OK, and taking that for a finding would describe every section twice."""
+    listed = [line.strip() for line in answer.splitlines()
+              if line.strip().startswith(("- ", "* ", "• ")) and len(line.strip()) > 2]
+    return [f"- {line[2:].strip()}" for line in listed]
 
 
 def fix_request(text: str, found: list[str]) -> str:
