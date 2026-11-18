@@ -44,10 +44,12 @@ def started(pid: int) -> int | None:
         kernel32.CloseHandle(handle)
 
 
-def descendants(root: int) -> set[int]:
+def descendants(root: int, known: dict[int, int | None] | None = None) -> set[int]:
     """root and every process it started, directly or not. A process only counts as started by another if it
     started later: Windows reuses process IDs, so the user's Firefox, whose parent ended yesterday, once looked
-    like a child of pytest because a test process got that parent's old ID (18.11.2026)."""
+    like a child of pytest because a test process got that parent's old ID (18.11.2026). known keeps what was
+    found before, with its start time: a grandchild whose parent has ended points to no living process, so only
+    this remembers it; a process that later got such an ID starts at another time and does not count."""
     parents: dict[int, int] = {}
     snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     try:
@@ -68,6 +70,8 @@ def descendants(root: int) -> set[int]:
         return times[pid]
 
     root_start = start_of(root)
+    known = {} if known is None else known
+    found |= {pid for pid, start in known.items() if pid in parents and start_of(pid) == start}
     while changed:
         changed = False
         for pid, parent in parents.items():
@@ -80,6 +84,7 @@ def descendants(root: int) -> set[int]:
                     continue
                 found.add(pid)
                 changed = True
+    known.update({pid: start_of(pid) for pid in found})
     return found
 
 
@@ -88,9 +93,10 @@ with open(log_path, "w", encoding="utf-8") as log:
     tests = subprocess.Popen([sys.executable, "-m", "pytest", *args], stdout=log, stderr=subprocess.STDOUT,
                              cwd=Path(__file__).resolve().parent.parent)
     seen: list[str] = []
+    known: dict[int, int | None] = {}
 
     while tests.poll() is None:
-        watched = descendants(tests.pid)
+        watched = descendants(tests.pid, known)
 
         def check(hwnd, _):
             if win32gui.IsWindowVisible(hwnd) and win32process.GetWindowThreadProcessId(hwnd)[1] in watched:
@@ -102,7 +108,7 @@ with open(log_path, "w", encoding="utf-8") as log:
             # Only the processes checked to be pytest's own: taskkill /T follows the same reused IDs and could
             # end a program of the user's.
             # Asked again: a process may have started since the windows were checked.
-            for pid in sorted(descendants(tests.pid), key=lambda pid: pid != tests.pid):
+            for pid in sorted(descendants(tests.pid, known), key=lambda pid: pid != tests.pid):
                 subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
             break
         time.sleep(0.2)
