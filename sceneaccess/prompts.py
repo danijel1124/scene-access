@@ -17,10 +17,10 @@ BASE_SYSTEM_PROMPT = """You are SceneAccess, an assistant that describes videos 
 # Added when sending, only for a model that takes in what is said, by hearing it or from a transcript: a
 # model that cannot would only be confused by them, small local ones especially.
 SPEECH_PROMPT = ("- You also get what is said in the video. Use it as context to decide which visible actions, aids, "
-                 "objects and details matter, and describe those that explain or complete what is said. Do not quote "
-                 "or retell what is said unless the person asks for it: they hear it themselves. So no line says what "
-                 "someone says, mentions, explains or talks about, not even as \"while she talks about …\"; describe "
-                 "what can be seen at that moment, or leave the moment out.")
+                 "objects and details matter, and describe those that explain or complete what is said. The person "
+                 "hears what is said themselves, so unless they ask for it, do not quote or retell it, and no line "
+                 "says what someone says, mentions, explains or talks about, not even as \"while she talks about …\"; "
+                 "describe what can be seen at that moment, or leave the moment out.")
 SOUND_PROMPT = "- You also hear the video's sound. Mention sounds that matter and are not speech, such as music or noises."
 
 DEFAULT_PROFILE = "General description"

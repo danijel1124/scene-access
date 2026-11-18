@@ -27,7 +27,7 @@ def test_chats_from_the_first_release_still_open_after_the_new_columns_are_added
     assert session.messages[0]["role"] == "user"
 
 
-def test_chats_from_the_tools_release_get_no_transcript_so_their_cache_stays_valid(tmp_path: Path):
+def test_chats_from_the_tools_release_get_no_transcript(tmp_path: Path):
     root = tmp_path / "chats"
     (root / "sessions" / "vid_t").mkdir(parents=True)
     (root / "sessions" / "vid_t" / "context.data-url").write_text("data:video/mp4;base64,AA==", encoding="ascii")
