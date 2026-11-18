@@ -288,8 +288,11 @@ def test_the_sections_are_joined_without_what_repeats_where_two_meet():
 def test_a_reviewer_that_finds_nothing_lists_nothing():
     from sceneaccess.section_review import reviewer_findings
     # However a model says it found nothing, in the question's language too, it is no finding.
-    for nothing in ("OK", " ok. ", "**OK**", "OK, keine Fehler.", "Keine Verstöße gefunden.", ""):
+    for nothing in ("OK", " ok. ", "**OK**", "OK, keine Fehler.", "Keine Verstöße gefunden.", "",
+                    "- Keine Verstöße.", "- None.", "* OK", "- No problems."):
         assert reviewer_findings(nothing) == []
+    # A finding that starts with such a word still names what is wrong.
+    assert reviewer_findings("- Keine Zeitangabe bei 00:13.") == ["- Keine Zeitangabe bei 00:13."]
     assert reviewer_findings("Problems:\n- 00:13: retells\n* 00:26: quotes") == ["- 00:13: retells", "- 00:26: quotes"]
 
 

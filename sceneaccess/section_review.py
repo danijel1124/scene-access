@@ -26,6 +26,9 @@ RETOLD_SIMILARITY = 0.7
 REPEATED_SIMILARITY = 0.85
 # A reviewer's whole answer when it finds nothing.
 NOTHING_FOUND = "OK"
+NOTHING_LISTED = re.compile(r"^\W*(ok|none|no (problems?|issues?|violations?|errors?)|nothing( found)?|"
+                            r"keine?( (verstöße|fehler|probleme|beanstandungen))?( gefunden)?|nichts( gefunden)?)"
+                            r"\W*$", re.IGNORECASE)
 
 REVIEW_TASK = (
     "You check a description of part {number} of a video for a blind person; the part runs from {start} to {end}. "
@@ -107,9 +110,10 @@ def reviewer_findings(answer: str) -> list[str]:
     """The problems a reviewer listed, one per line starting with "- " as asked. An answer without such lines
     found nothing, however it says so: a model answering in the question's language writes "OK, keine Fehler."
     or "**OK**" as often as OK, and taking that for a finding would describe every section twice."""
-    listed = [line.strip() for line in answer.splitlines()
-              if line.strip().startswith(("- ", "* ", "• ")) and len(line.strip()) > 2]
-    return [f"- {line[2:].strip()}" for line in listed]
+    listed = [line.strip()[2:].strip() for line in answer.splitlines() if line.strip().startswith(("- ", "* ", "• "))]
+    # Nothing found, written as a list line: "- Keine Verstöße.", "- None." A finding such as "- Keine Zeitangabe
+    # bei 00:13" names what is missing, so only such a line alone counts as nothing found.
+    return [f"- {line}" for line in listed if line and not NOTHING_LISTED.match(line)]
 
 
 def fix_request(text: str, found: list[str]) -> str:
