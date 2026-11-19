@@ -118,7 +118,10 @@ def test_the_reviewer_gets_the_title_and_may_report_a_contradiction_to_it():
                            "Mein Einarmiger Alltag")[1]["content"]
     assert "The video's title: Mein Einarmiger Alltag" in part
     # Only what needs a model: a contradiction, and a line that only says what one would guess anyway.
-    assert "e. Does the line clearly contradict the title or the transcript" in REVIEWER_SYSTEM_PROMPT
+    assert "e. Does the line say the opposite of the title or the transcript" in REVIEWER_SYSTEM_PROMPT
+    # What is missing is no finding: Gemma 4 12B reported "the transcript mentions the vacuum cleaner, the
+    # description does not" as a contradiction.
+    assert "What a line does not say is never a problem" in REVIEWER_SYSTEM_PROMPT
     assert "f. Does the line only say what the blind person would guess" in REVIEWER_SYSTEM_PROMPT
     assert "a. " not in REVIEWER_SYSTEM_PROMPT and "d. " not in REVIEWER_SYSTEM_PROMPT
 
