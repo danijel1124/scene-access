@@ -52,6 +52,9 @@ TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCR
 # pictures may miss; it is a hint, not something to describe (user's wish, 18.11.2026).
 TITLE_HINT = ("The video's title, only to help understand what can be seen; describe nothing from it that cannot "
               "be seen: {title}")
+# Last in the first request, as for the sections: Qwen3.5-9B answered "Beschreibe das Video." in English in 8 of
+# 10 runs when told only in the system prompt (19.11.2026).
+LANGUAGE_HINT = "Write your answer in the language of this question: {question}"
 # The video is what counts; the transcript only helps to follow it (user's wish, 17.11.2026).
 TRANSCRIPT_HELP = ("It is only a help: the video is what counts, so describe what you see in it and use the "
                    "transcript to understand it, not to retell it.")
@@ -68,6 +71,8 @@ TRANSCRIPT_LATER_INTRO = ("Here is an automatic transcript of the video's speech
                           f"{TRANSCRIPT_HELP}\n\n")
 # A stored entry marked like this stays in the Chat history but is not sent to the model.
 EXCLUDED = "excluded"
+# What the mechanical cleaning took out of a stored answer, kept with it for the Chat history, never sent.
+REMOVED = "removed"
 # Marks the history entry of a transcript added later; it is sent as a user message.
 TRANSCRIPT_ENTRY = "transcript"
 # The video's sound kept beside it for a llama.cpp server, in pieces <prefix>000.mp3, ...; the other file marks
@@ -226,9 +231,10 @@ class VideoSession:
             video = [{"type": "video_url", "video_url": {"url": self.video_data_url}}]
         title = [{"type": "text", "text": TITLE_HINT.format(title=self.title)}] if self.title else []
         # The video before the text, as Gemma 4's model card asks; with_sound puts the sound after the text.
-        content = [*video, {"type": "text", "text": self.initial_question}, *transcript, *title]
+        language = {"type": "text", "text": LANGUAGE_HINT.format(question=self.initial_question)}
+        content = [*video, {"type": "text", "text": self.initial_question}, *transcript, *title, language]
         # OpenRouter reads explicit cache breakpoints from content parts: on the last one, everything up to it, the
-        # video, question, transcript and title, is cached together.
+        # video, question, transcript, title and language, is cached together.
         content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
         return _merge_user_runs([*system, {"role": "user", "content": content},
                                  *(self.wire_message(message) for message in self.history if not message.get(EXCLUDED))])

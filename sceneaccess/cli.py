@@ -29,9 +29,10 @@ from .models import ModelCatalog, llama_cpp_catalog, routing
 from .openrouter import LLAMA_CPP_READ_TIMEOUT, OpenRouterClient
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
-from .session_store import TRANSCRIBE_MODES, VideoSession, VideoSessionStore
+from .session_store import REMOVED, TRANSCRIBE_MODES, VideoSession, VideoSessionStore
 from .tools import ToolRunner, provider_tools
-from .sections import Reviewer, cut_sections, describe_in_sections, needs_sections, section_sound, video_duration
+from .sections import (Reviewer, cleaned_whole_answer, cut_sections, describe_in_sections, needs_sections,
+                       section_sound, video_duration)
 from .transcript import model_hears, sound_parts, wants_transcript, with_sound
 
 
@@ -190,6 +191,11 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         else:
             turn = client.run_turn(tooled, messages, runner.run, step, options, max_tool_rounds=config.max_tool_rounds,
                                    on_delta=piece)
+            if not turn.completion.cut_off:
+                # As the app stores it, so the follow-up gets the answer the chat would keep.
+                turn = cleaned_whole_answer(turn, session)
+                if turn.entries and turn.entries[-1].get(REMOVED):
+                    print(f"\n\nRemoved from the answer:\n{turn.entries[-1][REMOVED]}", file=out, flush=True)
         completion = turn.completion
         if not shown["text"]:
             # Not streamed, e.g. by a server that does not stream: the answer comes in one piece.

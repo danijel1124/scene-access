@@ -23,7 +23,8 @@ from .providers import LLAMA_CPP
 from .request_control import RequestControl
 from .section_review import (REVIEW_FORMAT, clean_description, fix_request, joined_without_repeats,
                              mechanical_findings, review_messages, reviewer_findings, without_lines_at)
-from .session_store import SECTION_FILE_PREFIX, TITLE_HINT, TRANSCRIPT_HELP, VideoSession, joined_sections
+from .session_store import (REMOVED, SECTION_FILE_PREFIX, TITLE_HINT, TRANSCRIPT_HELP, VideoSession,
+                            joined_sections)
 from .tools import (HD_FRAME, ZOOM_FRAME, ToolResult, format_time, local_video, run_ffmpeg,
                     video_size_and_duration)
 from .transcript import sound_parts
@@ -53,6 +54,18 @@ class Section:
 def video_duration(session: VideoSession) -> float:
     with local_video(session) as video:
         return video_size_and_duration(video)[1]
+
+
+def cleaned_whole_answer(turn: Turn, session: VideoSession) -> Turn:
+    """The answer to the first question about the whole video, cleaned like a section's description, as Qwen3.5-9B
+    also wrote what was said ("noting that sharp edges would otherwise dig in", 19.11.2026). What was taken out
+    stays with the answer for the Chat history."""
+    answer, notes = clean_description(turn.completion.answer,
+                                      session.transcript if session.sends_transcript else "", whole=True)
+    if not notes or not turn.entries:
+        return turn
+    entries = [*turn.entries[:-1], {**turn.entries[-1], "content": answer, REMOVED: "\n".join(notes)}]
+    return Turn(entries=entries, completion=replace(turn.completion, answer=answer))
 
 
 def needs_sections(session: VideoSession, duration: float) -> bool:

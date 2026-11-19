@@ -18,7 +18,11 @@ from typing import Any
 
 from .tools import format_time
 
-TIME_AT_START = re.compile(r"^\W*(\d{1,2}):(\d{2})(?::(\d{2}))?(\.\d+)?\W*")
+# A time at the start of a line, with the end of a span after it, as in "**00:00 - 00:25:**" or "1:17 – Ende".
+TIME_AT_START = re.compile(r"^\W*(\d{1,2}):(\d{2})(?::(\d{2}))?(\.\d+)?"
+                           r"(?:\s*[-–—]\s*(?:\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?|(?i:ende|end))\b)?\W*")
+# Where a sentence ends: a description of the whole video puts several in one line.
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 TRANSCRIPT_TEXT = re.compile(r"^\[[\d:]+\]\s*")
 # How alike a description line and a transcript line must be, word by word, to count as repeated. Measured on
 # Gemma 4 12B's real sections (18.11.2026): transcript lines copied into the description 1.00, "Sie erwähnt,
@@ -35,7 +39,10 @@ SPEECH = re.compile(r"\b(erwähn\w*|erläuter\w*|(spricht|sprechen|redet|reden) 
                     r"(über|von) ([\w„“\"'»«-]+ ){1,4}(spricht|sprechen|redet|reden)|erzähl\w*|"
                     r"(sagt|erklärt|meint|betont|präzisiert),? (dass|wie|warum)|beschreibt (\w+ ){1,4}als|"
                     r"mention\w*|(talks?|talking|speaks?|speaking) (about|of)|says (she|he|they)|noting (that|it)|"
-                    r"(says|explains?|tells?)( us)? (that|how|why))\b", re.IGNORECASE)
+                    r"(says|explains?|tells?)( us)? (that|how|why)|"
+                    # With a person before it, the word is speech: "She explains it allows for scooping" (Qwen3.5).
+                    r"(sie|er) (sagt|erklärt)|(she|he|they) (say|says|explain|explains|tell|tells))\b",
+                    re.IGNORECASE)
 # A clause about the speech hanging on a line about what is seen: ", während sie über den Deckel spricht".
 SPEECH_CLAUSE = re.compile(r",\s*(während|wobei|indem|als|while|as)\b", re.IGNORECASE)
 # A line at the start of a section this alike to one at the end of the section before says the same again.
@@ -149,16 +156,37 @@ def without_preamble(text: str) -> str:
     return "\n".join(lines[first:]).strip() if first else text.strip()
 
 
-def clean_description(text: str, heard: str) -> tuple[str, list[str]]:
-    """A description with what needs no model removed: text before the first time, tenths of seconds, lines that
-    only repeat what is said or say what someone talks about, and such a clause after what is seen. Returns the
-    cleaned text and a note for each change."""
+def _without_speech(sentence: str, spoken: list[str]) -> str:
+    """A sentence of a description with what is said cut off, or "" if nothing seen is left: "Sie dreht den
+    Deckel auf, während sie über das Drehen spricht." keeps what comes before the clause, as does "…, noting
+    that sharp edges would dig in."; "Sie erwähnt den Staubsauger." goes."""
+    if _retold(_content(sentence), spoken):
+        return ""
+    speech = SPEECH.search(sentence)
+    if not speech:
+        return sentence
+    cuts = [found.start() for found in SPEECH_CLAUSE.finditer(sentence) if found.start() < speech.start()]
+    before = sentence[:speech.start()].rstrip()
+    if before.endswith(","):
+        cuts.append(len(before) - 1)
+    seen = sentence[:max(cuts)].strip() if cuts else ""
+    return seen.rstrip(" ,;") + "." if len(seen.split()) >= 2 else ""
+
+
+def clean_description(text: str, heard: str, whole: bool = False) -> tuple[str, list[str]]:
+    """A description with what needs no model removed: text before the first time, tenths of seconds, and in the
+    timed lines each sentence that only repeats what is said or says what someone talks about, and such a clause
+    after what is seen. A description of the whole video (whole) keeps its overview before the first time and its
+    paragraphs. Returns the cleaned text and a note for each change."""
     spoken = _spoken(heard)
     notes, kept = [], []
-    for line in without_preamble(text).splitlines():
-        line = line.strip()
-        if not line:
+    for line in (text.strip() if whole else without_preamble(text)).splitlines():
+        if not line.strip():
+            # Each paragraph break once, also where a removed line stood between two.
+            if whole and kept and kept[-1]:
+                kept.append("")
             continue
+        line = line.rstrip() if whole else line.strip()
         time = TIME_AT_START.match(line)
         if time and time.group(4):
             # "00:33.0" becomes "00:33"; the rest of the line stays as written.
@@ -168,23 +196,18 @@ def clean_description(text: str, heard: str) -> tuple[str, list[str]]:
             # Only the timed lines of a description are judged; other text, e.g. an answer about a brand, stays.
             kept.append(line)
             continue
-        body = line[time.end():]
-        if _retold(_content(line), spoken):
+        sentences = [sentence for sentence in SENTENCE_END.split(line[time.end():]) if sentence]
+        seen = [cleaned for cleaned in (_without_speech(sentence, spoken) for sentence in sentences) if cleaned]
+        if seen == sentences:
+            kept.append(line)
+        elif seen:
+            notes.append(f"- Cut what is said from: {line}")
+            kept.append(line[:time.end()] + " ".join(seen))
+        elif _retold(_content(line), spoken):
             notes.append(f"- Removed, it only repeats what is said: {line}")
-            continue
-        speech = SPEECH.search(body)
-        if speech:
-            clause = [found for found in SPEECH_CLAUSE.finditer(body) if found.start() < speech.start()]
-            seen = body[:clause[-1].start()].strip() if clause else ""
-            if len(seen.split()) >= 2:
-                cut = line[:time.end()] + seen.rstrip(" ,;") + "."
-                notes.append(f"- Cut what is said from: {line}")
-                kept.append(cut)
-            else:
-                notes.append(f"- Removed, it says what is said: {line}")
-            continue
-        kept.append(line)
-    return "\n".join(kept), notes
+        else:
+            notes.append(f"- Removed, it says what is said: {line}")
+    return "\n".join(kept).strip(), notes
 
 
 def review_messages(text: str, heard: str | None, number: int, start: float, end: float,

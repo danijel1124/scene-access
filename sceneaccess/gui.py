@@ -31,7 +31,8 @@ from .speech import announce
 from .single_instance import SingleInstance
 from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
                     provider_tools, tool_definitions, tool_key, tools_for_provider)
-from .sections import Reviewer, cut_sections, describe_in_sections, needs_sections, section_sound, video_duration
+from .sections import (Reviewer, cleaned_whole_answer, cut_sections, describe_in_sections, needs_sections,
+                       section_sound, video_duration)
 from .transcript import make_transcript, model_hears, sound_parts, wants_transcript, with_sound
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
@@ -944,6 +945,8 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                                            max_tool_rounds=config.max_tool_rounds, on_delta=on_delta)
                     # Not stored: a cut-off answer would read as a whole one; what streamed stays in view.
                     check_whole(turn.completion)
+                    if initial:
+                        turn = cleaned_whole_answer(turn, session)
                 control.check_cancelled()
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)

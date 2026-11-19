@@ -43,8 +43,8 @@ def test_chats_from_the_tools_release_get_no_transcript(tmp_path: Path):
 
     assert session.system_prompt == "Base." and session.source_url == "https://youtu.be/x"
     assert session.transcript_state == "none" and session.transcript == "" and session.audio_only is False
-    # The video, then the question and the title as a hint; no transcript.
-    assert [part["type"] for part in session.messages[1]["content"]] == ["video_url", "text", "text"]
+    # The video, then the question, the title as a hint and the language; no transcript.
+    assert [part["type"] for part in session.messages[1]["content"]] == ["video_url", "text", "text", "text"]
 
 
 def test_the_transcript_is_cached_together_with_the_video(tmp_path: Path):
@@ -58,11 +58,12 @@ def test_the_transcript_is_cached_together_with_the_video(tmp_path: Path):
     store.update_transcript(session.id, "o", "done", "[00:01] Hello.")
     content = store.get_session(session.id, "o").messages[0]["content"]
 
-    # The video first, as Gemma 4's model card asks, then question, transcript and title; the cache breakpoint
-    # on the last of them caches the transcript with the video.
-    assert [part["type"] for part in content] == ["video_url", "text", "text", "text"]
+    # The video first, as Gemma 4's model card asks, then question, transcript, title and language; the cache
+    # breakpoint on the last of them caches the transcript with the video.
+    assert [part["type"] for part in content] == ["video_url", "text", "text", "text", "text"]
     assert content[2]["text"].endswith("[00:01] Hello.") and "may contain errors" in content[2]["text"]
-    assert [index for index, part in enumerate(content) if "cache_control" in part] == [3]
+    assert content[4]["text"] == "Write your answer in the language of this question: Brand?"
+    assert [index for index, part in enumerate(content) if "cache_control" in part] == [4]
 
 
 def test_changing_the_setup_decides_about_the_transcript_again_and_a_link_can_be_added(tmp_path: Path):

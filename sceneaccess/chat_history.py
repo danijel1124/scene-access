@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .session_store import EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_ENTRY, TRANSCRIPT_FAILED, TRANSCRIPT_NONE
+from .session_store import EXCLUDED, REMOVED, TRANSCRIPT_DONE, TRANSCRIPT_ENTRY, TRANSCRIPT_FAILED, TRANSCRIPT_NONE
 from .tools import describe_call, format_time
 
 # Said first for every item of a round hidden from the model, so the screen reader reads it.
@@ -107,8 +107,9 @@ def _message_items(message: dict[str, Any]) -> list[tuple[str, str, str]]:
                                TOOL))
         return items
     sources = "".join(f"\n- {source['title']}: {source['url']}" for source in message.get("sources") or [])
+    removed = [(*_folded("Removed from the answer", message[REMOVED]), NOTE)] if message.get(REMOVED) else []
     return [*thinking, _same(f"Model: {content}" + (f"\n\nSources:{sources}" if sources else ""), ANSWER),
-            _same(usage_text(message.get("usage")), USAGE)]
+            *removed, _same(usage_text(message.get("usage")), USAGE)]
 
 
 def section_items(sections: dict[str, Any] | None, answered: bool = True) -> list[tuple[str, str]]:

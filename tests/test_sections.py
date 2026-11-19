@@ -83,12 +83,13 @@ def test_a_whole_video_comes_before_its_text_and_its_sound_after_it(tmp_path: Pa
     session = store.get_session(session.id, "o")
     content = with_sound(session.messages, [{"type": "input_audio", "input_audio": {"data": "x", "format": "mp3"}}]
                          )[-1]["content"]
-    # As Gemma 4's model card asks: the video, then the question, transcript and title, then the sound.
-    assert [part["type"] for part in content] == ["video_url", "text", "text", "text", "input_audio"]
+    # As Gemma 4's model card asks: the video, then the question, transcript, title and language, then the sound.
+    assert [part["type"] for part in content] == ["video_url", "text", "text", "text", "text", "input_audio"]
     assert content[1]["text"] == "Describe it." and "[00:05] Hello." in content[2]["text"]
     assert content[3]["text"].endswith("describe nothing from it that cannot be seen: T")
+    assert content[4]["text"].endswith("language of this question: Describe it.")
     # The cache breakpoint is on the last part before the sound, so everything up to it is cached together.
-    assert [index for index, part in enumerate(content) if "cache_control" in part] == [3]
+    assert [index for index, part in enumerate(content) if "cache_control" in part] == [4]
 
 
 def test_the_reviewer_on_the_users_own_server_checks_without_thinking(tmp_path: Path):
@@ -512,6 +513,33 @@ def test_the_mechanical_cleaning_removes_speech_and_keeps_what_is_seen():
     # Text without any time stays as it is; text before the first time goes.
     assert without_preamble("Nur Text.") == "Nur Text."
     assert without_preamble("Hier ist die Beschreibung des Videos:\n\n00:00 Eins.") == "00:00 Eins."
+
+
+def test_the_cleaning_of_a_whole_video_keeps_the_overview_and_cuts_only_the_sentences_about_speech():
+    from sceneaccess.section_review import clean_description
+    answer = ("The video features a woman with one arm.\n\n"
+              "*   **00:51 - 01:13:** She holds a sieve. She explains it allows for scooping. A black cat walks by.\n"
+              "*   **01:14 - 01:16:** She mentions the toilet paper.\n\n"
+              "*   **01:17 - End:** A saucepan with rounded handles, noting that sharp edges would dig in.")
+    cleaned, notes = clean_description(answer, "", whole=True)
+    assert cleaned == ("The video features a woman with one arm.\n\n"
+                       "*   **00:51 - 01:13:** She holds a sieve. A black cat walks by.\n\n"
+                       "*   **01:17 - End:** A saucepan with rounded handles.")
+    assert len(notes) == 3 and "Removed, it says what is said" in notes[1]
+
+
+def test_a_whole_answer_is_stored_cleaned_with_what_was_removed(tmp_path: Path):
+    from sceneaccess.sections import cleaned_whole_answer
+    from sceneaccess.session_store import REMOVED
+    _store, session = _session(tmp_path, seconds=0)
+    answer = "00:01 She lifts a cup.\n00:05 She mentions the lid."
+    turn = cleaned_whole_answer(Turn(entries=[{"role": "assistant", "content": answer}],
+                                     completion=Completion(answer, "m", 1, None, None)), session)
+    assert turn.completion.answer == turn.entries[-1]["content"] == "00:01 She lifts a cup."
+    assert "She mentions the lid" in turn.entries[-1][REMOVED]
+    rows = chat_history_rows("Describe it.", turn.entries)
+    assert any(row[0].startswith("Removed from the answer") for row in rows)
+    assert REMOVED not in session.wire_message(turn.entries[-1])
 
 
 def test_a_reviewer_model_of_its_own_checks_with_text_only(tmp_path: Path):
