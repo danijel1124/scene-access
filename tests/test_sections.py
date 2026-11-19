@@ -160,6 +160,9 @@ class Runner:
     def cleanup_files(self):
         Runner.cleaned += 1
 
+    def commit_files(self):
+        pass
+
 
 def _fixture_sections(session, count=3, length=30.0):
     found = []
@@ -389,6 +392,49 @@ def test_what_needs_no_model_is_removed_and_only_a_contradiction_is_described_an
     assert shown[4].startswith("Sections joined without the model")
 
 
+def test_the_merge_is_the_last_check_and_can_have_a_part_described_anew(tmp_path: Path):
+    from sceneaccess.tools import tool_definitions
+    store, session = _session(tmp_path, seconds=30, transcribe="on",
+                              tools=tool_definitions(online_video=False, web_search=False))
+    store.update_transcript(session.id, "o", "done", "[00:05] Hallo.\n[00:40] Ich habe keinen Kabelstaubsauger.")
+    session = store.get_session(session.id, "o")
+    cut = _fixture_sections(session, count=2)
+    seen = {}
+
+    class Merging(Scripted):
+        def run_turn(self, session, messages, run_tool, on_event=None, routing=None, max_tool_rounds=6, **kwargs):
+            if "give the one answer" not in json.dumps(messages):
+                return super().run_turn(session, messages, run_tool, on_event, routing, max_tool_rounds, **kwargs)
+            seen.update(tools=[tool["function"]["name"] for tool in session.tools], text=json.dumps(messages),
+                        rounds=max_tool_rounds)
+            seen["first"] = run_tool("describe_section_again", json.dumps(
+                {"part": 2, "problems": "00:40: a corded vacuum cleaner, which she says she does not have"}))
+            seen["again"] = run_tool("describe_section_again", json.dumps({"part": 2, "problems": "still wrong"}))
+            seen["missing"] = run_tool("describe_section_again", json.dumps({"part": 7, "problems": "x"}))
+            return Turn(entries=[{"role": "assistant", "content": "Hier ist alles:\n00:01 A cup.\n00:40 A hand."}],
+                        completion=Completion("Hier ist alles:\n00:01 A cup.\n00:40 A hand.", "m", 1, None, None))
+
+    model = Merging(describe=["00:01 A cup.", "00:40 She pulls a corded vacuum cleaner."], check=[NONE, NONE],
+                    fix=["00:40 She holds a small cordless vacuum cleaner."])
+    turn = describe_in_sections(model, session, "Describe it.", cut, Runner,
+                                lambda progress: store.save_sections(session.id, "o", progress), duration=60.0)
+    # It sees the whole transcript and may zoom into a frame or have a part described anew.
+    assert seen["tools"] == ["zoom_frame", "describe_section_again"] and seen["rounds"] == 6
+    assert "Ich habe keinen Kabelstaubsauger." in seen["text"] and "you are the last check" in seen["text"]
+    # The part was described anew with its video and what the merge found, and the merge got the new text.
+    fix = json.dumps(model.requests[-1])
+    assert "video_url" in fix and "The last check, which saw all parts" in fix and "does not have" in fix
+    assert "described anew:" in seen["first"].text and "small cordless vacuum cleaner" in seen["first"].text
+    # Each part at most once, and only parts that exist.
+    assert "already" in seen["again"].text and "parts 1 to 2" in seen["missing"].text
+    second = store.get_session(session.id, "o").sections["sections"][1]
+    assert second["text"] == "00:40 She holds a small cordless vacuum cleaner."
+    assert second["review"]["merge"]["outcome"] == "rewritten"
+    assert second["review"]["first_text"] == "00:40 She pulls a corded vacuum cleaner."
+    # The answer has no preamble before its first time.
+    assert turn.completion.answer == "00:01 A cup.\n00:40 A hand."
+
+
 def test_a_description_written_anew_with_more_problems_than_the_first_is_not_taken(tmp_path: Path):
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=1)
@@ -399,6 +445,20 @@ def test_a_description_written_anew_with_more_problems_than_the_first_is_not_tak
                          lambda progress: store.save_sections(session.id, "o", progress), duration=30.0)
     entry = store.get_session(session.id, "o").sections["sections"][0]
     assert entry["text"] == "00:01 She holds a cup with both hands." and entry["review"]["fix_worse"] is True
+
+
+def test_a_description_sent_back_unchanged_does_not_count_as_written_anew(tmp_path: Path):
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=1)
+    model = Scripted(describe=["00:01 She holds a cup with both hands."], check=[found(("00:01", "e", "one arm"))],
+                     fix=["Hier ist die Beschreibung:\n00:01 She holds a cup with both hands."])
+    describe_in_sections(model, session, "Describe it.", cut, Runner,
+                         lambda progress: store.save_sections(session.id, "o", progress), duration=30.0)
+    entry = store.get_session(session.id, "o").sections["sections"][0]
+    assert entry["review"].get("fix_unchanged") is True and "rewritten" not in entry["review"]
+    rows = chat_history_rows("Describe it.", [{"role": "assistant", "content": "Whole."}],
+                             sections=store.get_session(session.id, "o").sections)
+    assert any("describing it again did not help" in row[0] for row in rows)
 
 
 def test_the_mechanical_cleaning_removes_speech_and_keeps_what_is_seen():

@@ -129,7 +129,9 @@ def section_items(sections: dict[str, Any] | None, answered: bool = True) -> lis
             outcome = ("\n\nDescribing the section again failed, so the first one, cleaned, stays."
                        if review.get("fix_failed") else
                        "\n\nThe description written anew was worse, so the first one, cleaned, stays."
-                       if review.get("fix_worse") else "")
+                       if review.get("fix_worse") else
+                       "\n\nThe description written anew was the same as the first."
+                       if review.get("fix_unchanged") else "")
             first = f"{outcome}\n\nThe first description:\n\n{review['first_text']}" if review.get("first_text") \
                 else outcome
             items.append(_folded(f"Check of section {entry['index'] + 1}{by}, found",
@@ -145,7 +147,7 @@ def _checked(review: dict[str, Any] | None) -> str:
         return ""
     if review.get("rewritten"):
         return ", described again after the check"
-    if review.get("fix_failed") or review.get("fix_worse"):
+    if review.get("fix_failed") or review.get("fix_worse") or review.get("fix_unchanged"):
         return ", check found problems, describing it again did not help"
     if review.get("found"):
         return ", lines removed after the check" + (", check failed" if review.get("failed") else "")
