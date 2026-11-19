@@ -116,6 +116,8 @@ def test_the_reviewer_gets_the_title_and_may_report_a_contradiction_to_it():
                            "Mein Einarmiger Alltag")[1]["content"]
     assert "The video's title: Mein Einarmiger Alltag" in part
     assert "e. Does it clearly contradict the title or the transcript" in REVIEWER_SYSTEM_PROMPT
+    # And whether a line only says what the blind person would guess from what they hear.
+    assert "f. Does it only say what the blind person would guess" in REVIEWER_SYSTEM_PROMPT
 
 
 def test_a_model_that_hears_is_not_told_it_cannot_hear(tmp_path: Path):

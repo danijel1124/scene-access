@@ -20,7 +20,9 @@ SPEECH_PROMPT = ("- You also get what is said in the video. Use it as context to
                  "objects and details matter, and describe those that explain or complete what is said. The person "
                  "hears what is said themselves, so unless they ask for it, do not quote or retell it, and no line "
                  "says what someone says, mentions, explains or talks about, not even as \"while she talks about …\"; "
-                 "describe what can be seen at that moment, or leave the moment out.")
+                 "describe what can be seen at that moment, or leave the moment out. Leave out, too, what they would "
+                 "guess from what they hear, such as someone looking at, pointing to or holding what they are talking "
+                 "about; describe only what tells them something of value.")
 SOUND_PROMPT = "- You also hear the video's sound. Mention sounds that matter and are not speech, such as music or noises."
 
 DEFAULT_PROFILE = "General description"

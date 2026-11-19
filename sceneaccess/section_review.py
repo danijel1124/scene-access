@@ -42,7 +42,7 @@ NOTHING_LISTED = re.compile(r"^\W*(ok|okay|fine|good|correct|no|nein|passt|in or
                             r"keine?( (verstöße|fehler|probleme|beanstandungen))?( gefunden)?|nichts( gefunden)?)"
                             r"\W*$", re.IGNORECASE)
 # What a reviewer may put before its verdict on a line: the line's time, or one of the four questions ("a.").
-LINE_PREFIX = re.compile(r"^\W*(\d{1,2}:\d{2}(:\d{2})?\W*)?([a-e][.)]\s*)?(\w+( \w+)?\s*[:?]\s*)?", re.IGNORECASE)
+LINE_PREFIX = re.compile(r"^\W*(\d{1,2}:\d{2}(:\d{2})?\W*)?([a-f][.)]\s*)?(\w+( \w+)?\s*[:?]\s*)?", re.IGNORECASE)
 
 # Who the reviewer is and what it does: its own system prompt, as it is a model of its own in this request
 # and must not take the describer's prompt for its task (user's wish, 18.11.2026).
@@ -54,7 +54,7 @@ REVIEWER_SYSTEM_PROMPT = (
     "said in the part.\n\n"
     "How to check, once and in this order:\n"
     "1. Go through the description line by line, from top to bottom, exactly once.\n"
-    "2. For each line, ask only these five questions; for each, yes means a problem and no means fine:\n"
+    "2. For each line, ask only these six questions; for each, yes means a problem and no means fine:\n"
     "   a. Is its time missing, not mm:ss, outside the part, or not later than the line before?\n"
     "   b. Does it say anything about the speech: what is said, quoted, mentioned, explained or talked about, "
     "also as \"while she talks about …\"? The blind person hears the speech, so any of it is a problem.\n"
@@ -62,6 +62,8 @@ REVIEWER_SYSTEM_PROMPT = (
     "   d. Is a word misspelt, e.g. a digit inside a word?\n"
     "   e. Does it clearly contradict the title or the transcript, e.g. a person sitting still while the transcript "
     "says she is running, or a snowy street in a video titled \"A day at the beach\"?\n"
+    "   f. Does it only say what the blind person would guess from what they hear, e.g. that someone looks at, "
+    "points to or holds what they are talking about? Such a line adds nothing for them.\n"
     "3. Decide each question once. Note the line only if one of the questions finds a problem. If you are unsure, "
     "the line is fine.\n"
     "4. When you reach the last line, the check is over: write your answer at once.\n\n"
@@ -69,7 +71,7 @@ REVIEWER_SYSTEM_PROMPT = (
     "decided it, and never go back up the list, not even to ask whether there are other problems. A problem you "
     "found is noted and done; finding it again adds nothing.\n\n"
     "Over-analysing is the mistake to avoid: one pass is enough, and checking longer does not make the check "
-    "better. Do not sort the lines into kinds such as actions or details. Apart from question e, do not judge "
+    "better. Do not sort the lines into kinds such as actions or details. Apart from questions e and f, do not judge "
     "whether what is described is true, as you cannot see it, and do not rewrite the description.\n\n"
     "Your answer: every line with a problem, one per line starting with \"- \", with the time of the line and the "
     "question it fails. If no line has a problem, answer only " + NOTHING_FOUND + ".")
@@ -78,7 +80,8 @@ REVIEW_TASK = ("Part {number} of the video, from {start} to {end}. The question:
                "The description:\n\n{text}\n\nThe transcript of this part:\n\n{heard}")
 FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found these problems:\n\n{found}\n\n"
             "Write the description of this part anew and fix them: where you repeated what is said, describe what "
-            "can be seen at that time instead. Write the corrected description once, without drafts.")
+            "can be seen at that time instead, and leave out a line that adds nothing for the blind person. Write "
+            "the corrected description once, without drafts.")
 
 
 def _content(line: str) -> str:
