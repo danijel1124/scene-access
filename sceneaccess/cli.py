@@ -76,11 +76,13 @@ SAME_REVIEWER = "same"
 
 
 def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextIO, transcribe: str = "",
-            section_seconds: int | None = None, reviewer: str | None = None) -> None:
+            section_seconds: int | None = None, reviewer: str | None = None, runs: int = 1,
+            follow_up: str = "") -> None:
     """transcribe sets the copy's transcript mode; empty keeps the chat's. section_seconds describes a longer
     video in sections of at most that length, as the app does; None keeps the chat's, 0 sends it whole.
     reviewer is the OpenRouter model that checks the sections; None keeps the one in Settings, "same" the
-    model that wrote them."""
+    model that wrote them. runs repeats each model's answer, each time as a new chat; follow_up is asked after
+    each answer, with it as the chat so far, as the app sends a later question."""
     config = load_config(data_dir / "config.json")
     if reviewer is not None:
         # "same" rather than an empty argument, which Windows PowerShell does not pass on.
@@ -101,12 +103,16 @@ def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextI
               + (f", checked by {config.section_reviewer_model or 'the same model'}" if copy.section_seconds else ""),
               file=out)
         for name in models:
-            compare_one(config, catalog, copy, name, out)
+            for run in range(runs):
+                if runs > 1:
+                    print(f"\n########## Run {run + 1} of {runs}, a new chat", file=out, flush=True)
+                compare_one(config, catalog, copy, name, out, follow_up)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession, name: str, out: TextIO) -> None:
+def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession, name: str, out: TextIO,
+                follow_up: str = "") -> None:
     provider = LLAMA_CPP if name.split(":")[0] == LLAMA_CPP else OPENROUTER
     model = ((name.partition(":")[2] or config.llama_cpp_model or LLAMA_CPP_DEFAULT_MODEL)
              if provider == LLAMA_CPP else name)
@@ -191,6 +197,21 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         cut = " | CUT OFF at the token limit, not a whole answer" if completion.cut_off else ""
         print(f"\n\nTime: {time.monotonic() - started:.0f} s | answered by {completion.model} | requests "
               f"{completion.requests} | prompt tokens {completion.prompt_tokens}{cut}", file=out, flush=True)
+        if follow_up and sectioned:
+            print("\nThe follow-up is skipped: a chat described in sections would need its stored sections.",
+                  file=out, flush=True)
+        elif follow_up:
+            # As the app sends a later question: the first request, the answer with its tool rounds, the question.
+            print(f"\n----- Follow-up: {follow_up}", file=out, flush=True)
+            later = [*messages, *(session.wire_message(entry) for entry in turn.entries),
+                     {"role": "user", "content": follow_up}]
+            started, shown["kind"], shown["text"] = time.monotonic(), "", False
+            answer = client.run_turn(tooled, later, runner.run, step, options, max_tool_rounds=config.max_tool_rounds,
+                                     on_delta=piece).completion
+            if not shown["text"]:
+                print(f"\n{answer.answer}", file=out)
+            print(f"\n\nFollow-up time: {time.monotonic() - started:.0f} s | requests {answer.requests}",
+                  file=out, flush=True)
     except Exception as error:
         print(f"\n\nFailed after {time.monotonic() - started:.0f} s: {error}", file=out, flush=True)
     finally:
@@ -217,6 +238,10 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     compare_parser.add_argument("--reviewer", metavar="MODEL",
                                 help=f"OpenRouter model that checks the sections (default: Settings; {SAME_REVIEWER} "
                                      "for the model that wrote them)")
+    compare_parser.add_argument("--runs", type=int, default=1, metavar="N",
+                                help="answer N times with each model, each time as a new chat")
+    compare_parser.add_argument("--follow-up", default="", metavar="QUESTION",
+                                help="ask this after each answer, with the answer as the chat so far")
     args = parser.parse_args(argv)
     data_dir = args.data_dir or default_data_dir()
     store = open_store(data_dir / "config.json", OWNER_ID, LEGACY_OWNER_ID)
@@ -226,7 +251,7 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
         show_chat(find_chat(store, args.chat), out)
     else:
         compare(data_dir, find_chat(store, args.chat), args.models, out, args.transcribe or "", args.sections,
-                args.reviewer)
+                args.reviewer, max(1, args.runs), args.follow_up)
     return 0
 
 

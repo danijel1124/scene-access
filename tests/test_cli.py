@@ -113,6 +113,29 @@ def test_compare_sends_a_hearing_llama_cpp_model_its_sound_and_can_try_another_t
     assert chat.transcribe == 'auto'
 
 
+def test_compare_repeats_as_new_chats_and_asks_a_follow_up_with_the_answer_as_history(data_dir, monkeypatch):
+    sent = []
+
+    def answer(client, session, messages, *a, **kw):
+        sent.append(messages)
+        reply = f'Answer {len(sent)}'
+        return Turn(entries=[{'role': 'assistant', 'content': reply}], completion=Completion(reply, 'm', 1, None, None))
+
+    monkeypatch.setattr(cli, 'ModelCatalog', lambda url: type('Catalog', (), {'hears_audio': lambda self, m: False})())
+    monkeypatch.setattr(cli, 'routing', lambda *a, **kw: {})
+    monkeypatch.setattr(OpenRouterClient, 'run_turn', answer)
+    text = run(data_dir, 'compare', 'Chat', 'a/model', '--runs', '2', '--follow-up', 'Which hand?')
+    # Two new chats, each with its answer and then the follow-up.
+    assert text.count('Run 1 of 2') == 1 and text.count('Run 2 of 2') == 1 and text.count('Follow-up: Which hand?') == 2
+    assert len(sent) == 4
+    first, follow, again = sent[0], sent[1], sent[2]
+    # The follow-up carries the chat so far: the first request, its answer and the question.
+    assert follow[:len(first)] == first and follow[-2] == {'role': 'assistant', 'content': 'Answer 1'}
+    assert follow[-1] == {'role': 'user', 'content': 'Which hand?'}
+    # The second run starts anew, knowing nothing of the first.
+    assert again == first
+
+
 def test_compare_reports_a_failing_model_and_goes_on(data_dir, monkeypatch):
     def fail(*a, **kw):
         raise RuntimeError('HTTP 502: fixture')
