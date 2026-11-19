@@ -101,23 +101,26 @@ def test_the_reviewer_on_the_users_own_server_checks_without_thinking(tmp_path: 
             routings.append((json.dumps(messages), routing))
             return super().run_turn(session, messages, run_tool, on_event, routing, **kwargs)
 
-    describe_in_sections(Routed(describe=["00:01 A cup."], check=["OK"]), session, "Describe it.", cut, Runner,
+    describe_in_sections(Routed(describe=["00:01 A cup."], check=[NONE]), session, "Describe it.", cut, Runner,
                          lambda _progress: None, duration=30.0)
     check = [routing for text, routing in routings if "You are the reviewer" in text]
     describe = [routing for text, routing in routings if "describe part 1 of 1" in text]
-    assert check == [{"chat_template_kwargs": {"enable_thinking": False}}]
+    # Without thinking, and with the answer forced into the JSON form.
+    assert len(check) == 1 and check[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert check[0]["response_format"]["type"] == "json_schema"
     # The describer still thinks.
     assert describe and all("chat_template_kwargs" not in (routing or {}) for routing in describe)
 
 
 def test_the_reviewer_gets_the_title_and_may_report_a_contradiction_to_it():
     from sceneaccess.section_review import REVIEWER_SYSTEM_PROMPT, review_messages
-    part = review_messages("00:09 Sie hält die Tube mit beiden Händen.", "", 1, 0, 30, "Beschreibe das Video.",
+    part = review_messages("00:09 Sie hält die Tube mit beiden Händen.", "", 1, 0, 30,
                            "Mein Einarmiger Alltag")[1]["content"]
     assert "The video's title: Mein Einarmiger Alltag" in part
-    assert "e. Does it clearly contradict the title or the transcript" in REVIEWER_SYSTEM_PROMPT
-    # And whether a line only says what the blind person would guess from what they hear.
-    assert "f. Does it only say what the blind person would guess" in REVIEWER_SYSTEM_PROMPT
+    # Only what needs a model: a contradiction, and a line that only says what one would guess anyway.
+    assert "e. Does the line clearly contradict the title or the transcript" in REVIEWER_SYSTEM_PROMPT
+    assert "f. Does the line only say what the blind person would guess" in REVIEWER_SYSTEM_PROMPT
+    assert "a. " not in REVIEWER_SYSTEM_PROMPT and "d. " not in REVIEWER_SYSTEM_PROMPT
 
 
 def test_a_model_that_hears_is_not_told_it_cannot_hear(tmp_path: Path):
@@ -256,24 +259,36 @@ class Scripted:
 
 
 CUT = object()
+# The reviewer's answer in the JSON form the server forces: nothing found, or the problems given.
+NONE = '{"problems": []}'
 
 
-def test_a_check_cut_off_never_passes_and_only_the_mechanical_check_counts(tmp_path: Path):
+def found(*problems):
+    return json.dumps({"problems": [{"time": time, "question": question, "why": why}
+                                    for time, question, why in problems]})
+
+
+def test_a_check_cut_off_never_passes_and_only_the_mechanical_cleaning_counts(tmp_path: Path):
     store, session = _session(tmp_path, seconds=30)
-    cut = _fixture_sections(session, count=2)
-    model = Scripted(describe=["00:01 A cup.", "00:31 Sie erwähnt den Teller."], check=[CUT, CUT],
-                     fix=["00:32 She lifts a plate."])
+    cut = _fixture_sections(session, count=3)
+    model = Scripted(describe=["00:01 A cup.", "00:31 Sie hält einen Teller, während sie über den Teller spricht.",
+                               "01:01 A spoon."], check=[CUT, CUT, "Result: OK."])
     describe_in_sections(model, session, "Describe it.", cut, Runner,
-                         lambda progress: store.save_sections(session.id, "o", progress), duration=60.0)
-    first, second = store.get_session(session.id, "o").sections["sections"]
-    # Nothing mechanical in section 1 and its check cut off: it stays, marked as not checked.
+                         lambda progress: store.save_sections(session.id, "o", progress), duration=90.0)
+    first, second, third = store.get_session(session.id, "o").sections["sections"]
+    # Nothing to clean in section 1 and its check cut off: it stays, marked as not checked.
     assert first["review"]["failed"] == "cut off at the token limit" and first["review"]["found"] == ""
-    # Section 2 is described anew for what the mechanical check found, the cut-off check aside.
-    assert "says what is said" in second["review"]["found"] and second["text"] == "00:32 She lifts a plate."
+    # Section 2's clause about the speech is cut mechanically, the cut-off check aside; nothing is rewritten.
+    assert second["text"] == "00:31 Sie hält einen Teller." and "Cut what is said" in second["review"]["found"]
+    # An answer that is not the JSON asked for never counts as nothing found.
+    assert third["review"]["failed"] == "not in the form asked for"
+    assert not any("Your first description" in json.dumps(messages) for messages in model.requests)
     rows = [row[0] for row in chat_history_rows("Describe it.", [{"role": "assistant", "content": "Whole."}],
                                                  sections=store.get_session(session.id, "o").sections)]
     assert any(row.startswith("Section 1 (00:00 to 00:30, check failed)") for row in rows)
-    assert not any(row.startswith("Section 1 (00:00 to 00:30, checked)") for row in rows)
+    assert any(row.startswith("Section 2 (00:30 to 01:00, lines removed after the check, check failed)")
+               for row in rows)
+    assert not any(", checked)" in row for row in rows)
 
 
 def test_putting_the_sections_together_cut_off_is_no_answer_and_sending_again_only_merges(tmp_path: Path):
@@ -293,7 +308,7 @@ def test_putting_the_sections_together_cut_off_is_no_answer_and_sending_again_on
         store.save_sections(session.id, "o", progress)
 
     with pytest.raises(AnswerCutOff, match="Putting the sections together was cut off"):
-        describe_in_sections(MergeCut(describe=["00:01 A cup.", "00:31 A plate."], check=["OK", "OK"]), session,
+        describe_in_sections(MergeCut(describe=["00:01 A cup.", "00:31 A plate."], check=[NONE, NONE]), session,
                              "Describe it.", cut, Runner, save, duration=60.0)
     model = Scripted()
     turn = describe_in_sections(model, store.get_session(session.id, "o"), "Describe it.", cut, Runner, save,
@@ -311,54 +326,90 @@ def test_a_description_cut_off_is_not_stored_and_one_described_anew_cut_off_keep
         store.save_sections(session.id, "o", progress)
 
     with pytest.raises(AnswerCutOff, match="section 2 was cut off"):
-        describe_in_sections(Scripted(describe=["00:01 A cup.", CUT], check=["OK"]), session, "Describe it.", cut,
+        describe_in_sections(Scripted(describe=["00:01 A cup.", CUT], check=[NONE]), session, "Describe it.", cut,
                              Runner, save, duration=60.0)
     assert [entry["index"] for entry in store.get_session(session.id, "o").sections["sections"]] == [0]
-    describe_in_sections(Scripted(describe=["00:31 Sie erwähnt den Teller."], check=["OK"], fix=[CUT]),
+    describe_in_sections(Scripted(describe=["00:31 A plate on the table."],
+                                  check=[found(("00:31", "e", "the title says there is no table"))], fix=[CUT]),
                          store.get_session(session.id, "o"), "Describe it.", cut, Runner, save, duration=60.0)
     second = store.get_session(session.id, "o").sections["sections"][1]
-    assert second["text"] == "00:31 Sie erwähnt den Teller." and second["review"]["fix_failed"] is True
+    assert second["text"] == "00:31 A plate on the table." and second["review"]["fix_failed"] is True
     rows = [row[0] for row in chat_history_rows("Describe it.", [{"role": "assistant", "content": "Whole."}],
                                                  sections=store.get_session(session.id, "o").sections)]
-    assert any("check found problems, describing it again failed" in row for row in rows)
+    assert any("check found problems, describing it again did not help" in row for row in rows)
 
 
-def test_a_section_that_only_retells_is_checked_and_described_anew_with_its_video(tmp_path: Path):
+def test_what_needs_no_model_is_removed_and_only_a_contradiction_is_described_anew(tmp_path: Path):
     store, session = _session(tmp_path, seconds=30, transcribe="on")
     store.update_transcript(session.id, "o", "done", "[00:05] Hello there my dear friends.\n[00:40] Look.")
     session = store.get_session(session.id, "o")
     cut = _fixture_sections(session, count=2)
-    model = Scripted(describe=['00:05 "Hello there my dear friends."', "00:30 She holds a sieve.\n00:40 She points."],
-                     check=["- 00:05: retells what is said.", "OK"], fix=["00:05 She waves into the camera."])
+    model = Scripted(describe=['Here is part 1:\n00:05 "Hello there my dear friends."\n'
+                               "00:07 She holds the tube with both hands.",
+                               "00:30 She holds a sieve.\n00:35 She looks at the sieve.\n00:40 She points."],
+                     check=[found(("00:07", "e", "the title says she has one arm")),
+                            found(("00:35", "f", "she talks about the sieve"))],
+                     fix=["00:07 She holds the tube in her right hand."])
     turn = describe_in_sections(model, session, "Describe it.", cut, Runner,
                                 lambda progress: store.save_sections(session.id, "o", progress), duration=60.0)
     requests = [json.dumps(messages) for messages in model.requests]
-    # The check sees neither the video nor the chat: only the description, the transcript and the rules.
+    # The check sees neither the video nor the chat, and only what the mechanical cleaning left.
     check = model.requests[1]
     # Its own system prompt tells it who it is; the describer's prompt ("Base.") is not sent to it.
     assert [message["role"] for message in check] == ["system", "user"] and "video_url" not in requests[1]
     assert check[0]["content"].startswith("You are the reviewer") and "Base." not in requests[1]
-    assert "Hello there my dear friends." in requests[1] and "from 00:00 to 00:30" in requests[1]
-    # Both checks found something, so the section went back to the model with its video and what was found.
+    assert "from 00:00 to 00:30" in requests[1] and "Here is part 1" not in requests[1]
+    # The repeated speech line was removed before the check: the words are only in the transcript part.
+    assert requests[1].count("Hello there my dear friends.") == 1
+    # The contradiction sent the section back to the model with its video and what was found.
     fix = requests[2]
     assert "video_url" in fix and "Your first description" in fix and "describe part 1 of 2" in fix
-    assert "only repeats what is said" in fix and "retells what is said" in fix
+    assert "the title says she has one arm" in fix and "Add nothing that is not in the picture" in fix
     progress = store.get_session(session.id, "o").sections
     first, second = progress["sections"]
-    assert first["text"] == "00:05 She waves into the camera." and first["thinking"] == "fix thoughts"
-    assert first["review"]["first_text"] == '00:05 "Hello there my dear friends."'
-    assert second["review"]["found"] == "" and second["text"].startswith("00:30 She holds")
+    assert first["text"] == "00:07 She holds the tube in her right hand." and first["thinking"] == "fix thoughts"
+    assert first["review"]["first_text"].endswith("00:07 She holds the tube with both hands.")
+    assert first["review"]["first_thinking"] == "describe thoughts"
+    # The obvious line is removed, not rewritten: no request asked to describe section 2 anew.
+    assert second["text"] == "00:30 She holds a sieve.\n00:40 She points."
+    assert "adds nothing for a blind listener" in second["review"]["found"]
+    assert sum("Your first description" in text for text in requests) == 1
     # The next section knows the description anew, not the first one.
-    assert "She waves" in requests[3] and "Hello there my dear" not in requests[3].split("video_url")[0]
-    assert progress["joined"] == "00:05 She waves into the camera.\n00:30 She holds a sieve.\n00:40 She points."
+    assert "right hand" in requests[3] and "both hands" not in requests[3].split("video_url")[1]
     # Every request counts: describe, check and fix, describe and check, and the merge.
     assert turn.completion.requests == 6 and len(model.requests) == 6
     rows = chat_history_rows("Describe it.", [{"role": "assistant", "content": "Whole."}], sections=progress)
     shown = [row[0] for row in rows if row[3] == SECTION]
     assert shown[0].startswith("Section 1 (00:00 to 00:30, described again after the check)")
     assert shown[1].startswith("Check of section 1, found, Enter shows it:")
-    assert shown[2].startswith("Section 2 (00:30 to 01:00, checked)")
-    assert shown[3].startswith("Sections joined without the model")
+    assert shown[2].startswith("Section 2 (00:30 to 01:00, lines removed after the check)")
+    assert shown[4].startswith("Sections joined without the model")
+
+
+def test_a_description_written_anew_with_more_problems_than_the_first_is_not_taken(tmp_path: Path):
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=1)
+    model = Scripted(describe=["00:01 She holds a cup with both hands."],
+                     check=[found(("00:01", "e", "one arm"))],
+                     fix=["00:01 Sie erwähnt die Tasse.\n00:02 Sie spricht über den Tee.\n00:03 Sie erzählt."])
+    describe_in_sections(model, session, "Describe it.", cut, Runner,
+                         lambda progress: store.save_sections(session.id, "o", progress), duration=30.0)
+    entry = store.get_session(session.id, "o").sections["sections"][0]
+    assert entry["text"] == "00:01 She holds a cup with both hands." and entry["review"]["fix_worse"] is True
+
+
+def test_the_mechanical_cleaning_removes_speech_and_keeps_what_is_seen():
+    from sceneaccess.section_review import clean_description, without_preamble
+    heard = "[00:00] So und dann mach ich das drauf."
+    cleaned, notes = clean_description(
+        "Hier ist die Beschreibung:\n\n00:00 So und dann mach ich das drauf.\n00:09 Sie hält eine Tube hoch.\n"
+        "00:13.0 Sie dreht den Deckel auf, während sie über das „Draufdrehen“ spricht.\n"
+        "00:19 Sie erwähnt den Staubsauger.\n00:23 Sie präzisiert, dass es ein offener Korb ist.", heard)
+    assert cleaned.splitlines() == ["00:09 Sie hält eine Tube hoch.", "00:13 Sie dreht den Deckel auf."]
+    assert len(notes) == 4 and "Cut what is said" in notes[1]
+    # Text without any time stays as it is; text before the first time goes.
+    assert without_preamble("Nur Text.") == "Nur Text."
+    assert without_preamble("Hier ist die Beschreibung des Videos:\n\n00:00 Eins.") == "00:00 Eins."
 
 
 def test_a_reviewer_model_of_its_own_checks_with_text_only(tmp_path: Path):
@@ -372,7 +423,7 @@ def test_a_reviewer_model_of_its_own_checks_with_text_only(tmp_path: Path):
         def run_turn(self, session, messages, run_tool, on_event=None, routing=None, max_tool_rounds=6,
                      on_delta=None):
             checks.append((session.model, routing, messages))
-            answer = "- 00:01: says nothing about what is seen." if len(checks) == 1 else "OK"
+            answer = found(("00:01", "e", "no cup in the title")) if len(checks) == 1 else NONE
             return Turn(entries=[{"role": "assistant", "content": answer}],
                         completion=Completion(answer, session.model, 1, None, None))
 
@@ -381,7 +432,10 @@ def test_a_reviewer_model_of_its_own_checks_with_text_only(tmp_path: Path):
                          reviewer=Reviewer(OtherModel(), "vendor/reviewer", {"provider": {"sort": "price"}}))
     # The checks went to the reviewer, with its model and routing and without the video; the writer was asked
     # only to describe, once anew where the reviewer found something.
-    assert [(model, routing) for model, routing, _messages in checks] == [("vendor/reviewer", {"provider": {"sort": "price"}})] * 2
+    assert [(model, routing["provider"]) for model, routing, _messages in checks] == [
+        ("vendor/reviewer", {"sort": "price"})] * 2
+    # Its answer is asked for in the JSON form too; thinking is only switched off on the user's own server.
+    assert all("response_format" in routing and "chat_template_kwargs" not in routing for _m, routing, _ in checks)
     assert all("video_url" not in json.dumps(messages) for _model, _routing, messages in checks)
     assert not any("You are the reviewer" in json.dumps(messages) for messages in writer.requests)
     progress = store.get_session(session.id, "o").sections
@@ -400,7 +454,7 @@ def test_a_description_stopped_before_its_check_is_checked_when_continued(tmp_pa
     failing = Scripted(fail_on="Part 1 of the video", describe=["00:01 A cup."])
     with pytest.raises(RuntimeError):
         describe_in_sections(failing, session, "Describe it.", cut, Runner, save, duration=60.0)
-    model = Scripted(describe=["00:31 A plate."], check=["OK", "OK"])
+    model = Scripted(describe=["00:31 A plate."], check=[NONE, NONE])
     describe_in_sections(model, store.get_session(session.id, "o"), "Describe it.", cut, Runner, save, duration=60.0)
     kinds = [json.dumps(messages) for messages in model.requests]
     # Section 1 is not described again, only checked.
@@ -448,22 +502,17 @@ def test_the_sections_are_joined_without_what_repeats_where_two_meet():
                                    "Hand.", "01:00 Töpfe.", "01:20 Sie hält ein Sieb hoch."]
 
 
-def test_a_reviewer_that_finds_nothing_lists_nothing():
+def test_the_reviewers_answer_is_read_only_from_the_json_asked_for():
     from sceneaccess.section_review import reviewer_findings
-    # However a model says it found nothing, in the question's language too, it is no finding.
-    for nothing in ("OK", " ok. ", "**OK**", "OK, keine Fehler.", "Keine Verstöße gefunden.", "",
-                    "- Keine Verstöße.", "- None.", "* OK", "- No problems."):
-        assert reviewer_findings(nothing) == []
-    # A finding that starts with such a word still names what is wrong.
-    assert reviewer_findings("- Keine Zeitangabe bei 00:13.") == ["- Keine Zeitangabe bei 00:13."]
-    # A reviewer going through the lines and its four questions writes a verdict for each; those that are fine
-    # are no findings.
-    assert reviewer_findings("- 00:13: OK\n* a. Problem: No\n- 00:15: No issues\n- 00:19: spricht über das Drehen") == [
-        "- 00:19: spricht über das Drehen"]
-    # The questions ask for problems, so yes is a finding and no is not, whatever the question.
-    assert reviewer_findings("- 00:19: b. Speech: Yes\n- 00:13: b. Speech: No\n* d. Misspelt: nein") == [
-        "- 00:19: b. Speech: Yes"]
-    assert reviewer_findings("Problems:\n- 00:13: retells\n* 00:26: quotes") == ["- 00:13: retells", "- 00:26: quotes"]
+    assert reviewer_findings(NONE) == []
+    assert reviewer_findings(found(("00:13", "f", "obvious"), ("00:19", "e", "contradicts"))) == [
+        {"time": "00:13", "question": "f", "why": "obvious"}, {"time": "00:19", "question": "e", "why": "contradicts"}]
+    # Entries without a time or with another question are no findings.
+    assert reviewer_findings(found(("later", "e", "x"), ("00:05", "b", "x"))) == []
+    # Reasoning written as a list, as Gemma 4 12B did without the form, never counts as nothing found.
+    for answer in ("- 00:23 (She talks about her grip).\n\nResult: OK.", "OK", ""):
+        with pytest.raises(ValueError):
+            reviewer_findings(answer)
 
 
 def test_the_reviewer_is_not_told_nothing_is_said_when_it_gets_no_transcript():
@@ -471,8 +520,8 @@ def test_the_reviewer_is_not_told_nothing_is_said_when_it_gets_no_transcript():
 
     def review_request(*args):
         return review_messages(*args)[1]["content"]
-    assert "nothing is said in this part" in review_request("00:01 A cup.", "", 1, 0, 30, "Describe it.")
-    without = review_request("00:01 A cup.", None, 1, 0, 30, "Describe it.")
+    assert "nothing is said in this part" in review_request("00:01 A cup.", "", 1, 0, 30)
+    without = review_request("00:01 A cup.", None, 1, 0, 30)
     assert "no transcript is available" in without and "nothing is said" not in without
 
 

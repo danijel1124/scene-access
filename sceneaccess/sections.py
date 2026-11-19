@@ -20,8 +20,9 @@ from typing import Any, Callable
 from .openrouter import AnswerCutOff, DeltaHandler, EventHandler, Turn
 from .providers import LLAMA_CPP
 from .request_control import RequestControl
-from .section_review import (fix_request, joined_without_repeats, mechanical_findings, review_messages,
-                             reviewer_findings)
+from .section_review import (REVIEW_FORMAT, clean_description, fix_request, joined_without_repeats,
+                             mechanical_findings, review_messages, reviewer_findings, without_lines_at,
+                             without_preamble)
 from .session_store import SECTION_FILE_PREFIX, TITLE_HINT, TRANSCRIPT_HELP, VideoSession, joined_sections
 from .tools import format_time, local_video, run_ffmpeg, video_size_and_duration
 from .transcript import sound_parts
@@ -163,9 +164,10 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     """Describes each section not yet described, saving the progress after each one, then asks for the answer
     to question for the whole video. new_runner gives a tools.ToolRunner per section; its images are not kept,
     as only the descriptions are stored. sound gives a section's sound for a model that gets it apart from the
-    video; model_name see progress_key. With review, each description is checked (see section_review.py), by
-    reviewer if given, else by the same model, and, if anything was found, described anew once. Before the last request the sections are also stored joined
-    without a model, as "joined". Returns the turn of the last request, whose answer answers question and whose
+    video; model_name see progress_key. With review, each description is cleaned mechanically and checked (see
+    section_review.py), by reviewer if given, else by the same model; lines that add nothing are removed, and
+    only a contradiction has the section described anew, once. Before the last request the sections are also
+    stored joined without a model, as "joined". Returns the turn of the last request, whose answer answers question and whose
     usage counts all requests."""
     notify = on_event or (lambda _kind, _text: None)
     key = progress_key(session, question, model_name)
@@ -207,42 +209,66 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         entry = described[position]
         if not review or "review" in entry:
             continue
-        # The check has no video and no chat, so it judges only the text against the rules and what is said.
+        first, first_thinking = entry["text"], entry.get("thinking", "")
+        # What needs no model is removed first, mechanically: nothing is replaced, so nothing can be made up.
+        cleaned, notes = clean_description(first, heard)
+        # The check has no video and no chat, so it judges only the text against the title and what is said.
         notify("section", f"Checking section {number}")
-        found = mechanical_findings(entry["text"], heard, section.start, section.end)
         # The same model on the user's own server checks without thinking: with it, Gemma 4 12B went over the
-        # same lines again and again, however the prompt asked it to stop (user's wish, 18.11.2026).
-        check_routing = (reviewer.routing if reviewer else
-                         {**(routing or {}), "chat_template_kwargs": {"enable_thinking": False}}
-                         if session.provider == LLAMA_CPP else routing)
+        # same lines again and again, however the prompt asked it to stop (user's wish, 18.11.2026). Its answer
+        # is forced into the JSON form, so its reasoning never reads as findings.
+        check_routing = {**((reviewer.routing if reviewer else routing) or {}), **REVIEW_FORMAT}
+        if not reviewer and session.provider == LLAMA_CPP:
+            check_routing["chat_template_kwargs"] = {"enable_thinking": False}
         check = (reviewer.client if reviewer else client).run_turn(
             replace(session, tools=[], **({"model": reviewer.model} if reviewer else {})),
-            review_messages(entry["text"], heard if session.sends_transcript else None, number, section.start,
-                            section.end, question, session.title),
+            review_messages(cleaned, heard if session.sends_transcript else None, number, section.start,
+                            section.end, session.title),
             lambda *_: None, on_event, check_routing, max_tool_rounds=0, on_delta=on_delta)
-        # A check cut off or empty never passes: only the mechanical check counts then, and the Chat history says
-        # the check failed (Gemma 4 12B once thought until the context was full and wrote nothing).
-        failed = ("cut off at the token limit" if check.completion.cut_off
-                  else "empty" if not check.completion.answer.strip() else "")
-        if failed:
-            notify("section", f"The check of section {number} was {failed}; only the mechanical check counts")
-        else:
-            found += reviewer_findings(check.completion.answer)
         entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())
-        entry["review"] = {"found": "\n".join(found), "reviewer": check.completion.answer.strip(),
-                           # Named only when another model checked, so the Chat history says who.
-                           "reviewer_model": check.completion.model if reviewer else "", "failed": failed}
-        if found:
-            notify("section", f"Describing section {number} again: the check found {len(found)} problems")
-            turn = ask(section, described[:position], heard, fix_request(entry["text"], found))
+        # A check cut off, empty or not in the JSON form never passes: only the mechanical cleaning counts then,
+        # and the Chat history says the check failed (Gemma 4 12B once thought until the context was full).
+        failed, problems = ("cut off at the token limit" if check.completion.cut_off
+                            else "empty" if not check.completion.answer.strip() else ""), []
+        if not failed:
+            try:
+                problems = reviewer_findings(check.completion.answer)
+            except ValueError:
+                failed = "not in the form asked for"
+        if failed:
+            notify("section", f"The check of section {number} was {failed}; only the mechanical cleaning counts")
+        # A line that only says what the blind person would guess anyway is removed, not rewritten.
+        obvious = [problem for problem in problems if problem["question"] == "f"]
+        cleaned, removed = without_lines_at(cleaned, [problem["time"] for problem in obvious])
+        notes += [f"- Removed, it adds nothing for a blind listener: {line.strip()}" for line in removed]
+        contradictions = [problem for problem in problems if problem["question"] == "e"]
+        review_record = {"found": "\n".join(notes + [f"- {problem['time']} contradicts the title or the transcript: "
+                                                     f"{problem['why']}" for problem in contradictions]),
+                         "reviewer": check.completion.answer.strip(), "failed": failed,
+                         # Named only when another model checked, so the Chat history says who.
+                         "reviewer_model": check.completion.model if reviewer else ""}
+        if contradictions:
+            # Only a contradiction needs the video again: the model must look, not fill a gap.
+            notify("section", f"Describing section {number} again: {len(contradictions)} lines contradict the "
+                              "title or the transcript")
+            turn = ask(section, described[:position], heard, fix_request(cleaned, contradictions))
             entry["usage"] = _added(entry["usage"], turn.completion.usage_record())
-            if turn.completion.cut_off or not turn.completion.answer.strip():
-                # The first description stays; a cut-off one would be worse than one with known problems.
-                entry["review"]["fix_failed"] = True
+            anew = without_part_heading(turn.completion.answer)
+            if turn.completion.cut_off or not anew.strip():
+                review_record["fix_failed"] = True
+            elif len(mechanical_findings(anew, heard, section.start, section.end)) > len(
+                    mechanical_findings(first, heard, section.start, section.end)):
+                # Worse than the first by what can be counted: the first, cleaned, stays.
+                review_record["fix_worse"] = True
             else:
-                entry["review"].update(first_text=entry["text"], first_thinking=entry.get("thinking", ""))
-                entry["text"] = without_part_heading(turn.completion.answer)
+                cleaned, more = clean_description(anew, heard)
+                review_record["found"] += "".join(f"\n{note}" for note in more)
+                review_record["rewritten"] = True
                 entry["thinking"] = turn.entries[-1].get("thinking", "")
+        if cleaned != first:
+            review_record.update(first_text=first, first_thinking=first_thinking)
+        entry["text"] = cleaned
+        entry["review"] = review_record
         save(progress)
     progress["joined"] = joined_without_repeats(described)
     save(progress)
@@ -258,9 +284,13 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         raise AnswerCutOff("Putting the sections together was "
                             f"{'cut off at the token limit' if turn.completion.cut_off else 'empty'}; every section "
                             "is kept. Send the first question again to put them together anew.")
+    # Without "Here is the description of the video:", which the merge wrote before the first time each run.
+    answer = without_preamble(turn.completion.answer)
+    turn.entries[-1]["content"] = answer
     # The usage line under the answer counts every request it took, the sections' included.
     usages = [entry.get("usage") or {} for entry in described]
-    completion = replace(turn.completion, requests=turn.completion.requests + sum(int(u.get("requests") or 1) for u in usages),
+    completion = replace(turn.completion, answer=answer,
+                         requests=turn.completion.requests + sum(int(u.get("requests") or 1) for u in usages),
                          prompt_tokens=turn.completion.prompt_tokens + sum(int(u.get("prompt_tokens") or 0) for u in usages))
     turn.entries[-1]["usage"] = completion.usage_record()
     return Turn(entries=turn.entries, completion=completion)

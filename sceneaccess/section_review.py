@@ -1,13 +1,17 @@
 """Checks a section's description before it counts, and joins the sections without a model.
 
-A description is checked twice: first mechanically, for lines that only repeat what is said (nearly word for
-word in the transcript) and for times that are missing, out of order, outside the section or not mm:ss; then by
-the same model in a request of its own, without the video and without the chat, which finds what is retold in
-other words. Only when either check finds something does the section go back to the model with its video, the
-problems found and its first description, to be described anew, once."""
+What needs no model is done mechanically and removes rather than rewrites: a line that only repeats what is
+said or says what someone talks about is deleted, a clause such as "while she talks about the lid" is cut, text
+before the first time is dropped and tenths of seconds are rounded off. The same model then checks the rest in a
+request of its own, without the video and without the chat, for only what a model can see: a line that
+contradicts the title or the transcript, and a line that only says what a blind listener would guess anyway. The
+second kind is deleted; only a contradiction sends the section back to the model with its video, once. Asking
+a model to replace what was removed made it invent ("she shows how she spreads butter", which she only
+announces) or state the obvious ("she looks at the laundry basket"; 18.11.2026)."""
 
 from __future__ import annotations
 
+import json
 import re
 from difflib import SequenceMatcher
 from typing import Any
@@ -29,59 +33,44 @@ RETOLD_SIMILARITY = 0.7
 SPEECH = re.compile(r"\b(erwähn\w*|erläuter\w*|(spricht|sprechen|redet|reden) (über|von)|"
                     # In a German subordinate clause the verb comes last: "während sie über das „Drehen“ spricht".
                     r"(über|von) ([\w„“\"'»«-]+ ){1,4}(spricht|sprechen|redet|reden)|erzähl\w*|"
-                    r"(sagt|erklärt|meint|betont),? (dass|wie|warum)|beschreibt (\w+ ){1,4}als|"
+                    r"(sagt|erklärt|meint|betont|präzisiert),? (dass|wie|warum)|beschreibt (\w+ ){1,4}als|"
                     r"mention\w*|(talks?|talking|speaks?|speaking) (about|of)|says (she|he|they)|noting (that|it)|"
                     r"(says|explains?|tells?)( us)? (that|how|why))\b", re.IGNORECASE)
+# A clause about the speech hanging on a line about what is seen: ", während sie über den Deckel spricht".
+SPEECH_CLAUSE = re.compile(r",\s*(während|wobei|indem|als|while|as)\b", re.IGNORECASE)
 # A line at the start of a section this alike to one at the end of the section before says the same again.
 REPEATED_SIMILARITY = 0.85
-# A reviewer's whole answer when it finds nothing.
-NOTHING_FOUND = "OK"
-# "no" and "nein" too: the four questions ask for problems, so no means fine; yes is a finding.
-NOTHING_LISTED = re.compile(r"^\W*(ok|okay|fine|good|correct|no|nein|passt|in ordnung|none|"
-                            r"no (problems?|issues?|violations?|errors?)( found)?|nothing( found)?|"
-                            r"keine?( (verstöße|fehler|probleme|beanstandungen))?( gefunden)?|nichts( gefunden)?)"
-                            r"\W*$", re.IGNORECASE)
-# What a reviewer may put before its verdict on a line: the line's time, or one of the four questions ("a.").
-LINE_PREFIX = re.compile(r"^\W*(\d{1,2}:\d{2}(:\d{2})?\W*)?([a-f][.)]\s*)?(\w+( \w+)?\s*[:?]\s*)?", re.IGNORECASE)
 
 # Who the reviewer is and what it does: its own system prompt, as it is a model of its own in this request
-# and must not take the describer's prompt for its task (user's wish, 18.11.2026).
+# and must not take the describer's prompt for its task (user's wish, 18.11.2026). Only what needs a model is
+# asked; everything else the mechanical check does better.
 REVIEWER_SYSTEM_PROMPT = (
     "You are the reviewer in SceneAccess, an app that describes videos for blind people. Another model watched "
     "a part of a video and described it; you check that description before the blind person gets it. You do not "
     "see the video and do not describe it yourself. You get the description, the time span of the part, the "
-    "question the description answers, the video's title and, if there is one, an automatic transcript of what is "
-    "said in the part.\n\n"
-    "How to check, once and in this order:\n"
-    "1. Go through the description line by line, from top to bottom, exactly once.\n"
-    "2. For each line, ask only these six questions; for each, yes means a problem and no means fine:\n"
-    "   a. Is its time missing, not mm:ss, outside the part, or not later than the line before?\n"
-    "   b. Does it say anything about the speech: what is said, quoted, mentioned, explained or talked about, "
-    "also as \"while she talks about …\"? The blind person hears the speech, so any of it is a problem.\n"
-    "   c. Is it in another language than the question?\n"
-    "   d. Is a word misspelt, e.g. a digit inside a word?\n"
-    "   e. Does it clearly contradict the title or the transcript, e.g. a person sitting still while the transcript "
-    "says she is running, or a snowy street in a video titled \"A day at the beach\"?\n"
-    "   f. Does it only say what the blind person would guess from what they hear, e.g. that someone looks at, "
-    "points to or holds what they are talking about? Such a line adds nothing for them.\n"
-    "3. Decide each question once. Note the line only if one of the questions finds a problem. If you are unsure, "
-    "the line is fine.\n"
-    "4. When you reach the last line, the check is over: write your answer at once.\n\n"
-    "What you have decided is checked and closed: never think about a line or a question again once you have "
-    "decided it, and never go back up the list, not even to ask whether there are other problems. A problem you "
-    "found is noted and done; finding it again adds nothing.\n\n"
-    "Over-analysing is the mistake to avoid: one pass is enough, and checking longer does not make the check "
-    "better. Do not sort the lines into kinds such as actions or details. Apart from questions e and f, do not judge "
-    "whether what is described is true, as you cannot see it, and do not rewrite the description.\n\n"
-    "Your answer: every line with a problem, one per line starting with \"- \", with the time of the line and the "
-    "question it fails. If no line has a problem, answer only " + NOTHING_FOUND + ".")
-REVIEW_TASK = ("Part {number} of the video, from {start} to {end}. The question: {question}\n"
-               "The video's title: {title}\n\n"
+    "video's title and, if there is one, an automatic transcript of what is said in the part.\n\n"
+    "Go through the description line by line, once, and ask only these two questions:\n"
+    "e. Does the line clearly contradict the title or the transcript, e.g. a person sitting still while the "
+    "transcript says she is running, or a snowy street in a video titled \"A day at the beach\"?\n"
+    "f. Does the line only say what the blind person would guess from what they hear, e.g. that someone looks "
+    "at, points to or holds what they are talking about? Such a line adds nothing for them.\n\n"
+    "Decide each line once and never go back. If you are unsure, the line is fine. Apart from these two "
+    "questions, do not judge whether what is described is true, as you cannot see it, and do not rewrite it.\n\n"
+    "Answer only with the JSON asked for: every line with a problem, with its time as mm:ss, the question it "
+    "fails (e or f) and why in a few words; an empty list if no line has a problem.")
+# The answer is forced into this form by the server's grammar, so the reviewer's reasoning never reads as
+# findings (Gemma 4 12B without thinking wrote its reasoning as a list and ended with "Result: OK").
+REVIEW_SCHEMA = {"type": "object", "properties": {"problems": {"type": "array", "items": {
+    "type": "object", "properties": {"time": {"type": "string"}, "question": {"type": "string", "enum": ["e", "f"]},
+                                     "why": {"type": "string"}},
+    "required": ["time", "question", "why"]}}}, "required": ["problems"]}
+REVIEW_FORMAT = {"response_format": {"type": "json_schema", "json_schema": {"name": "findings", "schema": REVIEW_SCHEMA}}}
+REVIEW_TASK = ("Part {number} of the video, from {start} to {end}.\nThe video's title: {title}\n\n"
                "The description:\n\n{text}\n\nThe transcript of this part:\n\n{heard}")
-FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found these problems:\n\n{found}\n\n"
-            "Write the description of this part anew and fix them: where you repeated what is said, describe what "
-            "can be seen at that time instead, and leave out a line that adds nothing for the blind person. Write "
-            "the corrected description once, without drafts.")
+FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found that these lines contradict the "
+            "title or the transcript:\n\n{found}\n\nLook at the part again and write its description anew. Correct "
+            "those lines from what you see; where you cannot see what is there, leave the line out. Add nothing that "
+            "is not in the picture, and write the description once, without drafts.")
 
 
 def _content(line: str) -> str:
@@ -101,10 +90,21 @@ def _alike(one: str, other: str) -> float:
     return SequenceMatcher(None, one.split(), other.split()).ratio() if one and other else 0.0
 
 
+def _retold(content: str, spoken: list[str]) -> bool:
+    return len(content.split()) >= 4 and any(_alike(content, words) >= RETOLD_SIMILARITY or
+                                             (len(content) <= len(words) * 1.3 and content in words)
+                                             for words in spoken)
+
+
+def _spoken(heard: str) -> list[str]:
+    return [_content(TRANSCRIPT_TEXT.sub("", line)) for line in heard.splitlines() if line.strip()]
+
+
 def mechanical_findings(text: str, heard: str, start: float, end: float) -> list[str]:
-    """What a description gets wrong that needs no model to see, each as a line for the model to fix."""
+    """What a description gets wrong that needs no model to see, each as a line; used to compare a description
+    with one written anew."""
     found = []
-    spoken = [_content(TRANSCRIPT_TEXT.sub("", line)) for line in heard.splitlines() if line.strip()]
+    spoken = _spoken(heard)
     last = -1.0
     timed = 0
     for line in (line.strip() for line in text.splitlines()):
@@ -125,9 +125,7 @@ def mechanical_findings(text: str, heard: str, start: float, end: float) -> list
             else:
                 # Only a time within the part sets the order; one outside it is reported already.
                 last = at
-        if len(content.split()) >= 4 and any(_alike(content, words) >= RETOLD_SIMILARITY or
-                                             (len(content) <= len(words) * 1.3 and content in words)
-                                             for words in spoken):
+        if _retold(content, spoken):
             found.append(f"- {line}: this only repeats what is said; describe what can be seen instead.")
         elif SPEECH.search(TIME_AT_START.sub("", line)):
             # The blind person hears the speech, so saying what someone talks about adds nothing (user's wish).
@@ -138,33 +136,95 @@ def mechanical_findings(text: str, heard: str, start: float, end: float) -> list
     return found
 
 
+def without_preamble(text: str) -> str:
+    """text from its first line with a time: models write "Hier ist die Beschreibung des Videos:" before it,
+    although asked to start with the first time. Text without any time stays as it is."""
+    lines = text.strip().splitlines()
+    first = next((index for index, line in enumerate(lines) if TIME_AT_START.match(line.strip())), None)
+    return "\n".join(lines[first:]).strip() if first else text.strip()
+
+
+def clean_description(text: str, heard: str) -> tuple[str, list[str]]:
+    """A description with what needs no model removed: text before the first time, tenths of seconds, lines that
+    only repeat what is said or say what someone talks about, and such a clause after what is seen. Returns the
+    cleaned text and a note for each change."""
+    spoken = _spoken(heard)
+    notes, kept = [], []
+    for line in without_preamble(text).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        time = TIME_AT_START.match(line)
+        if time and time.group(4):
+            # "00:33.0" becomes "00:33"; the rest of the line stays as written.
+            line = line[:time.start(4)] + line[time.end(4):]
+            time = TIME_AT_START.match(line)
+        body = line[time.end():] if time else line
+        if _retold(_content(line), spoken):
+            notes.append(f"- Removed, it only repeats what is said: {line}")
+            continue
+        speech = SPEECH.search(body)
+        if speech:
+            clause = [found for found in SPEECH_CLAUSE.finditer(body) if found.start() < speech.start()]
+            seen = body[:clause[-1].start()].strip() if clause else ""
+            if len(seen.split()) >= 2:
+                cut = line[:time.end()] + seen.rstrip(" ,;") + "." if time else seen.rstrip(" ,;") + "."
+                notes.append(f"- Cut what is said from: {line}")
+                kept.append(cut)
+            else:
+                notes.append(f"- Removed, it says what is said: {line}")
+            continue
+        kept.append(line)
+    return "\n".join(kept), notes
+
+
 def review_messages(text: str, heard: str | None, number: int, start: float, end: float,
-                    question: str, title: str = "") -> list[dict[str, Any]]:
+                    title: str = "") -> list[dict[str, Any]]:
     """The reviewer's request: its own system prompt, then the part to check. heard is the transcript of the
     part, or None when the chat sends no transcript: then the reviewer must not take speech the description
     mentions for made up."""
     if heard is None:
         heard = "(no transcript is available; the model may have heard the speech itself)"
     part = REVIEW_TASK.format(number=number, start=format_time(round(start)), end=format_time(round(end)),
-                              question=question, title=title or "(none)", text=text.strip(),
+                              title=title or "(none)", text=text.strip(),
                               heard=heard.strip() or "(nothing is said in this part)")
     return [{"role": "system", "content": REVIEWER_SYSTEM_PROMPT}, {"role": "user", "content": part}]
 
 
-def reviewer_findings(answer: str) -> list[str]:
-    """The problems a reviewer listed, one per line starting with "- " as asked. An answer without such lines
-    found nothing, however it says so: a model answering in the question's language writes "OK, keine Fehler."
-    or "**OK**" as often as OK, and taking that for a finding would describe every section twice."""
-    listed = [line.strip()[2:].strip() for line in answer.splitlines() if line.strip().startswith(("- ", "* ", "• "))]
-    # Nothing found, written as a list line: "- Keine Verstöße.", "- None.", also after the line's time or one of
-    # the four questions, as a model going through them writes "- 00:13: OK" or "* a. Time: Yes". A finding
-    # such as "- Keine Zeitangabe bei 00:13" names what is missing, so only such a word alone counts as nothing.
-    return [f"- {line}" for line in listed
-            if line and not NOTHING_LISTED.match(line) and not NOTHING_LISTED.match(LINE_PREFIX.sub("", line, count=1))]
+def reviewer_findings(answer: str) -> list[dict[str, str]]:
+    """The problems in a reviewer's JSON answer, each with time, question ("e" or "f") and why. Raises
+    ValueError for an answer that is not the JSON asked for, so it never counts as nothing found."""
+    try:
+        problems = json.loads(answer)["problems"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise ValueError(f"The reviewer's answer is not the JSON asked for: {answer[:200]}") from error
+    found = []
+    for problem in problems if isinstance(problems, list) else []:
+        if isinstance(problem, dict) and problem.get("question") in ("e", "f") and TIME_AT_START.match(
+                str(problem.get("time", ""))):
+            found.append({"time": str(problem["time"]).strip(), "question": problem["question"],
+                          "why": str(problem.get("why", "")).strip()})
+    return found
 
 
-def fix_request(text: str, found: list[str]) -> str:
-    return FIX_TASK.format(text=text.strip(), found="\n".join(found))
+def _at(time: str) -> float | None:
+    found = TIME_AT_START.match(time.strip())
+    return _seconds(found) if found else None
+
+
+def without_lines_at(text: str, times: list[str]) -> tuple[str, list[str]]:
+    """text without its lines at the given times; returns it and the lines removed."""
+    gone = {at for at in (_at(time) for time in times) if at is not None}
+    kept, removed = [], []
+    for line in text.splitlines():
+        time = TIME_AT_START.match(line.strip())
+        (removed if time and _seconds(time) in gone else kept).append(line)
+    return "\n".join(kept), removed
+
+
+def fix_request(text: str, contradictions: list[dict[str, str]]) -> str:
+    found = "\n".join(f"- {problem['time']}: {problem['why']}" for problem in contradictions)
+    return FIX_TASK.format(text=text.strip(), found=found)
 
 
 def joined_without_repeats(described: list[dict[str, Any]]) -> str:

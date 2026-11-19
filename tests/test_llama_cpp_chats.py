@@ -212,7 +212,7 @@ def section_reply(text, merged='The whole video.'):
     starting at its part's first time, the merged answer to the last request."""
     import re
     if 'You are the reviewer' in text:
-        return 'OK'
+        return '{"problems": []}'
     if 'give the one answer' in text:
         return merged
     found = re.search(r'describe part (\d+) of \d+, from (\d\d:\d\d)', text)

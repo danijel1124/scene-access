@@ -124,11 +124,14 @@ def section_items(sections: dict[str, Any] | None, answered: bool = True) -> lis
         items.append(_folded(label, entry["text"]))
         if review and (review.get("found") or review.get("failed")):
             by = f" by {review['reviewer_model']}" if review.get("reviewer_model") else ""
-            failed = f"The model's check was {review['failed']}; only the mechanical check counted.\n\n" \
+            failed = f"The model's check was {review['failed']}; only the mechanical cleaning counted.\n\n" \
                 if review.get("failed") else ""
-            first = (f"\n\nThe first description:\n\n{review['first_text']}" if review.get("first_text")
-                     else "\n\nDescribing the section again failed, so this description stays."
-                     if review.get("fix_failed") else "")
+            outcome = ("\n\nDescribing the section again failed, so the first one, cleaned, stays."
+                       if review.get("fix_failed") else
+                       "\n\nThe description written anew was worse, so the first one, cleaned, stays."
+                       if review.get("fix_worse") else "")
+            first = f"{outcome}\n\nThe first description:\n\n{review['first_text']}" if review.get("first_text") \
+                else outcome
             items.append(_folded(f"Check of section {entry['index'] + 1}{by}, found",
                                  f"{failed}{review.get('found') or 'Nothing found.'}{first}"))
     if answered and (sections or {}).get("joined"):
@@ -140,9 +143,12 @@ def _checked(review: dict[str, Any] | None) -> str:
     """What a section's label says about its check: never "checked" for a check that did not finish."""
     if review is None:
         return ""
+    if review.get("rewritten"):
+        return ", described again after the check"
+    if review.get("fix_failed") or review.get("fix_worse"):
+        return ", check found problems, describing it again did not help"
     if review.get("found"):
-        return (", check found problems, describing it again failed" if review.get("fix_failed")
-                else ", described again after the check")
+        return ", lines removed after the check" + (", check failed" if review.get("failed") else "")
     return ", check failed" if review.get("failed") else ", checked"
 
 
