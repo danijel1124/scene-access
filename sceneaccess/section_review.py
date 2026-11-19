@@ -53,8 +53,10 @@ REVIEWER_SYSTEM_PROMPT = (
     "e. Does the line say the opposite of the title or the transcript, e.g. a person sitting still while the "
     "transcript says she is running, or a snowy street in a video titled \"A day at the beach\"?\n"
     "f. Does the line only say what the blind person would guess from what they hear, e.g. that someone looks "
-    "at, points to or holds what they are talking about? Such a line adds nothing for them.\n\n"
-    "What a line does not say is never a problem: the description need not mention what is said, nor anything "
+    "at, points to or holds what they are talking about at that moment? Such a line adds nothing for them, even "
+    "if it is true, and even the first time.\n\n"
+    "A line that fits the title or the transcript is fine, e.g. a person in a wheelchair in a video titled "
+    "\"Life on wheels\": e is only for a line that says the opposite. What a line does not say is never a problem: the description need not mention what is said, nor anything "
     "from the title or the transcript, so \"the transcript mentions X, the description does not\" is no "
     "finding. Decide each line once and never go back. If you are unsure, the line is fine. Apart from these "
     "two questions, do not judge whether what is described is true, as you cannot see it, and do not rewrite "
@@ -162,7 +164,11 @@ def clean_description(text: str, heard: str) -> tuple[str, list[str]]:
             # "00:33.0" becomes "00:33"; the rest of the line stays as written.
             line = line[:time.start(4)] + line[time.end(4):]
             time = TIME_AT_START.match(line)
-        body = line[time.end():] if time else line
+        if not time:
+            # Only the timed lines of a description are judged; other text, e.g. an answer about a brand, stays.
+            kept.append(line)
+            continue
+        body = line[time.end():]
         if _retold(_content(line), spoken):
             notes.append(f"- Removed, it only repeats what is said: {line}")
             continue
@@ -171,7 +177,7 @@ def clean_description(text: str, heard: str) -> tuple[str, list[str]]:
             clause = [found for found in SPEECH_CLAUSE.finditer(body) if found.start() < speech.start()]
             seen = body[:clause[-1].start()].strip() if clause else ""
             if len(seen.split()) >= 2:
-                cut = line[:time.end()] + seen.rstrip(" ,;") + "." if time else seen.rstrip(" ,;") + "."
+                cut = line[:time.end()] + seen.rstrip(" ,;") + "."
                 notes.append(f"- Cut what is said from: {line}")
                 kept.append(cut)
             else:

@@ -138,6 +138,8 @@ def section_items(sections: dict[str, Any] | None, answered: bool = True) -> lis
                                  f"{failed}{review.get('found') or 'Nothing found.'}{first}"))
     if answered and (sections or {}).get("joined"):
         items.append(_folded("Sections joined without the model", sections["joined"]))
+    if answered and (sections or {}).get("answer_notes"):
+        items.append(_folded("Removed from the answer", sections["answer_notes"]))
     return items
 
 
@@ -145,6 +147,8 @@ def _checked(review: dict[str, Any] | None) -> str:
     """What a section's label says about its check: never "checked" for a check that did not finish."""
     if review is None:
         return ""
+    if (review.get("merge") or {}).get("outcome") == "rewritten":
+        return ", described again at the merge"
     if review.get("rewritten"):
         return ", described again after the check"
     if review.get("fix_failed") or review.get("fix_worse") or review.get("fix_unchanged"):

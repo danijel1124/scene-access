@@ -22,8 +22,7 @@ from .openrouter import AnswerCutOff, DeltaHandler, EventHandler, Turn
 from .providers import LLAMA_CPP
 from .request_control import RequestControl
 from .section_review import (REVIEW_FORMAT, clean_description, fix_request, joined_without_repeats,
-                             mechanical_findings, review_messages, reviewer_findings, without_lines_at,
-                             without_preamble)
+                             mechanical_findings, review_messages, reviewer_findings, without_lines_at)
 from .session_store import SECTION_FILE_PREFIX, TITLE_HINT, TRANSCRIPT_HELP, VideoSession, joined_sections
 from .tools import (HD_FRAME, ZOOM_FRAME, ToolResult, format_time, local_video, run_ffmpeg,
                     video_size_and_duration)
@@ -149,9 +148,17 @@ MERGE_TASK = ("\n\nYour task: give the one answer for the whole video, which is 
 # The merge is the last check (user's wish, 19.11.2026): it alone sees all sections and the whole transcript, so
 # it can see what a section got wrong, look at a moment again and have a section described anew.
 MERGE_CHECK = ("\n\nBefore you answer, you are the last check. If a line looks wrong, because it says the opposite "
-               "of the transcript or the title, or seems made up, look at that moment with zoom_frame, or call "
-               "describe_section_again with the part's number and what was wrong; each part at most once, and only "
-               "for a real mistake. Then answer with the parts as they are now.")
+               "of the transcript or the title, or seems made up, {how}; each part at most once, and only for a real "
+               "mistake. Then answer with the parts as they are now.")
+
+
+def _merge_check(tools: list[dict[str, Any]]) -> str:
+    """The merge's task as the last check, naming only the tools it has."""
+    names = [tool["function"]["name"] for tool in tools]
+    ways = ([f"look at that moment with {' or '.join(name for name in names if name in (ZOOM_FRAME, HD_FRAME))}"]
+            if ZOOM_FRAME in names or HD_FRAME in names else [])
+    ways += ["call describe_section_again with the part's number and what was wrong"] if REDO_SECTION in names else []
+    return MERGE_CHECK.format(how=", or ".join(ways)) if ways else ""
 MERGE_TRANSCRIPT = "An automatic transcript of the whole video; speech recognition may contain errors:\n\n{transcript}"
 MERGE_FIX = ("\n\nYour first description of this part:\n\n{text}\n\nThe last check, which saw all parts and the whole "
              "transcript, found this wrong with it:\n\n{found}\n\nLook at the part again and write its description "
@@ -220,11 +227,14 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         written = without_part_heading(turn.completion.answer)
         if turn.completion.cut_off or not written.strip():
             return "fix_failed", entry["text"]
-        if len(mechanical_findings(written, heard, section.start, section.end)) > len(
-                mechanical_findings(entry["text"], heard, section.start, section.end)):
-            # Worse than what it had by what can be counted: that stays.
-            return "fix_worse", entry["text"]
+        # Compared with the first description as the model wrote it, on both ways here: after a check the entry
+        # still holds it, after the merge only its review does.
+        before = (entry.get("review") or {}).get("first_text") or entry["text"]
         cleaned = clean_description(written, heard)[0]
+        if not cleaned.strip() or len(mechanical_findings(written, heard, section.start, section.end)) > len(
+                mechanical_findings(before, heard, section.start, section.end)):
+            # Worse than what it had by what can be counted, or nothing left once cleaned: that stays.
+            return "fix_worse", entry["text"]
         if cleaned == clean_description(entry["text"], heard)[0]:
             # Gemma 4 12B once sent the same description back, ignoring what was found.
             return "fix_unchanged", entry["text"]
@@ -311,7 +321,8 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     # The merge may look at a moment again and have a part described anew: it is the last check.
     merge_tools = [tool for tool in session.tools if tool.get("type") == "function"
                    and tool["function"]["name"] in (ZOOM_FRAME, HD_FRAME)] + ([REDO_TOOL] if review else [])
-    redone: set[int] = set()
+    # Parts the merge had described anew before, e.g. before it was cut off, count too: each part once.
+    redone = {entry["index"] + 1 for entry in described if (entry.get("review") or {}).get("merge")}
     runner = new_runner()
 
     def run_merge_tool(name: str, arguments: str) -> ToolResult:
@@ -346,7 +357,7 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     text = (joined_sections(described)
             + ("\n\n" + MERGE_TRANSCRIPT.format(transcript=session.transcript) if session.sends_transcript else "")
             + ("\n\n" + MERGE_TITLE_HINT.format(title=session.title) if session.title else "")
-            + MERGE_TASK.format(total=total, question=question) + (MERGE_CHECK if merge_tools else ""))
+            + MERGE_TASK.format(total=total, question=question) + _merge_check(merge_tools))
     try:
         turn = client.run_turn(replace(session, tools=merge_tools),
                                [*session.system_messages, {"role": "user", "content": text}], run_merge_tool,
@@ -365,9 +376,14 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
                             "is kept. Send the first question again to put them together anew.")
     # The images the merge looked at belong to the answer now, which the chat stores with them.
     runner.commit_files()
-    # Without "Here is the description of the video:", which the merge wrote before the first time each run.
-    answer = without_preamble(turn.completion.answer)
+    # Cleaned like each section: the answer is what the blind person reads, and the merge, given the whole
+    # transcript and asked to keep every detail, can bring back what was said ("Sie betont, wie griffig er ist").
+    # It also loses "Here is the description of the video:", which it wrote before the first time each run.
+    answer, notes = clean_description(turn.completion.answer,
+                                      session.transcript if session.sends_transcript else "")
     turn.entries[-1]["content"] = answer
+    progress["answer_notes"] = "\n".join(notes)
+    save(progress)
     # The usage line under the answer counts every request it took, the sections' included.
     usages = [entry.get("usage") or {} for entry in described]
     completion = replace(turn.completion, answer=answer,

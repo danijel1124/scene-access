@@ -411,8 +411,9 @@ def test_the_merge_is_the_last_check_and_can_have_a_part_described_anew(tmp_path
                 {"part": 2, "problems": "00:40: a corded vacuum cleaner, which she says she does not have"}))
             seen["again"] = run_tool("describe_section_again", json.dumps({"part": 2, "problems": "still wrong"}))
             seen["missing"] = run_tool("describe_section_again", json.dumps({"part": 7, "problems": "x"}))
-            return Turn(entries=[{"role": "assistant", "content": "Hier ist alles:\n00:01 A cup.\n00:40 A hand."}],
-                        completion=Completion("Hier ist alles:\n00:01 A cup.\n00:40 A hand.", "m", 1, None, None))
+            answer = "Hier ist alles:\n00:01 A cup.\n00:40 A hand.\n00:45 Sie erwähnt den Staubsauger."
+            return Turn(entries=[{"role": "assistant", "content": answer}],
+                        completion=Completion(answer, "m", 1, None, None))
 
     model = Merging(describe=["00:01 A cup.", "00:40 She pulls a corded vacuum cleaner."], check=[NONE, NONE],
                     fix=["00:40 She holds a small cordless vacuum cleaner."])
@@ -421,6 +422,8 @@ def test_the_merge_is_the_last_check_and_can_have_a_part_described_anew(tmp_path
     # It sees the whole transcript and may zoom into a frame or have a part described anew.
     assert seen["tools"] == ["zoom_frame", "describe_section_again"] and seen["rounds"] == 6
     assert "Ich habe keinen Kabelstaubsauger." in seen["text"] and "you are the last check" in seen["text"]
+    # Its task names only the tools it has.
+    assert "look at that moment with zoom_frame" in seen["text"] and "high_resolution_frame" not in seen["text"]
     # The part was described anew with its video and what the merge found, and the merge got the new text.
     fix = json.dumps(model.requests[-1])
     assert "video_url" in fix and "The last check, which saw all parts" in fix and "does not have" in fix
@@ -431,8 +434,44 @@ def test_the_merge_is_the_last_check_and_can_have_a_part_described_anew(tmp_path
     assert second["text"] == "00:40 She holds a small cordless vacuum cleaner."
     assert second["review"]["merge"]["outcome"] == "rewritten"
     assert second["review"]["first_text"] == "00:40 She pulls a corded vacuum cleaner."
-    # The answer has no preamble before its first time.
-    assert turn.completion.answer == "00:01 A cup.\n00:40 A hand."
+    # The answer is cleaned like each section, preamble and speech line gone, and says what it lost.
+    assert turn.completion.answer == "00:01 A cup.\n00:40 A hand." == turn.entries[-1]["content"]
+    progress = store.get_session(session.id, "o").sections
+    assert "Sie erwähnt den Staubsauger" in progress["answer_notes"]
+    rows = [row[0] for row in chat_history_rows("Describe it.", [{"role": "assistant", "content": "x"}],
+                                                 sections=progress)]
+    assert any(row.startswith("Section 2 (00:30 to 01:00, described again at the merge)") for row in rows)
+    assert any(row.startswith("Removed from the answer") for row in rows)
+    # The tool call reads as a sentence in the Chat history, not as JSON.
+    from sceneaccess.tools import describe_call
+    assert describe_call("describe_section_again", json.dumps({"part": 2, "problems": "a vacuum cleaner"})) == (
+        "Have section 2 described again: a vacuum cleaner")
+
+
+def test_the_merge_has_a_part_described_anew_only_once_also_after_it_was_cut_off(tmp_path: Path):
+    from sceneaccess.openrouter import AnswerCutOff
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=2)
+    answers = []
+
+    class Merging(Scripted):
+        def run_turn(self, session, messages, run_tool, *args, **kwargs):
+            if "give the one answer" not in json.dumps(messages):
+                return super().run_turn(session, messages, run_tool, *args, **kwargs)
+            answers.append(run_tool("describe_section_again", json.dumps({"part": 1, "problems": "made up"})).text)
+            return Turn(entries=[{"role": "assistant", "content": ""}],
+                        completion=Completion("", "m", 1, None, None, finish_reason="length"))
+
+    def save(progress):
+        store.save_sections(session.id, "o", progress)
+
+    with pytest.raises(AnswerCutOff):
+        describe_in_sections(Merging(describe=["00:01 A cup.", "00:31 A plate."], check=[NONE, NONE],
+                                     fix=["00:02 A mug."]), session, "Describe it.", cut, Runner, save, duration=60.0)
+    with pytest.raises(AnswerCutOff):
+        describe_in_sections(Merging(), store.get_session(session.id, "o"), "Describe it.", cut, Runner, save,
+                             duration=60.0)
+    assert "described anew:" in answers[0] and "already" in answers[1]
 
 
 def test_a_description_written_anew_with_more_problems_than_the_first_is_not_taken(tmp_path: Path):

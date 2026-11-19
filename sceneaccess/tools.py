@@ -343,6 +343,9 @@ def describe_call(name: str, arguments_json: str) -> str:
             return f"{action} {format_time(parse_time(arguments.get('time', 0)))}{where}"
         if name == VIDEO_INFO:
             return "Read the video information"
+        if name == "describe_section_again":
+            # The merge's tool, see sections.REDO_TOOL.
+            return f"Have section {arguments.get('part', '?')} described again: {arguments.get('problems', '')}"
         if name == WEB_SEARCH:
             return f"Search the web through OpenRouter for {arguments.get('query', '')}"
     except Exception:
