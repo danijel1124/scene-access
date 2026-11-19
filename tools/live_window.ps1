@@ -10,7 +10,10 @@ param([Parameter(Mandatory)][string]$Log, [Parameter(ValueFromRemainingArguments
 $repo = Split-Path -Parent $PSScriptRoot
 $Host.UI.RawUI.WindowTitle = "SceneAccess: $($Arguments -join ' ')"
 Set-Content -LiteralPath $Log -Value "=== Start $(Get-Date -Format 'HH:mm:ss'): $($Arguments -join ' ') ===" -Encoding utf8
-$call = if ($Arguments -and $Arguments[0] -like '*.py') { $Arguments } else { @('-m', 'sceneaccess.cli') + $Arguments }
+# Lists even with a single argument: PowerShell unrolls a one-item list into a string, which @call would then pass
+# on letter by letter.
+$Arguments = @($Arguments)
+$call = @(if ($Arguments.Count -and $Arguments[0] -like '*.py') { $Arguments } else { @('-m', 'sceneaccess.cli') + $Arguments })
 $env:PYTHONPATH = $repo
 try {
     & "$repo\.venv\Scripts\python.exe" -u @call 2>&1 | ForEach-Object {
