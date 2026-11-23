@@ -68,11 +68,3 @@ Testläufe (die volle Suite wie einzelne Dateien) immer als Hintergrundauftrag s
 (`run_in_background`), nie im Vordergrund auf das Ende warten – damit währenddessen weiter
 gesprochen werden kann. Ausgabe in eine Logdatei schreiben und nach der Fertig-Meldung lesen.
 
-## Offene Punkte
-
-- **Gedankengang bei llama.cpp-Werkzeugrunden (seit 17.11.2026):** OpenRouter bekommt den Gedankengang
-  einer Runde mit Werkzeugaufruf als `reasoning_details` zurück (Gemini braucht das). llama.cpp liefert ihn
-  als `reasoning_content`; SceneAccess speichert ihn nur als lesbare Kopie `thinking` und schickt ihn in der
-  nächsten Runde derselben Antwort nicht zurück, obwohl z. B. Qwens Chat-Vorlage ihn dort erwartet. Fällt bei
-  Qwen3-Omni-Instruct nicht auf, weil es nicht denkt; bei einem denkenden Modell auf dem eigenen Server
-  nachziehen (nur innerhalb der laufenden Antwort, nicht für frühere Fragen).

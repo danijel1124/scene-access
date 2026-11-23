@@ -23,6 +23,8 @@ TIME_AT_START = re.compile(r"^\W*(\d{1,2}):(\d{2})(?::(\d{2}))?(\.\d+)?"
                            r"(?:\s*[-–—]\s*(?:\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?|(?i:ende|end))\b)?\W*")
 # Where a sentence ends: a description of the whole video puts several in one line.
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+# The indentation and list marker before a line's text, e.g. "    *   " or "2. ".
+LIST_MARKER = re.compile(r"\s*(?:[-*•]|\d+[.)])?\s*")
 TRANSCRIPT_TEXT = re.compile(r"^\[[\d:]+\]\s*")
 # How alike a description line and a transcript line must be, word by word, to count as repeated. Measured on
 # Gemma 4 12B's real sections (18.11.2026): transcript lines copied into the description 1.00, "Sie erwähnt,
@@ -159,16 +161,17 @@ def without_preamble(text: str) -> str:
 def _without_speech(sentence: str, spoken: list[str]) -> str:
     """A sentence of a description with what is said cut off, or "" if nothing seen is left: "Sie dreht den
     Deckel auf, während sie über das Drehen spricht." keeps what comes before the clause, as does "…, noting
-    that sharp edges would dig in."; "Sie erwähnt den Staubsauger." goes."""
+    that sharp edges would dig in." and "She gestures with her single arm, smiling as she begins to speak about …"
+    (Qwen3.5-35B, 19.11.2026); "Sie erwähnt den Staubsauger." goes."""
     if _retold(_content(sentence), spoken):
         return ""
     speech = SPEECH.search(sentence)
     if not speech:
         return sentence
     cuts = [found.start() for found in SPEECH_CLAUSE.finditer(sentence) if found.start() < speech.start()]
-    before = sentence[:speech.start()].rstrip()
-    if before.endswith(","):
-        cuts.append(len(before) - 1)
+    comma = sentence.rfind(",", 0, speech.start())
+    if comma >= 0:
+        cuts.append(comma)
     seen = sentence[:max(cuts)].strip() if cuts else ""
     return seen.rstrip(" ,;") + "." if len(seen.split()) >= 2 else ""
 
@@ -177,9 +180,12 @@ def clean_description(text: str, heard: str, whole: bool = False) -> tuple[str, 
     """A description with what needs no model removed: text before the first time, tenths of seconds, and in the
     timed lines each sentence that only repeats what is said or says what someone talks about, and such a clause
     after what is seen. A description of the whole video (whole) keeps its overview before the first time and its
-    paragraphs. Returns the cleaned text and a note for each change."""
+    paragraphs, and judges its lines after the first time also when they carry none: models put the time in a
+    heading such as "**00:00 – 00:26: Zahnpflege**" and the description below it. Returns the cleaned text and a
+    note for each change."""
     spoken = _spoken(heard)
     notes, kept = [], []
+    timed_before = False
     for line in (text.strip() if whole else without_preamble(text)).splitlines():
         if not line.strip():
             # Each paragraph break once, also where a removed line stood between two.
@@ -192,21 +198,28 @@ def clean_description(text: str, heard: str, whole: bool = False) -> tuple[str, 
             # "00:33.0" becomes "00:33"; the rest of the line stays as written.
             line = line[:time.start(4)] + line[time.end(4):]
             time = TIME_AT_START.match(line)
-        if not time:
+        if time:
+            timed_before = True
+            start = time.end()
+        elif whole and timed_before:
+            # Text under a time, as in a heading: judged like the time's own line; its indentation and list
+            # marker stay, so "    *   Sie erwähnt X. Sie hält Y." keeps its "*".
+            start = LIST_MARKER.match(line).end()
+        else:
             # Only the timed lines of a description are judged; other text, e.g. an answer about a brand, stays.
             kept.append(line)
             continue
-        sentences = [sentence for sentence in SENTENCE_END.split(line[time.end():]) if sentence]
+        sentences = [sentence for sentence in SENTENCE_END.split(line[start:]) if sentence]
         seen = [cleaned for cleaned in (_without_speech(sentence, spoken) for sentence in sentences) if cleaned]
         if seen == sentences:
             kept.append(line)
         elif seen:
-            notes.append(f"- Cut what is said from: {line}")
-            kept.append(line[:time.end()] + " ".join(seen))
+            notes.append(f"- Cut what is said from: {line.strip()}")
+            kept.append(line[:start] + " ".join(seen))
         elif _retold(_content(line), spoken):
-            notes.append(f"- Removed, it only repeats what is said: {line}")
+            notes.append(f"- Removed, it only repeats what is said: {line.strip()}")
         else:
-            notes.append(f"- Removed, it says what is said: {line}")
+            notes.append(f"- Removed, it says what is said: {line.strip()}")
     return "\n".join(kept).strip(), notes
 
 

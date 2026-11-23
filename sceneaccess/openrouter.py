@@ -314,8 +314,8 @@ class OpenRouterClient:
             assistant = {key: message[key] for key in ("role", "content", "tool_calls", "reasoning_details") if key in message}
             assistant["role"] = "assistant"
             assistant.setdefault("content", None)
-            # Kept for the Chat history only, never sent back: OpenRouter calls it reasoning, llama.cpp
-            # reasoning_content.
+            # Kept for the Chat history and, on a llama.cpp server, sent back within this answer (below); OpenRouter
+            # calls it reasoning, llama.cpp reasoning_content.
             thinking = message.get("reasoning") or message.get("reasoning_content")
             if thinking:
                 assistant["thinking"] = thinking
@@ -339,7 +339,15 @@ class OpenRouterClient:
                 return turn
             rounds += 1
             turn.entries.append(assistant)
-            messages.append(_wire(assistant))
+            wire = _wire(assistant)
+            if thinking and self.endpoint != OPENROUTER_URL:
+                # The reasoning of a round with tool calls goes back to a llama.cpp server as reasoning_content,
+                # only within this answer: Qwen3.5's chat template puts it before the calls, and Gemma 4's model
+                # card asks for it in tool-call turns. Decided by where the request goes, not by the chat's
+                # provider: a llama.cpp chat also sends to OpenRouter, e.g. for the web search. OpenRouter gets
+                # reasoning_details instead; earlier questions get neither.
+                wire["reasoning_content"] = thinking
+            messages.append(wire)
             images = []
             for call in calls:
                 if self.control:

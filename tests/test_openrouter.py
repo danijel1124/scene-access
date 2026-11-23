@@ -375,7 +375,31 @@ def test_streamed_tool_calls_and_reasoning_go_back_as_without_streaming(tmp_path
     assert sent["reasoning_details"] == [{"type": "reasoning.text", "index": 0, "text": "Zoom in.", "signature": "sig-1"}]
     # The readable copy of the thinking is for the Chat history only.
     assert "thinking" not in sent and "reasoning" not in sent and turn.entries[0]["thinking"] == "Zoom in."
+    assert "reasoning_content" not in sent
     assert turn.entries[-1]["sources"] == [{"title": "A", "url": "https://example.com/a"}]
+
+
+def test_a_llama_cpp_server_gets_the_reasoning_of_a_tool_round_back_within_the_answer(tmp_path: Path):
+    _store, session = _tool_session(tmp_path)
+    bodies = []
+    rounds = [[_delta(reasoning_content="I should zoom in."),
+               _delta(tool_calls=[{"index": 0, "id": "call_1", "type": "function",
+                                   "function": {"name": "zoom_frame", "arguments": "{\"time\": \"01:20\"}"}}])],
+              [_delta(reasoning_content="The right hand."), _delta(content="With her right hand.")]]
+
+    def opener(request, timeout):
+        bodies.append(json.loads(request.data))
+        return StreamResponse(rounds[len(bodies) - 1])
+
+    # Decided by where the request goes: the user's own server, not OpenRouter.
+    client = OpenRouterClient("k", base_url="http://gpu:8080/v1/chat/completions", opener=opener)
+    turn = client.run_turn(session, session.messages, lambda *_: ToolResult("No image."), on_delta=lambda *_: None)
+    # Qwen3.5's chat template puts it before the call; it is not stored in a form that goes to later questions.
+    call_round = bodies[1]["messages"][-2]
+    assert call_round["tool_calls"][0]["id"] == "call_1" and call_round["reasoning_content"] == "I should zoom in."
+    assert "reasoning_content" not in turn.entries[0] and turn.entries[0]["thinking"] == "I should zoom in."
+    assert "reasoning_content" not in session.wire_message(turn.entries[0])
+    assert turn.completion.answer == "With her right hand."
 
 
 def test_an_answer_cut_off_at_the_token_limit_says_so(tmp_path: Path):

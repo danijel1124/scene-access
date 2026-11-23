@@ -526,6 +526,16 @@ def test_the_cleaning_of_a_whole_video_keeps_the_overview_and_cuts_only_the_sent
                        "*   **00:51 - 01:13:** She holds a sieve. A black cat walks by.\n\n"
                        "*   **01:17 - End:** A saucepan with rounded handles.")
     assert len(notes) == 3 and "Removed, it says what is said" in notes[1]
+    # The time in a heading and the description below it, as Qwen3.5-35B wrote: the text under it is judged too,
+    # and a clause is cut at the last comma before what is said.
+    cleaned, notes = clean_description(
+        "Overview with no time, she explains nothing here.\n\n**00:00 – 00:26: Zahnpflege**\n"
+        "    Sie hält eine Tube. Sie erklärt, wie dies das Kochen vereinfacht.\n"
+        "    *   Sie erwähnt den Deckel. Sie hält den Deckel.\n"
+        "She gestures with her single arm, smiling as she begins to speak about her life.", "", whole=True)
+    assert cleaned == ("Overview with no time, she explains nothing here.\n\n**00:00 – 00:26: Zahnpflege**\n"
+                       "    Sie hält eine Tube.\n    *   Sie hält den Deckel.\nShe gestures with her single arm.")
+    assert len(notes) == 3
 
 
 def test_a_whole_answer_is_stored_cleaned_with_what_was_removed(tmp_path: Path):
