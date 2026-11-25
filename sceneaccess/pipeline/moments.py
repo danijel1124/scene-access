@@ -30,6 +30,8 @@ FORMAT = {"response_format": {"type": "json_schema", "json_schema": {"name": "mo
 # span of times, e.g. "- **00:00** " or "**00:00 - 00:26 (Toothpaste)**".
 _LEADING_MARKS = re.compile(r"^(?:[-*•]\s+|\*\*|\(?\d{1,2}:\d{2}(?::\d{2})?\)?(?:\s*[-–]\s*\d{1,2}:\d{2}(?::\d{2})?)?"
                             r"\s*:?\s*)+")
+# The time a line starts with, after its marks: "**0:00 - 0:26 (…)**", "- 00:26 – 00:40 …", "*   0:17 She …".
+_TIME_AT_START = re.compile(r"^[\s\-*•(]*(\d{1,2}:\d{2}(?::\d{2})?)")
 
 
 def split_into_moments(client: Any, session: VideoSession, text: str, duration: float, routing: dict[str, Any], *,
@@ -64,26 +66,70 @@ def split_into_moments(client: Any, session: VideoSession, text: str, duration: 
 
 def parsed_moments(answer: str, text: str, duration: float) -> list[dict[str, Any]] | None:
     """The moments in answer, with their times in seconds, if all keep to the form: readable times in order and in
-    the video, and each moment's words found in text as they are. Else None, and so for no moments at all."""
+    the video, every sentence of a moment found in text as it is, and a moment starting at the time text gives
+    where its first sentence stands. Else None, and so for no moments at all. A moment's text is its sentences
+    without the times and marks before them, which would otherwise be read out."""
     try:
         moments = json.loads(answer)["moments"]
     except (ValueError, KeyError, TypeError):
         return None
+    lines = _timed_lines(text)
+    whole = " ".join(line for _time, line in lines)
     found, last = [], 0.0
-    whole = _plain(text)
     for moment in moments if isinstance(moments, list) else []:
         try:
             start, end = parse_time(moment["start"]), parse_time(moment["end"])
-            words = _LEADING_MARKS.sub("", str(moment["text"]).strip()).strip()
+            sentences = _sentences(str(moment["text"]))
         except (KeyError, TypeError, ValueError):
             return None
-        if words.endswith("**"):
-            words = words[:-2].rstrip()
-        if not words or _plain(words) not in whole or start > end or start < last or end > duration + 1:
+        if (not sentences or any(sentence not in whole for sentence in sentences) or start > end or start < last
+                or end > duration + 1):
             return None
-        found.append({"start": start, "end": end, "text": words})
+        # A moment given the time of the one before or after it would be read out at the wrong time: the time
+        # text gives where its first sentence stands, also from a heading above, must be its start.
+        given = next((time for time, line in lines if sentences[0] in line), None)
+        if given is not None and abs(given - start) > 1:
+            return None
+        found.append({"start": start, "end": end, "text": " ".join(sentences)})
         last = start
     return found or None
+
+
+def uncovered(text: str, moments: list[dict[str, Any]]) -> list[str]:
+    """The sentences of text, without the times and marks before them, that are in no moment: what an audio track
+    of the moments would leave out. For checking a run, e.g. on the command line."""
+    said = " ".join(moment["text"] for moment in moments)
+    parts = [part for moment in moments for part in _sentences(moment["text"])]
+    # A heading such as "(The toothpaste)" is no sentence to read out; a sentence that holds a moment's sentence
+    # with something left before it, such as "– End:" of a span "01:17 – End", is covered.
+    return [sentence for sentence in _sentences(text)
+            if sentence not in said and not (sentence.startswith("(") and sentence.endswith(")"))
+            and not any(part in sentence for part in parts)]
+
+
+def _timed_lines(text: str) -> list[tuple[float | None, str]]:
+    """Each line of text without its marks, as compared, with the time it is about: its own time at its start, else
+    the last one before it, e.g. from a heading; None before the first time."""
+    lines, time = [], None
+    for line in text.splitlines():
+        own = _TIME_AT_START.match(line)
+        if own:
+            time = parse_time(own.group(1))
+        plain = _plain(_LEADING_MARKS.sub("", line.strip()))
+        if plain:
+            lines.append((time, plain))
+    return lines
+
+
+def _sentences(text: str) -> list[str]:
+    """The sentences of text, each without the times and marks before it, as compared: only words count."""
+    found = []
+    for line in text.splitlines():
+        for sentence in re.split(r"(?<=[.!?])\s+", line.strip()):
+            sentence = _plain(_LEADING_MARKS.sub("", sentence.strip()))
+            if any(character.isalpha() for character in sentence):
+                found.append(sentence)
+    return found
 
 
 def _plain(text: str) -> str:

@@ -196,7 +196,9 @@ MOMENTS_SYSTEM_PROMPT = (
 MOMENTS_TASK = (
     "Split this description of a {length} video into its moments, in order. A moment is a line or sentence of the "
     "description, or a few that belong together, about one stretch of the video. Give each \"start\" and \"end\" as "
-    "mm:ss: the start from the time the description gives, the end where the next moment starts, the last one ending "
-    "at {length}. Copy each \"text\" exactly from the description, without its time, list mark or bold mark. Leave "
-    "out headings and lines with no time to go by. If nothing in the description has a time, answer with an empty "
-    "list.\n\nThe description:\n\n{text}")
+    "mm:ss: the start from the time the description gives; the end as the description gives it, else where the "
+    "next moment starts, the last one ending at {length}. Text before the first time is a moment of its own from "
+    "00:00 to 00:00. Lines without a time of their own belong to the moment before them. Copy each \"text\" exactly "
+    "from the description, without its time, list mark or bold mark; leave out only headings that are nothing but "
+    "a time or a title. If nothing in the description has a time, answer with an empty list.\n\n"
+    "The description:\n\n{text}")

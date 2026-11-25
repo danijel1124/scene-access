@@ -6,7 +6,7 @@ import pytest
 
 from sceneaccess.llm.client import Completion, Turn
 from sceneaccess.pipeline import answering
-from sceneaccess.pipeline.moments import FORMAT, parsed_moments, split_into_moments
+from sceneaccess.pipeline.moments import FORMAT, parsed_moments, split_into_moments, uncovered
 from sceneaccess.request_control import RequestCancelled
 from sceneaccess.settings.config import AppConfig
 from sceneaccess.storage.session_store import MOMENTS, VideoSessionStore
@@ -52,6 +52,40 @@ def test_the_moments_keep_the_answers_words_without_the_marks_the_model_kept():
     assert found == [{"start": 0.0, "end": 26.0, "text": "She holds a pink toothbrush."},
                      {"start": 26.0, "end": 84.0,
                       "text": "In a living room, she stands next to a vacuum cleaner. Its bin is clear."}]
+
+
+def test_text_before_the_first_time_is_a_moment_of_its_own_at_the_start():
+    text = "A woman with a prosthetic arm stands in a bright room.\n" + TEXT
+    found = parsed_moments(form(("00:00", "00:00", "A woman with a prosthetic arm stands in a bright room."),
+                                ("00:00", "00:26", "She holds a pink toothbrush.")), text, 84)
+    assert [(moment["start"], moment["end"]) for moment in found] == [(0.0, 0.0), (0.0, 26.0)]
+    # What an audio track of these moments would leave out is found sentence by sentence.
+    assert uncovered(text, found) == ["In a living room, she stands next to a vacuum cleaner.", "Its bin is clear."]
+
+
+HEADED = ("The video shows a woman with a prosthesis.\n\n"
+          "**0:00 - 0:26 (The toothpaste)**\n"
+          "*   She holds a toothbrush in her mouth.\n"
+          "*   0:17 She screws the cap back on.\n\n"
+          "**0:26 - 0:40 (The vacuum cleaner)**\n"
+          "*   She lifts a vacuum cleaner.")
+
+
+def test_a_moment_may_join_lines_under_a_heading_and_loses_the_times_inside_it():
+    found = parsed_moments(form(("00:00", "00:26", "The video shows a woman with a prosthesis. She holds a toothbrush "
+                                                   "in her mouth. 0:17 She screws the cap back on."),
+                                ("00:26", "00:40", "She lifts a vacuum cleaner.")), HEADED, 84)
+    assert found[0]["text"] == ("The video shows a woman with a prosthesis. She holds a toothbrush in her mouth. "
+                                "She screws the cap back on.")
+    assert found[1]["start"] == 26.0
+    # The headings are no sentences an audio track leaves out.
+    assert uncovered(HEADED, found) == []
+
+
+def test_moments_given_the_time_of_another_are_none():
+    # The toothpaste given the vacuum cleaner's time, as Qwen3.5-9B shifted all moments by one once.
+    assert parsed_moments(form(("00:00", "00:25", "The video shows a woman with a prosthesis."),
+                               ("00:26", "00:40", "She holds a toothbrush in her mouth.")), HEADED, 84) is None
 
 
 @pytest.mark.parametrize("answer", [
