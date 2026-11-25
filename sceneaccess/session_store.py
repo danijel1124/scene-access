@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -238,6 +238,10 @@ class VideoSession:
         content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
         return _merge_user_runs([*system, {"role": "user", "content": content},
                                  *(self.wire_message(message) for message in self.history if not message.get(EXCLUDED))])
+
+    def follow_up_messages(self, question: str) -> list[dict[str, Any]]:
+        """What a later question sends: the chat so far, then the question."""
+        return _merge_user_runs([*self.messages, {"role": "user", "content": question}])
 
     def wire_message(self, message: dict[str, Any]) -> dict[str, Any]:
         """Returns a stored message as sent to the provider: protocol fields only, images inlined."""
@@ -503,11 +507,6 @@ class VideoSessionStore:
                 directory.rmdir()
             except FileNotFoundError:
                 pass
-
-    def build_follow_up_messages(self, session_id: str, owner_id: str, question: str,
-                                 hears_sound: bool = False) -> list[dict[str, Any]]:
-        session = replace(self.get_session(session_id, owner_id), hears_sound=hears_sound)
-        return _merge_user_runs([*session.messages, {"role": "user", "content": question}])
 
     def set_rounds_in_context(self, session_id: str, owner_id: str, indices: list[int], in_context: bool) -> None:
         """Takes the rounds of the history entries at indices out of what is sent to the model, or puts them

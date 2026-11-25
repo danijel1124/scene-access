@@ -25,15 +25,12 @@ from typing import TextIO
 from .app_window import LEGACY_OWNER_ID, OWNER_ID, open_store, resolve_openrouter_key
 from .chat_history import chat_history_rows
 from .config import AppConfig, load_config
-from .models import ModelCatalog, llama_cpp_catalog, routing
-from .openrouter import LLAMA_CPP_READ_TIMEOUT, OpenRouterClient
+from . import answering
+from .models import ModelCatalog
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .session_store import REMOVED, TRANSCRIBE_MODES, VideoSession, VideoSessionStore
-from .tools import ToolRunner, provider_tools
-from .sections import (Reviewer, cleaned_whole_answer, cut_sections, describe_in_sections, needs_sections,
-                       section_sound, video_duration)
-from .transcript import model_hears, sound_parts, wants_transcript, with_sound
+from .transcript import wants_transcript
 
 
 def default_data_dir() -> Path:
@@ -114,46 +111,14 @@ def compare(data_dir: Path, session: VideoSession, models: list[str], out: TextI
 
 def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession, name: str, out: TextIO,
                 follow_up: str = "") -> None:
+    """Answers the chat's first question with one model, through the app's own pipeline, and writes it all as it
+    happens, so a run can be followed while it goes on, and what came before a failure stays."""
     provider = LLAMA_CPP if name.split(":")[0] == LLAMA_CPP else OPENROUTER
     model = ((name.partition(":")[2] or config.llama_cpp_model or LLAMA_CPP_DEFAULT_MODEL)
              if provider == LLAMA_CPP else name)
     session = replace(session, provider=provider, model=model)
-    duration = video_duration(session) if session.section_seconds else 0.0
-    sectioned = needs_sections(session, duration)
-    # As the app sends: a model on a llama.cpp server that hears gets the sound as a track of its own.
-    hears = model_hears(session, llama_cpp_catalog(config.llama_cpp_url) if provider == LLAMA_CPP else catalog)
-    sound = []
-    if hears and provider == LLAMA_CPP and not sectioned:
-        try:
-            sound = sound_parts(session)
-        except Exception as error:
-            print(f"The sound could not be prepared, so the model does not hear it: {error}", file=out)
-        hears = bool(sound)
-    session = replace(session, hears_sound=hears)
-    if sectioned:
-        messages, sent = [], session.sends_transcript
-    else:
-        messages = with_sound(session.messages, sound)
-        # Compared as JSON text, so line breaks in the transcript match their escaped form in the request.
-        sent = bool(session.transcript) and (json.dumps(session.transcript, ensure_ascii=False)[1:-1]
-                                             in json.dumps(messages, ensure_ascii=False))
-    if wants_transcript(session, hears) and not sent:
-        print("The transcript mode asks for a transcript the chat does not have; compare makes none.", file=out)
-    if provider == LLAMA_CPP:
-        # Only the llama.cpp key goes to the user's server, never the OpenRouter key.
-        client = OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url,
-                                  read_timeout=LLAMA_CPP_READ_TIMEOUT)
-        options = {}
-    else:
-        client = OpenRouterClient(resolve_openrouter_key(config) or "", ignored_providers=config.ignored_providers)
-        options = routing(model, session.audio_only, catalog, config.ignored_providers, config.excluded_models)
-    runner = ToolRunner(session, config.youtube_cookies)
-    track = sectioned and hears and provider == LLAMA_CPP
-    print(f"\n===== {name} | hears: {hears}{' (sound sent as a track)' if sound or track else ''} | "
-          f"transcript sent: {sent} =====", file=out, flush=True)
+    openrouter_key = resolve_openrouter_key(config)
     started = time.monotonic()
-    # Everything is written as it happens, so a run can be followed in the output while it goes on, and what
-    # came before a failure stays.
     shown = {"kind": "", "text": False}
 
     def piece(kind: str, text: str) -> None:
@@ -168,60 +133,54 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         shown["kind"] = ""
         print(f"\n[Step, {time.monotonic() - started:.0f} s] {kind}: {text}", file=out, flush=True)
 
-    tooled = replace(session, tools=provider_tools(session.tools, provider))
+    runner = None
     try:
-        reviewer = None
-        if sectioned and config.section_reviewer_model:
-            key = resolve_openrouter_key(config)
-            if not key:
-                raise ValueError(f"The reviewer model {config.section_reviewer_model} runs on OpenRouter, and no "
-                                 "OpenRouter API key is configured.")
-            reviewer = Reviewer(OpenRouterClient(key, ignored_providers=config.ignored_providers),
-                                config.section_reviewer_model,
-                                routing(config.section_reviewer_model, False, catalog, config.ignored_providers,
-                                        config.excluded_models))
-        if sectioned:
-            # As in the app, but the progress stays with this comparison.
-            turn = describe_in_sections(
-                client, tooled, session.initial_question, cut_sections(session, duration),
-                lambda: ToolRunner(session, config.youtube_cookies), lambda _progress: None, duration=duration,
-                sound=(lambda section: section_sound(session, section)) if track else None,
-                on_event=step, on_delta=piece, routing=options, max_tool_rounds=config.max_tool_rounds,
-                reviewer=reviewer)
+        # As the app decides, but no transcript is made: compare works on a copy of the chat.
+        request = answering.prepare(config, catalog, session, session.initial_question, initial=True,
+                                    openrouter_key=openrouter_key)
+        if request.sectioned:
+            sent = request.session.sends_transcript
         else:
-            turn = client.run_turn(tooled, messages, runner.run, step, options, max_tool_rounds=config.max_tool_rounds,
-                                   on_delta=piece)
-            if not turn.completion.cut_off:
-                # As the app stores it, so the follow-up gets the answer the chat would keep.
-                turn = cleaned_whole_answer(turn, session)
-                if turn.entries and turn.entries[-1].get(REMOVED):
-                    print(f"\n\nRemoved from the answer:\n{turn.entries[-1][REMOVED]}", file=out, flush=True)
+            # Compared as JSON text, so line breaks in the transcript match their escaped form in the request.
+            sent = bool(request.session.transcript) and (
+                json.dumps(request.session.transcript, ensure_ascii=False)[1:-1]
+                in json.dumps(request.messages, ensure_ascii=False))
+        if wants_transcript(request.session, request.hears) and not sent:
+            print("The transcript mode asks for a transcript the chat does not have; compare makes none.", file=out)
+        # A model on a llama.cpp server that hears gets the sound as a track of its own, as in the app.
+        track = " (sound sent as a track)" if request.hears and request.llama_cpp else ""
+        print(f"\n===== {name} | hears: {request.hears}{track} | transcript sent: {sent} =====", file=out, flush=True)
+        started = time.monotonic()
+        turn, runner = answering.answer(request, on_event=step, on_delta=piece)
         completion = turn.completion
         if not shown["text"]:
             # Not streamed, e.g. by a server that does not stream: the answer comes in one piece.
             print(f"\n{completion.answer}", file=out)
-        cut = " | CUT OFF at the token limit, not a whole answer" if completion.cut_off else ""
+        if turn.entries and turn.entries[-1].get(REMOVED):
+            print(f"\n\nRemoved from the answer:\n{turn.entries[-1][REMOVED]}", file=out, flush=True)
         print(f"\n\nTime: {time.monotonic() - started:.0f} s | answered by {completion.model} | requests "
-              f"{completion.requests} | prompt tokens {completion.prompt_tokens}{cut}", file=out, flush=True)
-        if follow_up and sectioned:
+              f"{completion.requests} | prompt tokens {completion.prompt_tokens}", file=out, flush=True)
+        if follow_up and request.sectioned:
             print("\nThe follow-up is skipped: a chat described in sections would need its stored sections.",
                   file=out, flush=True)
         elif follow_up:
-            # As the app sends a later question: the first request, the answer with its tool rounds, the question.
+            # As the app sends a later question: the chat with this answer so far, then the question.
             print(f"\n----- Follow-up: {follow_up}", file=out, flush=True)
-            later = [*messages, *(session.wire_message(entry) for entry in turn.entries),
-                     {"role": "user", "content": follow_up}]
+            later = answering.prepare(config, catalog, replace(request.session, history=turn.entries), follow_up,
+                                      initial=False, openrouter_key=openrouter_key)
             started, shown["kind"], shown["text"] = time.monotonic(), "", False
-            answer = client.run_turn(tooled, later, runner.run, step, options, max_tool_rounds=config.max_tool_rounds,
-                                     on_delta=piece).completion
+            reply, follow_runner = answering.answer(later, on_event=step, on_delta=piece)
+            if follow_runner is not None:
+                follow_runner.cleanup_files()
             if not shown["text"]:
-                print(f"\n{answer.answer}", file=out)
-            print(f"\n\nFollow-up time: {time.monotonic() - started:.0f} s | requests {answer.requests}",
+                print(f"\n{reply.completion.answer}", file=out)
+            print(f"\n\nFollow-up time: {time.monotonic() - started:.0f} s | requests {reply.completion.requests}",
                   file=out, flush=True)
     except Exception as error:
         print(f"\n\nFailed after {time.monotonic() - started:.0f} s: {error}", file=out, flush=True)
     finally:
-        runner.cleanup_files()
+        if runner is not None:
+            runner.cleanup_files()
 
 
 def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:

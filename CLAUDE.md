@@ -51,7 +51,7 @@ Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpa
 - `tools\guarded_pytest.py <Logdatei> <pytest-Argumente>`: startet pytest und bricht sofort ab, wenn
   pytest oder ein Kindprozess ein sichtbares Fenster öffnet. So werden Tests gestartet.
 - `tools\e2e_llama.py [URL]`: schickt einen echten Chat an den llama.cpp-Server (ohne URL die aus den
-  Settings), mit SceneAccess' eigener Sitzung und Werkzeugschleife.
+  Settings), über SceneAccess' eigene Pipeline (`sceneaccess/answering.py`), ohne OpenRouter-Key, also ohne Kosten.
 - `tools\live_window.ps1 <Logdatei> <cli-Argumente>`: führt einen Aufruf der Kommandozeile in einem eigenen
   Konsolenfenster aus, in dem der Nutzer live mitliest und mit Strg+C abbricht; dieselbe Ausgabe landet in der
   Logdatei, an deren Ende `=== Ende` steht, und das Fenster schließt sich dann selbst (Nutzer-Vorgabe 17.11.2026).
@@ -60,7 +60,9 @@ Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpa
 
 Chats des Nutzers lesen und Modelle vergleichen geht über die Kommandozeile der App (siehe README, „Start
 aus dem Quellcode“): `python -m sceneaccess.cli chats`, `show "<Titel>"` und `compare "<Titel>" <Modelle…>`.
-`compare` arbeitet auf einer Kopie des Chats; nur OpenRouter-Modelle kosten dabei Geld.
+`compare` arbeitet auf einer Kopie des Chats und über dieselbe Pipeline wie die App (`sceneaccess/answering.py`).
+Geld kosten dabei OpenRouter-Modelle, ein Prüfer-Modell aus den Settings und, seit 25.11.2026, auch die Websuche
+über OpenRouter, wenn ein Modell auf dem eigenen Server sie aufruft (nur mit eingetragenem OpenRouter-Key).
 
 ## Tests immer im Hintergrund (Nutzer-Vorgabe 30.10.2026)
 

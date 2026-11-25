@@ -7,11 +7,11 @@ import sys
 import threading
 import traceback
 from dataclasses import replace
-from functools import partial
 from pathlib import Path
 
 import wx
 
+from . import answering
 from .app_window import LEGACY_OWNER_ID, OWNER_ID, AppWindow, open_store, resolve_openrouter_key
 from .chat_history import ANSWER, NOTE, chat_history_rows, thinking_item, transcript_entry
 from .chat_list import ChatListFrame
@@ -19,9 +19,9 @@ from .config import AppConfig, config_path_from_standard_paths, load_config, sav
 from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
                            StoredSizeDialog)
 from .dialogs import NO_PROFILE
-from .models import AUTO_ROUTER, ModelCatalog, llama_cpp_catalog, routing
+from .models import AUTO_ROUTER, ModelCatalog, llama_cpp_catalog
 from .new_chat import NewChatMixin, url_from_clipboard
-from .openrouter import LLAMA_CPP_READ_TIMEOUT, OpenRouterClient, check_whole
+from .openrouter import OpenRouterClient
 from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .request_control import RequestControl, RequestCancelled
 from .prompts import current_system_prompt, system_prompt
@@ -29,11 +29,9 @@ from .session_store import (EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSC
                             VideoSession, VideoSessionStore, SessionNotFound, round_bounds)
 from .speech import announce
 from .single_instance import SingleInstance
-from .tools import (WEB_SEARCH, ToolResult, ToolRunner, format_time, function_tool_names, local_video,
-                    provider_tools, tool_definitions, tool_key, tools_for_provider)
-from .sections import (Reviewer, cleaned_whole_answer, cut_sections, describe_in_sections, needs_sections,
-                       section_sound, video_duration)
-from .transcript import make_transcript, model_hears, sound_parts, wants_transcript, with_sound
+from .tools import (WEB_SEARCH, format_time, function_tool_names, local_video, tool_definitions, tool_key,
+                    tools_for_provider)
+from .transcript import make_transcript
 from .video_size import SIZE_LIMIT, megabytes
 from .youtube import fetch_video_info, search_videos
 
@@ -53,18 +51,6 @@ def youtube_link_in_file_name(source_path: str) -> str | None:
 def is_local_file_chat(title: str) -> bool:
     # Chats from a local file are titled with the file name, downloads with the video title.
     return Path(title).suffix.lower() in (".mp4", ".webm", ".mov")
-
-
-
-def _search_through_openrouter(client: OpenRouterClient, model: str, options: dict, query: str) -> ToolResult:
-    """The web_search tool of a llama.cpp chat: OpenRouter's search, given only the query. options holds
-    the provider and model exclusions from Settings."""
-    text, sources = client.web_search(query, model, options)
-    if sources:
-        text += "\n\nSources:\n" + "\n".join(f"- {source['title']}: {source['url']}" for source in sources)
-    count = len(sources)
-    return ToolResult(text or "The search found nothing.",
-                      caption=f"Searched the web for {query}: {count} source{'' if count == 1 else 's'}")
 
 
 class ChatWindows:
@@ -808,7 +794,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             return
         if not llama_cpp and not openrouter_key:
             self.question.SetValue(question)
-            wx.MessageBox("No API key is configured. Enter one in Settings or set OPENROUTER_API_KEY.", "OpenRouter API key required", wx.OK | wx.ICON_ERROR)
+            wx.MessageBox(answering.NO_OPENROUTER_KEY, "OpenRouter API key required", wx.OK | wx.ICON_ERROR)
             return
         session_id = self.current.id
         if initial:
@@ -859,94 +845,24 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             sections.append(("step", item))
             wx.CallAfter(self._request_callback, control, self._show_progress_item, session_id, item)
 
+        def transcript_step(session: VideoSession, wanted: bool, openrouter: OpenRouterClient | None) -> VideoSession:
+            # Made, or marked as not needed for now; the chat is read again to have the stored transcript.
+            if wanted:
+                self._prepare_transcript(session, openrouter)
+                return self.store.get_session(session_id, OWNER_ID)
+            if session.transcript_state == TRANSCRIPT_PENDING:
+                self.store.update_transcript(session_id, OWNER_ID, TRANSCRIPT_NONE)
+            return session
+
         def worker() -> None:
             runner = None
             try:
-                # OpenRouter for the extras of a llama.cpp chat; never given the chat's video.
-                openrouter = (OpenRouterClient(openrouter_key, control=control, ignored_providers=config.ignored_providers)
-                              if openrouter_key else None)
-                if llama_cpp:
-                    # Only the llama.cpp key goes to the user's server, never the OpenRouter key.
-                    client = OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url, control=control,
-                                              read_timeout=LLAMA_CPP_READ_TIMEOUT)
-                else:
-                    client = openrouter
-                # A chat on "default" asks the model that is in Settings now.
-                session = self.store.get_session(session_id, OWNER_ID)
-                session = replace(session, model=session.model or config.model_for(session.provider))
-                # Reject impossible routing before any potentially billable preprocessing. A llama.cpp
-                # server has no providers or router to choose from.
-                options = {} if llama_cpp else routing(session.model, session.audio_only, catalog,
-                                                       config.ignored_providers, config.excluded_models)
-                # A video too long for the model is described in sections, also when a stopped description of
-                # the first question is sent again; later questions then get the descriptions, not the video.
-                duration = video_duration(session) if initial and session.section_seconds else 0.0
-                sectioned = initial and needs_sections(session, duration)
-                text_only = not initial and session.described_in_sections
-                # Asked anew each time: the server may run another model by now.
-                provider_catalog = llama_cpp_catalog(config.llama_cpp_url) if llama_cpp else catalog
-                hears = model_hears(session, provider_catalog) and not text_only
-                # The model the server runs, whatever the chat calls it, so stored sections of another model
-                # are not continued.
-                served = provider_catalog.model_ids() if llama_cpp and sectioned else []
-                served_model = served[0] if len(served) == 1 else ""
-                sound = []
-                if hears and llama_cpp and not sectioned:
-                    # The server ignores a video's sound, so a model that hears gets it as a track of its own.
-                    # Without one, it does not hear this time, and the transcript mode decides as for any other.
-                    try:
-                        sound = sound_parts(session, control)
-                    except RequestCancelled:
-                        raise
-                    except Exception:
-                        sound = []
-                    hears = bool(sound)
-                # Decided for the model answering now, which may be another one than last time. A failed
-                # or skipped transcript is not tried again until Chat settings or the setup change.
-                if session.transcript_state in (TRANSCRIPT_NONE, TRANSCRIPT_PENDING):
-                    if wants_transcript(session, hears):
-                        self._prepare_transcript(session, openrouter)
-                        session = self.store.get_session(session_id, OWNER_ID)
-                        session = replace(session, model=session.model or config.model_for(session.provider))
-                    elif session.transcript_state == TRANSCRIPT_PENDING:
-                        self.store.update_transcript(session_id, OWNER_ID, TRANSCRIPT_NONE)
-                # Only a model that takes in the sound gets the prompt's blocks about it.
-                session = replace(session, hears_sound=hears)
-                messages = with_sound(session.messages if initial else self.store.build_follow_up_messages(
-                    session_id, OWNER_ID, question, hears_sound=hears), sound)
-                # Excluded providers never answer, the search included.
-                search_options = (routing(config.model, False, catalog, config.ignored_providers, config.excluded_models)
-                                  if openrouter else {})
-                def new_runner() -> ToolRunner:
-                    return ToolRunner(session, config.youtube_cookies, control=control,
-                                      web_search=(partial(_search_through_openrouter, openrouter, config.model,
-                                                          search_options) if openrouter else None))
-
-                tooled = replace(session, tools=provider_tools(session.tools, session.provider))
-                reviewer = None
-                if sectioned and config.section_reviewer_model:
-                    if not openrouter:
-                        raise ValueError(f"The reviewer model {config.section_reviewer_model} in Settings runs on "
-                                         "OpenRouter, and no OpenRouter API key is configured.")
-                    reviewer = Reviewer(openrouter, config.section_reviewer_model,
-                                        routing(config.section_reviewer_model, False, catalog,
-                                                config.ignored_providers, config.excluded_models))
-                if sectioned:
-                    # Each section's sound goes along for a model on a llama.cpp server that hears.
-                    turn = describe_in_sections(
-                        client, tooled, question, cut_sections(session, duration, control), new_runner,
-                        lambda progress: self.store.save_sections(session_id, OWNER_ID, progress), duration=duration,
-                        sound=(lambda section: section_sound(session, section, control)) if hears and llama_cpp else None,
-                        on_event=on_event, on_delta=on_delta, routing=options, max_tool_rounds=config.max_tool_rounds,
-                        model_name=served_model, reviewer=reviewer)
-                else:
-                    runner = new_runner()
-                    turn = client.run_turn(tooled, messages, runner.run, on_event, options,
-                                           max_tool_rounds=config.max_tool_rounds, on_delta=on_delta)
-                    # Not stored: a cut-off answer would read as a whole one; what streamed stays in view.
-                    check_whole(turn.completion)
-                    if initial:
-                        turn = cleaned_whole_answer(turn, session)
+                request = answering.prepare(config, catalog, self.store.get_session(session_id, OWNER_ID), question,
+                                            initial=initial, openrouter_key=openrouter_key, control=control,
+                                            transcript_step=transcript_step)
+                turn, runner = answering.answer(
+                    request, on_event=on_event, on_delta=on_delta,
+                    save_sections=lambda progress: self.store.save_sections(session_id, OWNER_ID, progress))
                 control.check_cancelled()
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)

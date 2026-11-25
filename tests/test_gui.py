@@ -3,7 +3,7 @@ import json
 import pytest
 import wx
 
-from sceneaccess import gui
+from sceneaccess import answering, gui
 from sceneaccess.openrouter import Completion, Turn
 from sceneaccess import prompts
 from sceneaccess.prompts import BASE_SYSTEM_PROMPT
@@ -204,7 +204,7 @@ def test_a_default_chat_sends_the_settings_model_and_gets_a_transcript_if_it_can
     monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
     monkeypatch.setattr(gui.threading, "Thread", InlineThread)
     monkeypatch.setattr(gui.wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
-    monkeypatch.setattr(gui, "wants_transcript", lambda session, _catalog: session.model == "z-ai/glm-flash")
+    monkeypatch.setattr(answering, "wants_transcript", lambda session, _catalog: session.model == "z-ai/glm-flash")
     monkeypatch.setattr(gui, "make_transcript", lambda _session, _client: "[00:01] Hello")
     payloads = []
 
@@ -399,7 +399,7 @@ def test_update_system_prompt_is_offered_only_for_an_earlier_version(tmp_path, m
 
 def test_a_failed_transcription_is_remembered_and_does_not_stop_the_answer(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui, "wants_transcript", lambda _session, _catalog: True)
+    monkeypatch.setattr(answering, "wants_transcript", lambda _session, _catalog: True)
 
     def fail(_session, _client):
         raise RuntimeError("HTTP 502: upstream audio operation failed")

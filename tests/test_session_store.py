@@ -155,7 +155,7 @@ def test_follow_up_appends_only_new_question_to_cacheable_history(tmp_path: Path
     )
     store.record_turn(session.id, "matrix:room-a", [{"role": "assistant", "content": "It is a black puffer jacket."}])
 
-    messages = store.build_follow_up_messages(session.id, "matrix:room-a", "Is it glossy?")
+    messages = store.get_session(session.id, "matrix:room-a").follow_up_messages("Is it glossy?")
 
     assert [message["role"] for message in messages] == ["user", "assistant", "user"]
     assert messages[0]["content"][0]["video_url"]["url"].startswith("data:video/mp4;base64,")
@@ -343,7 +343,7 @@ def test_recorded_usage_is_kept_locally_but_not_sent_to_the_provider(tmp_path: P
     store.record_turn(session.id, "matrix:room-a", [{"role": "assistant", "content": "A jacket.", "usage": usage}])
 
     assert store.get_session(session.id, "matrix:room-a").history[0]["usage"] == usage
-    messages = store.build_follow_up_messages(session.id, "matrix:room-a", "Is it glossy?")
+    messages = store.get_session(session.id, "matrix:room-a").follow_up_messages("Is it glossy?")
     assert messages[1] == {"role": "assistant", "content": "A jacket."}
 
 
@@ -438,7 +438,7 @@ def test_a_round_out_of_the_context_stays_in_the_history_and_can_come_back(tmp_p
     store.set_rounds_in_context(session.id, "o", [5], False)
     out = store.get_session(session.id, "o")
     assert len(out.history) == 6 and [entry.get("excluded") for entry in out.history[4:]] == [True, True]
-    sent = texts(store.build_follow_up_messages(session.id, "o", "Third?"))
+    sent = texts(store.get_session(session.id, "o").follow_up_messages("Third?"))
     assert "Second?" not in sent and "Second answer." not in sent and "First answer." in sent
     assert sent[-1] == "Third?"
     store.set_rounds_in_context(session.id, "o", [4], True)
@@ -488,7 +488,7 @@ def test_a_transcript_added_later_goes_at_the_end_and_its_speech_block_with_it(t
     # Everything before it stays the same, so it stays cached.
     assert added.messages[:-1] == before.messages
     assert added.messages[-1]["role"] == "user" and added.messages[-1]["content"].endswith("[00:01] Hello")
-    with_question = store.build_follow_up_messages(session.id, "o", "What is said?")
+    with_question = store.get_session(session.id, "o").follow_up_messages("What is said?")
     assert [message["role"] for message in with_question][-2:] == ["assistant", "user"]
     assert texts(with_question)[-1] == "What is said?"
     store.append_transcript(session.id, "o", "")

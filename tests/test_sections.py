@@ -670,7 +670,7 @@ def test_a_chat_described_in_sections_sends_no_video_with_later_questions(tmp_pa
     assert "video_url" in json.dumps(session.messages)
     store.save_sections(session.id, "o", {"key": {}, "sections": [{"index": 0, "start": 0, "end": 30, "text": "A."}]})
     store.record_turn(session.id, "o", [{"role": "assistant", "content": "The whole video."}])
-    later = json.dumps(store.build_follow_up_messages(session.id, "o", "And then?"))
+    later = json.dumps(store.get_session(session.id, "o").follow_up_messages("And then?"))
     assert "video_url" not in later and "The whole video." in later and "And then?" in later
 
 

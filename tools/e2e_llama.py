@@ -1,4 +1,4 @@
-"""End-to-end check: a llama.cpp chat sent with SceneAccess's own session, client and tool loop.
+"""End-to-end check: a llama.cpp chat sent through SceneAccess's own pipeline, as the app sends it.
 Usage: python tools\\e2e_llama.py [server URL]; without a URL, the one from the SceneAccess settings is used."""
 
 import json
@@ -14,11 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import imageio_ffmpeg  # noqa: E402
 import subprocess  # noqa: E402
 
-from sceneaccess.openrouter import OpenRouterClient  # noqa: E402
+from sceneaccess import answering  # noqa: E402
+from sceneaccess.config import AppConfig  # noqa: E402
+from sceneaccess.models import ModelCatalog  # noqa: E402
 from sceneaccess.prompts import system_prompt  # noqa: E402
-from sceneaccess.providers import LLAMA_CPP  # noqa: E402
+from sceneaccess.providers import LLAMA_CPP, OPENROUTER_URL  # noqa: E402
 from sceneaccess.session_store import VideoSessionStore  # noqa: E402
-from sceneaccess.tools import ToolRunner, provider_tools, tool_definitions  # noqa: E402
+from sceneaccess.tools import tool_definitions  # noqa: E402
 
 if len(sys.argv) > 1:
     URL = sys.argv[1]
@@ -37,12 +39,14 @@ session = VideoSessionStore(work / "chats").create_session(
                      "für den Zähler in der Bildmitte bei 00:05.",
     system_prompt=system_prompt(""), tools=tool_definitions(online_video=False, web_search=False))
 session = replace(session, model="default")
-runner = ToolRunner(session)
 events = []
 started = time.monotonic()
-turn = OpenRouterClient("", base_url=URL).run_turn(
-    replace(session, tools=provider_tools(session.tools, session.provider)), session.messages, runner.run,
-    lambda kind, text: events.append(f"{kind}: {text}"), {})
+# Without an OpenRouter key: nothing of this check is billed.
+request = answering.prepare(AppConfig(llama_cpp_url=URL), ModelCatalog(OPENROUTER_URL), session,
+                            session.initial_question, initial=True, openrouter_key=None)
+turn, runner = answering.answer(request, on_event=lambda kind, text: events.append(f"{kind}: {text}"))
+if runner is not None:
+    runner.cleanup_files()
 print(f"Dauer: {time.monotonic() - started:.1f} s")
 for event in events:
     print("Ereignis:", event)

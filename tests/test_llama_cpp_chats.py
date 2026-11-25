@@ -4,7 +4,7 @@ import sqlite3
 import pytest
 import wx
 
-from sceneaccess import gui, models
+from sceneaccess import answering, gui, models
 from sceneaccess.openrouter import Completion, OpenRouterClient, Turn
 from sceneaccess.providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL
 from sceneaccess.session_store import (TRANSCRIBE_AUTO, TRANSCRIBE_OFF, TRANSCRIBE_ON, TRANSCRIPT_DONE,
@@ -85,7 +85,7 @@ def test_an_openrouter_chat_stays_with_openrouter_after_settings_switch_to_llama
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='B', model='', initial_question='Describe it.',
         tools=tool_definitions(online_video=False))
-    monkeypatch.setattr(gui, 'wants_transcript', lambda *a: False)
+    monkeypatch.setattr(answering, 'wants_transcript', lambda *a: False)
     calls = []
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answered(calls))
     frame._send('Describe it.', initial=True)
@@ -149,8 +149,8 @@ def test_a_llama_cpp_model_that_hears_gets_the_sound_as_a_track_and_no_transcrip
     start(frame, transcribe=TRANSCRIBE_AUTO)
     # The blocks about the sound are added to a system prompt; a chat without one gets none.
     frame.store.update_system_prompt(frame.current.id, gui.OWNER_ID, 'Base prompt.')
-    monkeypatch.setattr(gui, 'llama_cpp_catalog', lambda url: HearingServer())
-    monkeypatch.setattr(gui, 'sound_parts', lambda session, control=None: [SOUND])
+    monkeypatch.setattr(answering, 'llama_cpp_catalog', lambda url: HearingServer())
+    monkeypatch.setattr(answering, 'sound_parts', lambda session, control=None: [SOUND])
     monkeypatch.setattr(gui, 'make_transcript', lambda *a: pytest.fail('a model that hears needs no transcript'))
     calls = []
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answered(calls))
@@ -169,12 +169,12 @@ def test_a_llama_cpp_model_that_hears_gets_the_sound_as_a_track_and_no_transcrip
 
 def test_without_its_sound_a_hearing_llama_cpp_model_gets_the_transcript_instead(frame, monkeypatch):
     start(frame, transcribe=TRANSCRIBE_AUTO)
-    monkeypatch.setattr(gui, 'llama_cpp_catalog', lambda url: HearingServer())
+    monkeypatch.setattr(answering, 'llama_cpp_catalog', lambda url: HearingServer())
 
     def broken(session, control=None):
         raise RuntimeError('fixture: ffmpeg failed')
 
-    monkeypatch.setattr(gui, 'sound_parts', broken)
+    monkeypatch.setattr(answering, 'sound_parts', broken)
     monkeypatch.setattr(gui, 'make_transcript', lambda session, client: '[00:00] Hello')
     calls = []
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answered(calls))
@@ -232,8 +232,8 @@ def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(
         path = directory / f'{SECTION_FILE_PREFIX}30s-{index:03d}.mp4'
         path.write_bytes(b'section')
         cut.append(Section(index, index * 30.0, (index + 1) * 30.0, path))
-    monkeypatch.setattr(gui, 'video_duration', lambda session: 60.0)
-    monkeypatch.setattr(gui, 'cut_sections', lambda session, duration, control=None: cut)
+    monkeypatch.setattr(answering, 'video_duration', lambda session: 60.0)
+    monkeypatch.setattr(answering, 'cut_sections', lambda session, duration, control=None: cut)
     requests = []
 
     def answer(client, session, messages, run_tool, on_event=None, routing=None, **kwargs):
@@ -272,8 +272,8 @@ def test_a_reviewer_model_without_an_openrouter_key_stops_before_any_section_is_
         transcribe=TRANSCRIBE_OFF, section_seconds=30)
     path = frame.current.directory / f'{SECTION_FILE_PREFIX}30s-000.mp4'
     path.write_bytes(b'section')
-    monkeypatch.setattr(gui, 'video_duration', lambda session: 60.0)
-    monkeypatch.setattr(gui, 'cut_sections', lambda session, duration, control=None: [Section(0, 0.0, 60.0, path)])
+    monkeypatch.setattr(answering, 'video_duration', lambda session: 60.0)
+    monkeypatch.setattr(answering, 'cut_sections', lambda session, duration, control=None: [Section(0, 0.0, 60.0, path)])
     requests = []
     monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', lambda *a, **kw: requests.append(a))
     frame._send('Describe it.', initial=True)
@@ -345,10 +345,10 @@ def test_a_stopped_description_continues_on_sending_again_but_not_with_another_m
         path = frame.current.directory / f'{SECTION_FILE_PREFIX}30s-{index:03d}.mp4'
         path.write_bytes(b'section')
         cut.append(Section(index, index * 30.0, (index + 1) * 30.0, path))
-    monkeypatch.setattr(gui, 'video_duration', lambda session: 60.0)
-    monkeypatch.setattr(gui, 'cut_sections', lambda session, duration, control=None: cut)
+    monkeypatch.setattr(answering, 'video_duration', lambda session: 60.0)
+    monkeypatch.setattr(answering, 'cut_sections', lambda session, duration, control=None: cut)
     server = {'model': 'gemma-12b.gguf', 'fail': True}
-    monkeypatch.setattr(gui, 'llama_cpp_catalog', lambda url: ServerModel(server['model']))
+    monkeypatch.setattr(answering, 'llama_cpp_catalog', lambda url: ServerModel(server['model']))
     requests = []
 
     def answer(client, session, messages, run_tool, on_event=None, routing=None, **kwargs):
