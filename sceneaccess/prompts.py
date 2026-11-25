@@ -1,5 +1,8 @@
-"""The fixed base system prompt, the blocks about the video's sound that are added only for a model that can
-take it in, and the editable prompt profiles chosen when a chat starts."""
+"""Every text SceneAccess sends to a model, in one place: the fixed base system prompt, the blocks about the
+video's sound that are added only for a model that can take it in, the editable prompt profiles chosen when a chat
+starts, the hints and transcript introductions of the first request, the tasks of a video described in sections
+and of their merge, and the reviewer's prompt. The code that builds the requests only puts them together; the
+tools' own descriptions stay with the tools."""
 
 from __future__ import annotations
 
@@ -79,3 +82,105 @@ def sound_blocks(gets_speech: bool, hears: bool) -> str:
     it, by hearing or from a transcript, and other sounds only if it hears them."""
     blocks = ([SPEECH_PROMPT] if gets_speech else []) + ([SOUND_PROMPT] if hears else [])
     return "\n".join(blocks)
+
+
+# The first request about a video: the hints after the question, and the transcript's introductions.
+# The video's title tells what it is about, e.g. "Mein Einarmiger Alltag", which a model seeing only a few
+# pictures may miss; it is a hint, not something to describe (user's wish, 18.11.2026).
+TITLE_HINT = ("The video's title, only to help understand what can be seen; describe nothing from it that cannot "
+              "be seen: {title}")
+# Last in the first request, as for the sections: Qwen3.5-9B answered "Beschreibe das Video." in English in 8 of
+# 10 runs when told only in the system prompt (19.11.2026).
+LANGUAGE_HINT = "Write your answer in the language of this question: {question}"
+# The video is what counts; the transcript only helps to follow it (user's wish, 17.11.2026).
+TRANSCRIPT_HELP = ("It is only a help: the video is what counts, so describe what you see in it and use the "
+                   "transcript to understand it, not to retell it.")
+TRANSCRIPT_INTRO = ("You cannot hear this video, so here is an automatic transcript of its speech. Speech "
+                    "recognition may contain errors; times are mm:ss from the start of the video. "
+                    f"{TRANSCRIPT_HELP}\n\n")
+# A model that hears the video gets the transcript too when the chat's mode is on; telling it it cannot hear
+# would be wrong.
+TRANSCRIPT_HEARD_INTRO = ("Here is also an automatic transcript of the video's speech. Speech recognition may "
+                          "contain errors; times are mm:ss from the start of the video. "
+                          f"{TRANSCRIPT_HELP}\n\n")
+TRANSCRIPT_LATER_INTRO = ("Here is an automatic transcript of the video's speech, added after the video. Speech "
+                          "recognition may contain errors; times are mm:ss from the start of the video. "
+                          f"{TRANSCRIPT_HELP}\n\n")
+# A video described in sections is too long to send; its sections' descriptions take its place, so later questions
+# know the video also when the answer to the first question is hidden.
+SECTIONS_INSTEAD_OF_VIDEO = "The video is too long to send, so it was described in parts:\n\n"
+
+
+# A long video described in sections (sections.py): each section's task, and the merge's.
+SECTIONS_BEFORE = "What you wrote about the parts before:\n\n"
+SECTION_TRANSCRIPT_INTRO = ("An automatic transcript of what is said in this part; speech recognition may contain "
+                            f"errors, times are those of the whole video. {TRANSCRIPT_HELP}\n\n")
+# The task comes last, after everything it refers to: small models weigh what they read last most.
+SECTION_TASK = ("\n\nYour task: describe part {number} of {count}, from {span}, of the video, which is {total} long "
+                "and comes in {count} parts, each with its own picture and sound. The video is what counts: describe "
+                "what can be seen in it, the actions, aids, objects and details that matter. What is said, and the "
+                "transcript, only help to understand it; do not retell them. The blind person hears the speech, so "
+                "no line says what she or he says, mentions, explains or talks about, not even as \"while she talks "
+                "about …\"; if nothing new can be seen at a moment, leave that moment out. Leave out, too, what the "
+                "blind person would guess from what they hear, such as someone looking at, pointing to or holding "
+                "what they are talking about; mention a moment only if it tells them something of value they could "
+                "not know otherwise. "
+                "Give every time as mm:ss in the whole video, between {start} and {end}, at the moments when "
+                "something changes in the picture, not at the times of the transcript. Mention what goes on from "
+                "the part before only if something new happens.\n\n"
+                "How to work: look at the part, then write the description once, from its start to its end. A "
+                "moment you have described is done: never think about it again, and when you reach the end of the "
+                "part, the description is finished. Do not draft the list several times, do not check each line "
+                "against the transcript, and do not go back over what you wrote; over-analysing is the mistake to "
+                "avoid, and thinking longer does not make the description better. "
+                "Start right away with the first time, with nothing before it; do not repeat this task, the "
+                "transcript or what you wrote about earlier parts. Answer in the language of the question: "
+                "{question}")
+# The merge has no video, so the title must not add anything the sections do not say.
+MERGE_TITLE_HINT = ("The video's title, only to help understand the descriptions; add nothing from it that they do "
+                    "not say: {title}")
+MERGE_TASK = ("\n\nYour task: give the one answer for the whole video, which is {total} long, as if you had seen it "
+              "at once: put your descriptions of the parts above together in order, keep every detail and every "
+              "time, and leave out only what repeats where two parts meet. Do not mention the parts. Answer in the "
+              "language of the question: {question}")
+# The merge is the last check (user's wish, 19.11.2026): it alone sees all sections and the whole transcript, so
+# it can see what a section got wrong, look at a moment again and have a section described anew.
+MERGE_CHECK = ("\n\nBefore you answer, you are the last check. If a line looks wrong, because it says the opposite "
+               "of the transcript or the title, or seems made up, {how}; each part at most once, and only for a real "
+               "mistake. Then answer with the parts as they are now.")
+MERGE_TRANSCRIPT = "An automatic transcript of the whole video; speech recognition may contain errors:\n\n{transcript}"
+MERGE_FIX = ("\n\nYour first description of this part:\n\n{text}\n\nThe last check, which saw all parts and the whole "
+             "transcript, found this wrong with it:\n\n{found}\n\nLook at the part again and write its description "
+             "anew. Correct what was found from what you see; where you cannot see what is there, leave the line "
+             "out. Add nothing that is not in the picture, and write the description once, without drafts.")
+
+
+# The reviewer of a section's description (section_review.py).
+# Who the reviewer is and what it does: its own system prompt, as it is a model of its own in this request
+# and must not take the describer's prompt for its task (user's wish, 18.11.2026). Only what needs a model is
+# asked; everything else the mechanical check does better.
+REVIEWER_SYSTEM_PROMPT = (
+    "You are the reviewer in SceneAccess, an app that describes videos for blind people. Another model watched "
+    "a part of a video and described it; you check that description before the blind person gets it. You do not "
+    "see the video and do not describe it yourself. You get the description, the time span of the part, the "
+    "video's title and, if there is one, an automatic transcript of what is said in the part.\n\n"
+    "Go through the description line by line, once, and ask only these two questions about what the line says:\n"
+    "e. Does the line say the opposite of the title or the transcript, e.g. a person sitting still while the "
+    "transcript says she is running, or a snowy street in a video titled \"A day at the beach\"?\n"
+    "f. Does the line only say what the blind person would guess from what they hear, e.g. that someone looks "
+    "at, points to or holds what they are talking about at that moment? Such a line adds nothing for them, even "
+    "if it is true, and even the first time.\n\n"
+    "A line that fits the title or the transcript is fine, e.g. a person in a wheelchair in a video titled "
+    "\"Life on wheels\": e is only for a line that says the opposite. What a line does not say is never a problem: the description need not mention what is said, nor anything "
+    "from the title or the transcript, so \"the transcript mentions X, the description does not\" is no "
+    "finding. Decide each line once and never go back. If you are unsure, the line is fine. Apart from these "
+    "two questions, do not judge whether what is described is true, as you cannot see it, and do not rewrite "
+    "it.\n\n"
+    "Answer only with the JSON asked for: every line with a problem, with its time as mm:ss, the question it "
+    "fails (e or f) and why in a few words; an empty list if no line has a problem.")
+REVIEW_TASK = ("Part {number} of the video, from {start} to {end}.\nThe video's title: {title}\n\n"
+               "The description:\n\n{text}\n\nThe transcript of this part:\n\n{heard}")
+FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found that these lines contradict the "
+            "title or the transcript:\n\n{found}\n\nLook at the part again and write its description anew. Correct "
+            "those lines from what you see; where you cannot see what is there, leave the line out. Add nothing that "
+            "is not in the picture, and write the description once, without drafts.")

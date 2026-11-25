@@ -114,7 +114,8 @@ def test_the_reviewer_on_the_users_own_server_checks_without_thinking(tmp_path: 
 
 
 def test_the_reviewer_gets_the_title_and_may_report_a_contradiction_to_it():
-    from sceneaccess.section_review import REVIEWER_SYSTEM_PROMPT, review_messages
+    from sceneaccess.prompts import REVIEWER_SYSTEM_PROMPT
+    from sceneaccess.section_review import review_messages
     part = review_messages("00:09 Sie hält die Tube mit beiden Händen.", "", 1, 0, 30,
                            "Mein Einarmiger Alltag")[1]["content"]
     assert "The video's title: Mein Einarmiger Alltag" in part

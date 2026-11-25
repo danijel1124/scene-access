@@ -16,6 +16,7 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
+from .prompts import FIX_TASK, REVIEW_TASK, REVIEWER_SYSTEM_PROMPT
 from .tools import format_time
 
 # A time at the start of a line, with the end of a span after it, as in "**00:00 - 00:25:**" or "1:17 – Ende".
@@ -50,28 +51,6 @@ SPEECH_CLAUSE = re.compile(r",\s*(während|wobei|indem|als|while|as)\b", re.IGNO
 # A line at the start of a section this alike to one at the end of the section before says the same again.
 REPEATED_SIMILARITY = 0.85
 
-# Who the reviewer is and what it does: its own system prompt, as it is a model of its own in this request
-# and must not take the describer's prompt for its task (user's wish, 18.11.2026). Only what needs a model is
-# asked; everything else the mechanical check does better.
-REVIEWER_SYSTEM_PROMPT = (
-    "You are the reviewer in SceneAccess, an app that describes videos for blind people. Another model watched "
-    "a part of a video and described it; you check that description before the blind person gets it. You do not "
-    "see the video and do not describe it yourself. You get the description, the time span of the part, the "
-    "video's title and, if there is one, an automatic transcript of what is said in the part.\n\n"
-    "Go through the description line by line, once, and ask only these two questions about what the line says:\n"
-    "e. Does the line say the opposite of the title or the transcript, e.g. a person sitting still while the "
-    "transcript says she is running, or a snowy street in a video titled \"A day at the beach\"?\n"
-    "f. Does the line only say what the blind person would guess from what they hear, e.g. that someone looks "
-    "at, points to or holds what they are talking about at that moment? Such a line adds nothing for them, even "
-    "if it is true, and even the first time.\n\n"
-    "A line that fits the title or the transcript is fine, e.g. a person in a wheelchair in a video titled "
-    "\"Life on wheels\": e is only for a line that says the opposite. What a line does not say is never a problem: the description need not mention what is said, nor anything "
-    "from the title or the transcript, so \"the transcript mentions X, the description does not\" is no "
-    "finding. Decide each line once and never go back. If you are unsure, the line is fine. Apart from these "
-    "two questions, do not judge whether what is described is true, as you cannot see it, and do not rewrite "
-    "it.\n\n"
-    "Answer only with the JSON asked for: every line with a problem, with its time as mm:ss, the question it "
-    "fails (e or f) and why in a few words; an empty list if no line has a problem.")
 # The answer is forced into this form by the server's grammar, so the reviewer's reasoning never reads as
 # findings (Gemma 4 12B without thinking wrote its reasoning as a list and ended with "Result: OK").
 REVIEW_SCHEMA = {"type": "object", "properties": {"problems": {"type": "array", "items": {
@@ -79,12 +58,6 @@ REVIEW_SCHEMA = {"type": "object", "properties": {"problems": {"type": "array", 
                                      "why": {"type": "string"}},
     "required": ["time", "question", "why"]}}}, "required": ["problems"]}
 REVIEW_FORMAT = {"response_format": {"type": "json_schema", "json_schema": {"name": "findings", "schema": REVIEW_SCHEMA}}}
-REVIEW_TASK = ("Part {number} of the video, from {start} to {end}.\nThe video's title: {title}\n\n"
-               "The description:\n\n{text}\n\nThe transcript of this part:\n\n{heard}")
-FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found that these lines contradict the "
-            "title or the transcript:\n\n{found}\n\nLook at the part again and write its description anew. Correct "
-            "those lines from what you see; where you cannot see what is there, leave the line out. Add nothing that "
-            "is not in the picture, and write the description once, without drafts.")
 
 
 def _content(line: str) -> str:

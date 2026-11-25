@@ -19,12 +19,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .openrouter import AnswerCutOff, DeltaHandler, EventHandler, Turn
+from .prompts import (MERGE_CHECK, MERGE_FIX, MERGE_TASK, MERGE_TITLE_HINT, MERGE_TRANSCRIPT, SECTION_TASK,
+                      SECTION_TRANSCRIPT_INTRO, SECTIONS_BEFORE, TITLE_HINT)
 from .providers import LLAMA_CPP
 from .request_control import RequestControl
 from .section_review import (REVIEW_FORMAT, clean_description, fix_request, joined_without_repeats,
                              mechanical_findings, review_messages, reviewer_findings, without_lines_at)
-from .session_store import (REMOVED, SECTION_FILE_PREFIX, TITLE_HINT, TRANSCRIPT_HELP, VideoSession,
-                            joined_sections)
+from .session_store import REMOVED, SECTION_FILE_PREFIX, VideoSession, joined_sections
 from .tools import (HD_FRAME, ZOOM_FRAME, ToolResult, format_time, local_video, run_ffmpeg,
                     video_size_and_duration)
 from .transcript import sound_parts
@@ -130,41 +131,6 @@ def progress_key(session: VideoSession, question: str, model_name: str = "") -> 
             "hears": session.hears_sound}
 
 
-# The task comes last, after everything it refers to: small models weigh what they read last most.
-SECTION_TASK = ("\n\nYour task: describe part {number} of {count}, from {span}, of the video, which is {total} long "
-                "and comes in {count} parts, each with its own picture and sound. The video is what counts: describe "
-                "what can be seen in it, the actions, aids, objects and details that matter. What is said, and the "
-                "transcript, only help to understand it; do not retell them. The blind person hears the speech, so "
-                "no line says what she or he says, mentions, explains or talks about, not even as \"while she talks "
-                "about …\"; if nothing new can be seen at a moment, leave that moment out. Leave out, too, what the "
-                "blind person would guess from what they hear, such as someone looking at, pointing to or holding "
-                "what they are talking about; mention a moment only if it tells them something of value they could "
-                "not know otherwise. "
-                "Give every time as mm:ss in the whole video, between {start} and {end}, at the moments when "
-                "something changes in the picture, not at the times of the transcript. Mention what goes on from "
-                "the part before only if something new happens.\n\n"
-                "How to work: look at the part, then write the description once, from its start to its end. A "
-                "moment you have described is done: never think about it again, and when you reach the end of the "
-                "part, the description is finished. Do not draft the list several times, do not check each line "
-                "against the transcript, and do not go back over what you wrote; over-analysing is the mistake to "
-                "avoid, and thinking longer does not make the description better. "
-                "Start right away with the first time, with nothing before it; do not repeat this task, the "
-                "transcript or what you wrote about earlier parts. Answer in the language of the question: "
-                "{question}")
-# The merge has no video, so the title must not add anything the sections do not say.
-MERGE_TITLE_HINT = ("The video's title, only to help understand the descriptions; add nothing from it that they do "
-                    "not say: {title}")
-MERGE_TASK = ("\n\nYour task: give the one answer for the whole video, which is {total} long, as if you had seen it "
-              "at once: put your descriptions of the parts above together in order, keep every detail and every "
-              "time, and leave out only what repeats where two parts meet. Do not mention the parts. Answer in the "
-              "language of the question: {question}")
-# The merge is the last check (user's wish, 19.11.2026): it alone sees all sections and the whole transcript, so
-# it can see what a section got wrong, look at a moment again and have a section described anew.
-MERGE_CHECK = ("\n\nBefore you answer, you are the last check. If a line looks wrong, because it says the opposite "
-               "of the transcript or the title, or seems made up, {how}; each part at most once, and only for a real "
-               "mistake. Then answer with the parts as they are now.")
-
-
 def _merge_check(tools: list[dict[str, Any]]) -> str:
     """The merge's task as the last check, naming only the tools it has."""
     names = [tool["function"]["name"] for tool in tools]
@@ -172,11 +138,8 @@ def _merge_check(tools: list[dict[str, Any]]) -> str:
             if ZOOM_FRAME in names or HD_FRAME in names else [])
     ways += ["call describe_section_again with the part's number and what was wrong"] if REDO_SECTION in names else []
     return MERGE_CHECK.format(how=", or ".join(ways)) if ways else ""
-MERGE_TRANSCRIPT = "An automatic transcript of the whole video; speech recognition may contain errors:\n\n{transcript}"
-MERGE_FIX = ("\n\nYour first description of this part:\n\n{text}\n\nThe last check, which saw all parts and the whole "
-             "transcript, found this wrong with it:\n\n{found}\n\nLook at the part again and write its description "
-             "anew. Correct what was found from what you see; where you cannot see what is there, leave the line "
-             "out. Add nothing that is not in the picture, and write the description once, without drafts.")
+
+
 REDO_SECTION = "describe_section_again"
 REDO_TOOL = {"type": "function", "function": {
     "name": REDO_SECTION,
@@ -416,11 +379,9 @@ def _section_parts(section: Section, count: int, total: str, question: str, befo
     data = base64.b64encode(section.path.read_bytes()).decode("ascii")
     parts: list[dict[str, Any]] = [{"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{data}"}}]
     if before:
-        parts.append({"type": "text", "text": "What you wrote about the parts before:\n\n" + joined_sections(before)})
+        parts.append({"type": "text", "text": SECTIONS_BEFORE + joined_sections(before)})
     if heard:
-        parts.append({"type": "text", "text": "An automatic transcript of what is said in this part; speech "
-                                              "recognition may contain errors, times are those of the whole "
-                                              f"video. {TRANSCRIPT_HELP}\n\n" + heard})
+        parts.append({"type": "text", "text": SECTION_TRANSCRIPT_INTRO + heard})
     if fix:
         parts.append({"type": "text", "text": fix.strip()})
     if title:

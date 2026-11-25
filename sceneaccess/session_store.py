@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .prompts import sound_blocks
+from .prompts import (LANGUAGE_HINT, SECTIONS_INSTEAD_OF_VIDEO, TITLE_HINT, TRANSCRIPT_HEARD_INTRO, TRANSCRIPT_INTRO,
+                      TRANSCRIPT_LATER_INTRO, sound_blocks)
 from .providers import OPENROUTER
 
 
@@ -48,27 +49,6 @@ TRANSCRIBE_HEADING = "Transcript of the speech (through OpenRouter and ElevenLab
 # later at the end of the chat as a history entry, so the cached video and history before it stay valid.
 TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_APPENDED = (
     "pending", "none", "done", "failed", "appended")
-# The video's title tells what it is about, e.g. "Mein Einarmiger Alltag", which a model seeing only a few
-# pictures may miss; it is a hint, not something to describe (user's wish, 18.11.2026).
-TITLE_HINT = ("The video's title, only to help understand what can be seen; describe nothing from it that cannot "
-              "be seen: {title}")
-# Last in the first request, as for the sections: Qwen3.5-9B answered "Beschreibe das Video." in English in 8 of
-# 10 runs when told only in the system prompt (19.11.2026).
-LANGUAGE_HINT = "Write your answer in the language of this question: {question}"
-# The video is what counts; the transcript only helps to follow it (user's wish, 17.11.2026).
-TRANSCRIPT_HELP = ("It is only a help: the video is what counts, so describe what you see in it and use the "
-                   "transcript to understand it, not to retell it.")
-TRANSCRIPT_INTRO = ("You cannot hear this video, so here is an automatic transcript of its speech. Speech "
-                    "recognition may contain errors; times are mm:ss from the start of the video. "
-                    f"{TRANSCRIPT_HELP}\n\n")
-# A model that hears the video gets the transcript too when the chat's mode is on; telling it it cannot hear
-# would be wrong.
-TRANSCRIPT_HEARD_INTRO = ("Here is also an automatic transcript of the video's speech. Speech recognition may "
-                          "contain errors; times are mm:ss from the start of the video. "
-                          f"{TRANSCRIPT_HELP}\n\n")
-TRANSCRIPT_LATER_INTRO = ("Here is an automatic transcript of the video's speech, added after the video. Speech "
-                          "recognition may contain errors; times are mm:ss from the start of the video. "
-                          f"{TRANSCRIPT_HELP}\n\n")
 # A stored entry marked like this stays in the Chat history but is not sent to the model.
 EXCLUDED = "excluded"
 # What the mechanical cleaning took out of a stored answer, kept with it for the Chat history, never sent.
@@ -222,11 +202,8 @@ class VideoSession:
         system = self.system_messages
         intro = TRANSCRIPT_HEARD_INTRO if self.hears_sound else TRANSCRIPT_INTRO
         transcript = [{"type": "text", "text": intro + self.transcript}] if self.sends_transcript else []
-        # A video described in sections is too long to send; its sections' descriptions take its place, so later
-        # questions know the video also when the answer to the first question is hidden.
         if self.described_in_sections:
-            video = [{"type": "text", "text": "The video is too long to send, so it was described in parts:\n\n"
-                                              + joined_sections(self.sections["sections"])}]
+            video = [{"type": "text", "text": SECTIONS_INSTEAD_OF_VIDEO + joined_sections(self.sections["sections"])}]
         else:
             video = [{"type": "video_url", "video_url": {"url": self.video_data_url}}]
         title = [{"type": "text", "text": TITLE_HINT.format(title=self.title)}] if self.title else []
