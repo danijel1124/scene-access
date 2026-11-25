@@ -30,7 +30,7 @@ from .models import ModelCatalog
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .session_store import REMOVED, TRANSCRIBE_MODES, VideoSession, VideoSessionStore
-from .transcript import wants_transcript
+from .hearing import wants_transcript
 
 
 def default_data_dir() -> Path:

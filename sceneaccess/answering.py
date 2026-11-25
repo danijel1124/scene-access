@@ -21,7 +21,8 @@ from .sections import describe_in_sections
 from .session_store import REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
 from .tool_calls import ToolResult
 from .tools import ToolRunner, provider_tools
-from .transcript import model_hears, sound_parts, wants_transcript, with_sound
+from .hearing import model_hears, wants_transcript, with_sound
+from .transcript import sound_parts
 
 # Called when the chat's transcript is still to be decided, with the chat, whether the model answering now needs
 # one, and OpenRouter (None without a key); returns the chat as it is afterwards.

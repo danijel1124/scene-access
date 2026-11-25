@@ -8,8 +8,8 @@ from sceneaccess import transcript
 from sceneaccess.models import ModelCatalog
 from sceneaccess.session_store import VideoSessionStore
 from sceneaccess.session_store import NO_SOUND_FILE, SOUND_FILE_PREFIX
-from sceneaccess.transcript import (extract_audio_chunks, make_transcript, model_hears, sound_parts,
-                                    transcript_lines, wants_transcript, with_sound)
+from sceneaccess.hearing import model_hears, wants_transcript, with_sound
+from sceneaccess.transcript import extract_audio_chunks, make_transcript, sound_parts, transcript_lines
 
 
 def _video(path: Path, *, sound: bool, seconds: int = 3) -> Path:

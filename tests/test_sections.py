@@ -78,7 +78,7 @@ def test_a_copied_part_heading_is_cut_from_a_sections_description():
 
 
 def test_a_whole_video_comes_before_its_text_and_its_sound_after_it(tmp_path: Path):
-    from sceneaccess.transcript import with_sound
+    from sceneaccess.hearing import with_sound
     store, session = _session(tmp_path, seconds=0, transcribe="on")
     store.update_transcript(session.id, "o", "done", "[00:05] Hello.")
     session = store.get_session(session.id, "o")
