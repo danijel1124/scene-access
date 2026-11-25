@@ -156,8 +156,10 @@ def clean_description(text: str, heard: str, whole: bool = False) -> tuple[str, 
     notes, kept = [], []
     timed_before = False
     lines = (text.strip() if whole else without_preamble(text)).splitlines()
-    if whole and lines and _lead_in(lines[0]):
-        # The overview stays, but not a line announcing it, which an audio track would read out first.
+    if whole and lines and _lead_in(lines[0]) and any(TIME_AT_START.match(line.strip()) for line in lines[1:]):
+        # The overview stays, but not a line announcing it, which an audio track of the moments would read out
+        # first. Without times there are no moments, and the line may be part of an answer, as "Die
+        # Produktbeschreibung auf der Verpackung lautet:".
         notes.append(f"- Removed the lead-in: {lines[0].strip()}")
         lines = lines[1:]
     for line in lines:

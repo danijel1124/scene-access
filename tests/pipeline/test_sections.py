@@ -596,6 +596,8 @@ def test_a_whole_answer_loses_a_line_announcing_it_but_keeps_its_overview():
     # An overview is no lead-in, also one ending with a colon before a list, nor is a heading with a time.
     for text in ("A woman with one arm shows everyday things.\n00:00 She smiles.",
                  "Die Frau mit der Prothese am linken Arm zeigt Alltagsgegenstände, die ihr helfen:\n00:00 Sie lächelt.",
+                 # An answer without times, which no moments read out.
+                 "Die Produktbeschreibung auf der Verpackung lautet:\nZahnpasta mit Fluorid",
                  "**00:00 – 00:26: Zahnpflege:**\nSie hält eine Tube."):
         assert clean_description(text, "", whole=True)[0] == text
 
