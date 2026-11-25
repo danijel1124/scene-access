@@ -6,7 +6,7 @@ import pytest
 
 from sceneaccess.llm.client import Completion, Turn
 from sceneaccess.pipeline import answering
-from sceneaccess.pipeline.moments import FORMAT, parsed_moments, split_into_moments, uncovered
+from sceneaccess.pipeline.moments import FORMAT, parsed_moments, split_into_moments
 from sceneaccess.request_control import RequestCancelled
 from sceneaccess.settings.config import AppConfig
 from sceneaccess.storage.session_store import MOMENTS, VideoSessionStore
@@ -54,13 +54,44 @@ def test_the_moments_keep_the_answers_words_without_the_marks_the_model_kept():
                       "text": "In a living room, she stands next to a vacuum cleaner. Its bin is clear."}]
 
 
-def test_text_before_the_first_time_is_a_moment_of_its_own_at_the_start():
-    text = "A woman with a prosthetic arm stands in a bright room.\n" + TEXT
+INTRO = "A woman with a prosthetic arm stands in a bright room.\n" + TEXT
+
+
+def test_a_stretch_the_model_left_out_becomes_a_moment_of_its_own_at_its_time():
     found = parsed_moments(form(("00:00", "00:00", "A woman with a prosthetic arm stands in a bright room."),
-                                ("00:00", "00:26", "She holds a pink toothbrush.")), text, 84)
-    assert [(moment["start"], moment["end"]) for moment in found] == [(0.0, 0.0), (0.0, 26.0)]
-    # What an audio track of these moments would leave out is found sentence by sentence.
-    assert uncovered(text, found) == ["In a living room, she stands next to a vacuum cleaner.", "Its bin is clear."]
+                                ("00:00", "00:26", "She holds a pink toothbrush.")), INTRO, 84)
+    assert [(moment["start"], moment["end"]) for moment in found] == [(0.0, 0.0), (0.0, 26.0), (26.0, 84.0)]
+    assert found[2]["text"] == "In a living room, she stands next to a vacuum cleaner. Its bin is clear."
+
+
+def test_an_opening_the_model_left_out_is_a_moment_from_the_start():
+    # As Qwen3.5-9B left out the opening sentence that says she has a prosthesis.
+    found = parsed_moments(form(("00:00", "00:26", "She holds a pink toothbrush."),
+                                ("00:26", "01:24", "In a living room, she stands next to a vacuum cleaner. Its bin is "
+                                                   "clear.")), INTRO, 84)
+    assert found[0] == {"start": 0.0, "end": 0.0, "text": "A woman with a prosthetic arm stands in a bright room."}
+    assert [moment["start"] for moment in found] == [0.0, 0.0, 26.0]
+
+
+def test_a_sentence_left_out_inside_a_moment_stays_in_it_in_its_place():
+    found = parsed_moments(form(("00:00", "00:26", "She holds a pink toothbrush."),
+                                ("00:26", "01:24", "In a living room, she stands next to a vacuum cleaner.")), TEXT, 84)
+    assert found[1]["text"] == "In a living room, she stands next to a vacuum cleaner. Its bin is clear."
+
+
+def test_times_in_brackets_are_read_and_a_short_sentence_said_twice_is_found_at_its_place():
+    text = "[00:00] She smiles.\n[00:10] She waves.\n[00:20] She smiles."
+    found = parsed_moments(form(("00:00", "00:10", "She smiles."), ("00:10", "00:20", "She waves."),
+                                ("00:20", "00:30", "She smiles.")), text, 30)
+    assert [(moment["start"], moment["text"]) for moment in found] == [
+        (0.0, "She smiles."), (10.0, "She waves."), (20.0, "She smiles.")]
+
+
+def test_a_time_inside_a_line_leaves_the_time_there_unknown_rather_than_wrong():
+    text = "- 0:17 She screws the cap on.\n**Scene 2 (00:26 to 00:40)**\nShe lifts a vacuum cleaner."
+    found = parsed_moments(form(("00:17", "00:26", "She screws the cap on."),
+                                ("00:26", "00:40", "She lifts a vacuum cleaner.")), text, 84)
+    assert [moment["start"] for moment in found] == [17.0, 26.0]
 
 
 HEADED = ("The video shows a woman with a prosthesis.\n\n"
@@ -77,9 +108,9 @@ def test_a_moment_may_join_lines_under_a_heading_and_loses_the_times_inside_it()
                                 ("00:26", "00:40", "She lifts a vacuum cleaner.")), HEADED, 84)
     assert found[0]["text"] == ("The video shows a woman with a prosthesis. She holds a toothbrush in her mouth. "
                                 "She screws the cap back on.")
-    assert found[1]["start"] == 26.0
-    # The headings are no sentences an audio track leaves out.
-    assert uncovered(HEADED, found) == []
+    # The headings are not read out.
+    assert [(moment["start"], moment["text"]) for moment in found][1] == (26.0, "She lifts a vacuum cleaner.")
+    assert len(found) == 2
 
 
 def test_moments_given_the_time_of_another_are_none():
@@ -149,7 +180,10 @@ def test_a_first_answer_gets_its_moments_on_its_entry_and_the_step_in_its_usage(
     _store, chat = session
     client = Client(form(("00:00", "00:26", "She holds a pink toothbrush.")))
     turn = answering.with_moments(request(chat, client), answered(), None, None)
-    assert turn.entries[-1][MOMENTS] == [{"start": 0.0, "end": 26.0, "text": "She holds a pink toothbrush."}]
+    # The stretch the model left out is added from its own time.
+    assert turn.entries[-1][MOMENTS] == [
+        {"start": 0.0, "end": 26.0, "text": "She holds a pink toothbrush."},
+        {"start": 26.0, "end": 84.0, "text": "In a living room, she stands next to a vacuum cleaner. Its bin is clear."}]
     assert turn.entries[-1]["usage"]["requests"] == 2 and turn.entries[-1]["usage"]["prompt_tokens"] == 107
     assert turn.completion.requests == 2 and turn.completion.answer == TEXT
     # The model that answered, not the router again, with only the excluded providers.

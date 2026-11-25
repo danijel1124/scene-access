@@ -25,7 +25,6 @@ from typing import TextIO
 from .llm.models import ModelCatalog
 from .pipeline import answering
 from .pipeline.hearing import wants_transcript
-from .pipeline.moments import uncovered
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .settings.config import AppConfig, load_config, resolve_openrouter_key
@@ -167,9 +166,6 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         for moment in moments or []:
             print(f"{format_time(round(moment['start']))} to {format_time(round(moment['end']))}: {moment['text']}",
                   file=out, flush=True)
-        missing = uncovered(completion.answer, moments) if moments else []
-        if missing:
-            print("\nIn the answer but in no moment:\n" + "\n".join(missing), file=out, flush=True)
         print(f"\n\nTime: {time.monotonic() - started:.0f} s | answered by {completion.model} | requests "
               f"{completion.requests} | prompt tokens {completion.prompt_tokens}", file=out, flush=True)
         if follow_up and request.sectioned:

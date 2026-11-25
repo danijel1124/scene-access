@@ -182,14 +182,15 @@ def clean_description(text: str, heard: str, whole: bool = False) -> tuple[str, 
     return "\n".join(kept).strip(), notes
 
 
-def _at(time: str) -> float | None:
+def time_at_start(time: str) -> float | None:
+    """The seconds of the time text starts with, as TIME_AT_START reads it; None if it starts with none."""
     found = TIME_AT_START.match(time.strip())
     return _seconds(found) if found else None
 
 
 def without_lines_at(text: str, times: list[str]) -> tuple[str, list[str]]:
     """text without its lines at the given times; returns it and the lines removed."""
-    gone = {at for at in (_at(time) for time in times) if at is not None}
+    gone = {at for at in (time_at_start(time) for time in times) if at is not None}
     kept, removed = [], []
     for line in text.splitlines():
         time = TIME_AT_START.match(line.strip())
