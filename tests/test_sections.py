@@ -300,18 +300,21 @@ def test_a_check_cut_off_never_passes_and_only_the_mechanical_cleaning_counts(tm
     assert not any(", checked)" in row for row in rows)
 
 
+class MergeCut(Scripted):
+    """A model whose merge is cut off at the token limit."""
+
+    def run_turn(self, session, messages, *args, **kwargs):
+        if "give the one answer" in json.dumps(messages):
+            self.requests.append(messages)
+            return Turn(entries=[{"role": "assistant", "content": ""}],
+                        completion=Completion("", "m", 1, None, None, finish_reason="length"))
+        return super().run_turn(session, messages, *args, **kwargs)
+
+
 def test_putting_the_sections_together_cut_off_is_no_answer_and_sending_again_only_merges(tmp_path: Path):
     from sceneaccess.openrouter import AnswerCutOff
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)
-
-    class MergeCut(Scripted):
-        def run_turn(self, session, messages, *args, **kwargs):
-            if "give the one answer" in json.dumps(messages):
-                self.requests.append(messages)
-                return Turn(entries=[{"role": "assistant", "content": ""}],
-                            completion=Completion("", "m", 1, None, None, finish_reason="length"))
-            return super().run_turn(session, messages, *args, **kwargs)
 
     def save(progress):
         store.save_sections(session.id, "o", progress)
@@ -324,6 +327,48 @@ def test_putting_the_sections_together_cut_off_is_no_answer_and_sending_again_on
                                 duration=60.0)
     # Every section and check was kept, so the only request is the merge.
     assert len(model.requests) == 1 and turn.completion.answer == "Whole."
+
+
+def test_an_empty_section_is_not_stored_and_the_merge_keeps_its_images_only_when_it_answers(tmp_path: Path):
+    from sceneaccess.openrouter import AnswerCutOff
+    store, session = _session(tmp_path, seconds=30)
+    cut = _fixture_sections(session, count=2)
+    saved, runners = [], []
+
+    def save(progress):
+        saved.append(json.loads(json.dumps(progress)))
+        store.save_sections(session.id, "o", progress)
+
+    class Counting:
+        def __init__(self):
+            self.cleaned = self.committed = 0
+            runners.append(self)
+
+        def run(self, *args):
+            raise AssertionError("no tools in this fixture")
+
+        def cleanup_files(self):
+            self.cleaned += 1
+
+        def commit_files(self):
+            self.committed += 1
+
+    # An empty answer is no description either, as one cut off: section 2 is described again next time.
+    with pytest.raises(AnswerCutOff, match="section 2 was empty"):
+        describe_in_sections(Scripted(describe=["00:01 A cup.", ""], check=[NONE]), session, "Describe it.", cut,
+                             Counting, save, duration=60.0)
+    assert [entry["index"] for entry in store.get_session(session.id, "o").sections["sections"]] == [0]
+    with pytest.raises(AnswerCutOff, match="together was cut off"):
+        describe_in_sections(MergeCut(describe=["00:31 A plate."], check=[NONE]), store.get_session(session.id, "o"),
+                             "Describe it.", cut, Counting, save, duration=60.0)
+    # The sections are stored joined before the merge is asked; the merge cut off keeps none of its images.
+    assert saved[-1]["joined"] == "00:01 A cup.\n00:31 A plate."
+    assert (runners[-1].cleaned, runners[-1].committed) == (1, 0)
+    runners.clear()
+    describe_in_sections(Scripted(), store.get_session(session.id, "o"), "Describe it.", cut, Counting, save,
+                         duration=60.0)
+    # Only the merge's runner, and its images go with the stored answer.
+    assert len(runners) == 1 and (runners[0].cleaned, runners[0].committed) == (0, 1)
 
 
 def test_a_description_cut_off_is_not_stored_and_one_described_anew_cut_off_keeps_the_first(tmp_path: Path):
@@ -504,7 +549,7 @@ def test_a_description_sent_back_unchanged_does_not_count_as_written_anew(tmp_pa
 
 
 def test_the_mechanical_cleaning_removes_speech_and_keeps_what_is_seen():
-    from sceneaccess.section_review import clean_description, without_preamble
+    from sceneaccess.cleaning import clean_description, without_preamble
     heard = "[00:00] So und dann mach ich das drauf."
     cleaned, notes = clean_description(
         "Hier ist die Beschreibung:\n\n00:00 So und dann mach ich das drauf.\n00:09 Sie hält eine Tube hoch.\n"
@@ -518,7 +563,7 @@ def test_the_mechanical_cleaning_removes_speech_and_keeps_what_is_seen():
 
 
 def test_the_cleaning_of_a_whole_video_keeps_the_overview_and_cuts_only_the_sentences_about_speech():
-    from sceneaccess.section_review import clean_description
+    from sceneaccess.cleaning import clean_description
     answer = ("The video features a woman with one arm.\n\n"
               "*   **00:51 - 01:13:** She holds a sieve. She explains it allows for scooping. A black cat walks by.\n"
               "*   **01:14 - 01:16:** She mentions the toilet paper.\n\n"
@@ -541,7 +586,7 @@ def test_the_cleaning_of_a_whole_video_keeps_the_overview_and_cuts_only_the_sent
 
 
 def test_a_whole_answer_is_stored_cleaned_with_what_was_removed(tmp_path: Path):
-    from sceneaccess.sections import cleaned_whole_answer
+    from sceneaccess.answering import cleaned_whole_answer
     from sceneaccess.session_store import REMOVED
     _store, session = _session(tmp_path, seconds=0)
     answer = "00:01 She lifts a cup.\n00:05 She mentions the lid."
@@ -555,7 +600,7 @@ def test_a_whole_answer_is_stored_cleaned_with_what_was_removed(tmp_path: Path):
 
 
 def test_a_reviewer_model_of_its_own_checks_with_text_only(tmp_path: Path):
-    from sceneaccess.sections import Reviewer
+    from sceneaccess.section_review import Reviewer
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)
     writer = Scripted(describe=["00:01 A cup.", "00:31 A plate."], fix=["00:02 She lifts a cup."])
@@ -605,7 +650,7 @@ def test_a_description_stopped_before_its_check_is_checked_when_continued(tmp_pa
 
 
 def test_the_mechanical_check_finds_repeated_speech_and_wrong_times():
-    from sceneaccess.section_review import mechanical_findings
+    from sceneaccess.cleaning import mechanical_findings
     heard = "[00:00] So und dann mach ich das drauf.\n[00:26] Ich kann keinen Kabelstaubsauger haben."
     found = mechanical_findings('00:00 "So und dann mach ich das drauf."\n00:09 Sie hält eine Tube hoch.\n'
                                 "00:33.0 Ein Staubsauger.\n00:13 Sie zeigt auf den Deckel.", heard, 0, 28.1)
@@ -632,7 +677,7 @@ def test_the_mechanical_check_finds_repeated_speech_and_wrong_times():
 
 
 def test_the_sections_are_joined_without_what_repeats_where_two_meet():
-    from sceneaccess.section_review import joined_without_repeats
+    from sceneaccess.cleaning import joined_without_repeats
     joined = joined_without_repeats([
         {"text": "00:44 Sie hält ein Sieb hoch.\n00:51 Sie deutet auf ihre Prothese an der linken Hand."},
         {"text": "00:56 Sie deutet auf ihre Prothese an der linken Hand.\n01:00 Töpfe.\n"

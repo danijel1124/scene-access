@@ -9,14 +9,16 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Callable
 
+from .cleaning import clean_description
 from .config import AppConfig
 from .models import ModelCatalog, llama_cpp_catalog, routing
 from .openrouter import LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, OpenRouterClient, Turn, check_whole
 from .providers import LLAMA_CPP
 from .request_control import RequestCancelled, RequestControl
 from .section_cuts import cut_sections, needs_sections, section_sound, video_duration
-from .sections import Reviewer, cleaned_whole_answer, describe_in_sections
-from .session_store import TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
+from .section_review import Reviewer
+from .sections import describe_in_sections
+from .session_store import REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
 from .tools import ToolResult, ToolRunner, provider_tools
 from .transcript import model_hears, sound_parts, wants_transcript, with_sound
 
@@ -176,3 +178,15 @@ def answer(request: Request, *, on_event: EventHandler | None = None, on_delta: 
         runner.cleanup_files()
         raise
     return turn, runner
+
+
+def cleaned_whole_answer(turn: Turn, session: VideoSession) -> Turn:
+    """The answer to the first question about the whole video, cleaned like a section's description, as Qwen3.5-9B
+    also wrote what was said ("noting that sharp edges would otherwise dig in", 19.11.2026). What was taken out
+    stays with the answer for the Chat history."""
+    answer, notes = clean_description(turn.completion.answer,
+                                      session.transcript if session.sends_transcript else "", whole=True)
+    if not notes or not turn.entries:
+        return turn
+    entries = [*turn.entries[:-1], {**turn.entries[-1], "content": answer, REMOVED: "\n".join(notes)}]
+    return Turn(entries=entries, completion=replace(turn.completion, answer=answer))

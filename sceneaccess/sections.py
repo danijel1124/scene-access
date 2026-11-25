@@ -1,8 +1,8 @@
 """A video too long for the model in one piece, described in sections: each section of at most the chat's
 section length gets its own request with its own picture and sound, the matching part of the transcript and
-everything said about the sections before it; each description is checked and, if anything was found,
-described anew (see section_review.py); a last request puts the descriptions together into the answer, and they
-are also kept joined without a model.
+everything said about the sections before it; each description is cleaned (cleaning.py), checked
+(section_review.py) and, if a contradiction was found, described anew; a last request puts the descriptions
+together into the answer, and they are also kept joined without a model. Cutting the sections is section_cuts.py.
 
 Each section's description is stored as soon as it is done, together with what it was made for (question,
 model, prompt, section length, transcript mode). A description that stops, because it was cancelled, failed or
@@ -13,39 +13,18 @@ from __future__ import annotations
 import base64
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, Callable
 
+from .cleaning import clean_description, joined_without_repeats, mechanical_findings, without_lines_at
 from .openrouter import AnswerCutOff, DeltaHandler, EventHandler, Turn
 from .prompts import (MERGE_CHECK, MERGE_FIX, MERGE_TASK, MERGE_TITLE_HINT, MERGE_TRANSCRIPT, SECTION_TASK,
                       SECTION_TRANSCRIPT_INTRO, SECTIONS_BEFORE, TITLE_HINT)
 from .providers import LLAMA_CPP
 from .section_cuts import Section, transcript_between
-from .section_review import (REVIEW_FORMAT, clean_description, fix_request, joined_without_repeats,
-                             mechanical_findings, review_messages, reviewer_findings, without_lines_at)
-from .session_store import REMOVED, VideoSession, joined_sections
+from .section_review import REVIEW_FORMAT, Reviewer, fix_request, review_messages, reviewer_findings
+from .session_store import VideoSession, joined_sections
 from .tools import HD_FRAME, ZOOM_FRAME, ToolResult, format_time
-
-
-@dataclass(frozen=True)
-class Reviewer:
-    """Who checks the sections' descriptions, when not the model that wrote them: a client, its model and the
-    routing for it, e.g. an OpenRouter model for a chat on the user's own server. It gets only text."""
-    client: Any
-    model: str
-    routing: dict[str, Any] | None = None
-
-
-def cleaned_whole_answer(turn: Turn, session: VideoSession) -> Turn:
-    """The answer to the first question about the whole video, cleaned like a section's description, as Qwen3.5-9B
-    also wrote what was said ("noting that sharp edges would otherwise dig in", 19.11.2026). What was taken out
-    stays with the answer for the Chat history."""
-    answer, notes = clean_description(turn.completion.answer,
-                                      session.transcript if session.sends_transcript else "", whole=True)
-    if not notes or not turn.entries:
-        return turn
-    entries = [*turn.entries[:-1], {**turn.entries[-1], "content": answer, REMOVED: "\n".join(notes)}]
-    return Turn(entries=entries, completion=replace(turn.completion, answer=answer))
 
 
 def progress_key(session: VideoSession, question: str, model_name: str = "") -> dict[str, Any]:
@@ -94,11 +73,11 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     """Describes each section not yet described, saving the progress after each one, then asks for the answer
     to question for the whole video. new_runner gives a tools.ToolRunner per section; its images are not kept,
     as only the descriptions are stored. sound gives a section's sound for a model that gets it apart from the
-    video; model_name see progress_key. With review, each description is cleaned mechanically and checked (see
-    section_review.py), by reviewer if given, else by the same model; lines that add nothing are removed, and
-    only a contradiction has the section described anew, once. Before the last request the sections are also
-    stored joined without a model, as "joined". Returns the turn of the last request, whose answer answers question and whose
-    usage counts all requests."""
+    video; model_name see progress_key. With review, each description is cleaned mechanically (cleaning.py) and
+    checked (section_review.py), by reviewer if given, else by the same model; lines that add nothing are removed,
+    and only a contradiction has the section described anew, once. Before the last request the sections are also
+    stored joined without a model, as "joined". Returns the turn of the last request, whose answer answers
+    question and whose usage counts all requests."""
     notify = on_event or (lambda _kind, _text: None)
     key = progress_key(session, question, model_name)
     stored = session.sections if session.sections and session.sections.get("key") == key else None
