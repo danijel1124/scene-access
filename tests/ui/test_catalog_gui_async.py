@@ -3,20 +3,21 @@ import time
 
 import wx
 import pytest
-from sceneaccess.ui import gui, dialogs
+from sceneaccess.ui import app_window, chat_setup, chat_window, dialogs
 from sceneaccess.settings.config import AppConfig
 from sceneaccess.llm.models import api_url
 from sceneaccess.providers import OPENROUTER_URL
+from sceneaccess.storage.session_store import OWNER_ID
 
 
 @pytest.mark.parametrize('which', ['chat', 'exclusions'])
 def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    app = wx.App(False)
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
+    wx_app = wx.App(False)
     # The real app runs MainLoop; without an active loop wx.Yield delivers nothing on Windows.
     loop = wx.GUIEventLoop()  # keep a reference: the activator does not own the loop
     activator = wx.EventLoopActivator(loop)
-    frame = gui.ChatFrame()
+    frame = chat_window.ChatFrame()
     queried, proceed, completed = threading.Event(), threading.Event(), threading.Event()
     threads = []
     class Catalog:
@@ -38,10 +39,10 @@ def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which
         if which == 'chat':
             source = tmp_path/'source.mp4'
             source.write_bytes(b'fixture')
-            frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
+            frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=source,
                                                        title='T', model='fixture', initial_question='?')
             frame.catalog = catalog
-            monkeypatch.setattr(gui, 'ChatSettingsDialog', ResultDialog)
+            monkeypatch.setattr(chat_setup, 'ChatSettingsDialog', ResultDialog)
             action = frame.change_chat_settings
         else:
             settings = dialogs.SettingsDialog(frame, AppConfig(), catalog)
@@ -64,4 +65,4 @@ def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which
         if settings: settings.Destroy()
         frame.Destroy()
         del activator, loop
-        app.Destroy()
+        wx_app.Destroy()

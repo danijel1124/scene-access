@@ -5,28 +5,33 @@ import pytest
 import wx
 
 from sceneaccess.pipeline import answering
-from sceneaccess.ui import gui
+from sceneaccess.media import transcript
+from sceneaccess.ui import app, app_window, chat_setup
 from sceneaccess.llm.client import Completion, Turn
+from dataclasses import replace
+from sceneaccess.llm.client import ChatClient
+from sceneaccess.request_control import RequestControl
+from sceneaccess.storage.session_store import OWNER_ID, TRANSCRIPT_DONE, TRANSCRIPT_PENDING
 
 
 def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     notices = []
-    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: notices.append(message) or wx.OK)
+    monkeypatch.setattr(wx, 'MessageBox', lambda message, *a, **kw: notices.append(message) or wx.OK)
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: False)
-    monkeypatch.setattr(gui.ChatClient, 'run_turn', lambda *a, **kw:
+    monkeypatch.setattr(ChatClient, 'run_turn', lambda *a, **kw:
                         Turn(entries=[{'role':'assistant','content':'Saved answer'}],
                              completion=Completion('Saved answer','fixture',0,None,None)))
-    app = wx.App(False)
-    windows = gui.ChatWindows()
+    wx_app = wx.App(False)
+    windows = app.ChatWindows()
     entered, release, saved = threading.Event(), threading.Event(), threading.Event()
     try:
         windows.show_list()  # Keep the chat list alive after the chat closes.
         old = windows.new_chat_window()
-        old.config = gui.replace(old.config, api_key='test-only')
+        old.config = replace(old.config, api_key='test-only')
         source = tmp_path/'source.mp4'
         source.write_bytes(b'fixture')
-        old.current = old.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
+        old.current = old.store.create_session(owner_id=OWNER_ID, source_path=source,
                                                title='Chat', model='fixture', initial_question='?')
         sid = old.current.id
         original = old.store.record_turn
@@ -59,28 +64,28 @@ def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, m
         saved.wait(3)
         wx.Yield()
         for frame in list(windows.all_windows()): frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: True)
-    monkeypatch.setattr(gui, 'make_transcript', lambda *a: '[00:00] Old transcript')
-    monkeypatch.setattr(gui.ChatClient, 'run_turn', lambda *a, **kw:
+    monkeypatch.setattr(transcript, 'make_transcript', lambda *a: '[00:00] Old transcript')
+    monkeypatch.setattr(ChatClient, 'run_turn', lambda *a, **kw:
                         Turn(entries=[{'role': 'assistant', 'content': 'Must not be saved'}],
                              completion=Completion('Must not be saved', 'fixture', 0, None, None)))
-    app = wx.App(False)
-    windows = gui.ChatWindows()
+    wx_app = wx.App(False)
+    windows = app.ChatWindows()
     entered, release, saved = threading.Event(), threading.Event(), threading.Event()
     try:
         windows.show_list()
         old = windows.new_chat_window()
-        old.config = gui.replace(old.config, api_key='test-only')
+        old.config = replace(old.config, api_key='test-only')
         source = tmp_path/'source.mp4'
         source.write_bytes(b'fixture')
-        old.current = old.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
+        old.current = old.store.create_session(owner_id=OWNER_ID, source_path=source,
                                                title='Chat', model='fixture', initial_question='?',
-                                               transcript_state=gui.TRANSCRIPT_PENDING)
+                                               transcript_state=TRANSCRIPT_PENDING)
         sid = old.current.id
         original = old.store.update_transcript
 
@@ -103,7 +108,7 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
         for button in (reopened.setup_button, reopened.chat_settings_button, reopened.update_path_button):
             assert not button.IsEnabled()
         reopened.apply_setup('General description')
-        assert reopened.store.get_session(sid, gui.OWNER_ID).system_prompt == ''
+        assert reopened.store.get_session(sid, OWNER_ID).system_prompt == ''
         release.set()
         assert saved.wait(3)
         deadline = time.monotonic() + 3
@@ -116,10 +121,10 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
         assert reopened.current.transcript == '[00:00] Old transcript'
         assert reopened.current.history == []  # Cancellation still prevents saving the answer.
         reopened.apply_setup('General description')
-        persisted = reopened.store.get_session(sid, gui.OWNER_ID)
+        persisted = reopened.store.get_session(sid, OWNER_ID)
         assert persisted.system_prompt
         # A new setup keeps the finished transcript, so it is never paid for twice.
-        assert persisted.transcript_state == gui.TRANSCRIPT_DONE
+        assert persisted.transcript_state == TRANSCRIPT_DONE
         assert persisted.transcript == '[00:00] Old transcript'
     finally:
         release.set()
@@ -130,7 +135,7 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
             time.sleep(.01)
         for frame in list(windows.all_windows()):
             frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 @pytest.mark.parametrize('reopen', [False, True], ids=['active', 'reopened'])
@@ -139,22 +144,22 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
     '_chat_settings_loaded', 'shrink_stored_video', '_find_online_source',
 ])
 def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reopen, handler):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
 
     def forbidden(*a, **kw):
         pytest.fail(f'{handler} reached mutation work while the chat worker was still running')
 
-    app = wx.App(False)
-    windows = gui.ChatWindows()
+    wx_app = wx.App(False)
+    windows = app.ChatWindows()
     try:
         windows.show_list()
         old = windows.new_chat_window()
         source = tmp_path/'source.mp4'
         source.write_bytes(b'fixture')
-        old.current = old.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
+        old.current = old.store.create_session(owner_id=OWNER_ID, source_path=source,
                                                title='Chat', model='fixture', initial_question='?')
         sid = old.current.id
-        control = old._request = gui.RequestControl()
+        control = old._request = RequestControl()
         windows.requests[sid] = control
         old._set_request_buttons(True)
         if reopen:
@@ -164,19 +169,19 @@ def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reope
         else:
             frame = old
         assert frame is not None
-        before = frame.store.get_session(sid, gui.OWNER_ID)
+        before = frame.store.get_session(sid, OWNER_ID)
         for name in ('SingleChoiceDialog', 'FileDialog', 'MessageBox'):
-            monkeypatch.setattr(gui.wx, name, forbidden)
-        monkeypatch.setattr(gui, 'ChatSettingsDialog', forbidden)
+            monkeypatch.setattr(wx, name, forbidden)
+        monkeypatch.setattr(chat_setup, 'ChatSettingsDialog', forbidden)
         monkeypatch.setattr(frame.catalog, 'model_ids', forbidden)
         monkeypatch.setattr(frame.store, 'update_setup', forbidden)
         monkeypatch.setattr(frame.store, 'update_system_prompt', forbidden)
-        monkeypatch.setattr(gui, 'local_video', forbidden)
+        monkeypatch.setattr(chat_setup, 'local_video', forbidden)
         monkeypatch.setattr(frame, '_with_youtube_sign_in', forbidden)
         args = {'apply_setup': ('General description',), 'on_update_path': (None,),
                 '_chat_settings_loaded': (sid, {})}.get(handler, ())
         getattr(frame, handler)(*args)
-        assert frame.store.get_session(sid, gui.OWNER_ID) == before
+        assert frame.store.get_session(sid, OWNER_ID) == before
         for button in (frame.setup_button, frame.prompt_button, frame.chat_settings_button, frame.update_path_button):
             assert not button.IsEnabled()
         if not reopen:
@@ -189,22 +194,22 @@ def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reope
     finally:
         for frame in list(windows.all_windows()):
             frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_chats(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    app = wx.App(False)
-    windows = gui.ChatWindows()
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
+    wx_app = wx.App(False)
+    windows = app.ChatWindows()
     try:
         launcher = windows.show_list()
         source = tmp_path/'source.mp4'
         source.write_bytes(b'original video')
-        session = launcher.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
+        session = launcher.store.create_session(owner_id=OWNER_ID, source_path=source,
                                                 title='Chat', model='fixture', initial_question='?')
-        other = launcher.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
+        other = launcher.store.create_session(owner_id=OWNER_ID, source_path=source,
                                               title='Other', model='fixture', initial_question='?')
-        control = gui.RequestControl()
+        control = RequestControl()
         control.cancel()
         windows.requests[session.id] = control
         frame = windows.open_session(session.id)
@@ -215,7 +220,7 @@ def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_ch
         assert independent.setup_button.IsEnabled()
         assert not frame.setup_button.IsEnabled()
         # A stale completion must not unlock the newer registered request.
-        windows.request_finished(session.id, gui.RequestControl())
+        windows.request_finished(session.id, RequestControl())
         assert windows.requests[session.id] is control
         assert not frame.setup_button.IsEnabled()
         frame._loading_chat_settings = True
@@ -231,7 +236,7 @@ def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_ch
             def value(self): return 'changed/model', True, False
             def provider_value(self): return 'openrouter', False
 
-        monkeypatch.setattr(gui, 'ChatSettingsDialog', SettingsDialog)
+        monkeypatch.setattr(chat_setup, 'ChatSettingsDialog', SettingsDialog)
         frame._chat_settings_loaded(session.id, {'openrouter': ['changed/model'], 'llama.cpp': []})
         assert frame.chat_settings_button.IsEnabled()
         assert frame.current.model == 'changed/model'
@@ -243,7 +248,7 @@ def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_ch
         class PathDialog(SettingsDialog):
             def GetPath(self): return str(replacement)
 
-        monkeypatch.setattr(gui.wx, 'FileDialog', PathDialog)
+        monkeypatch.setattr(wx, 'FileDialog', PathDialog)
         frame.on_update_path(None)
         assert frame.current.source_path == str(replacement)
 
@@ -254,11 +259,11 @@ def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_ch
         original_size = frame.current.sent_video_size
         monkeypatch.setattr(frame, '_shrink_with_progress', lambda _: shrunk)
         assert frame.shrink_stored_video()
-        persisted = frame.store.get_session(session.id, gui.OWNER_ID)
+        persisted = frame.store.get_session(session.id, OWNER_ID)
         assert persisted.sent_video_size < original_size
         assert persisted.model == 'changed/model'
         assert persisted.source_path == str(replacement)
     finally:
         for frame in list(windows.all_windows()):
             frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()

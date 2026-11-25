@@ -1,3 +1,6 @@
+"""Requests to a chat model, at OpenRouter or on a llama.cpp server, which speak the same chat API: ChatClient
+sends a chat, streams the answer and runs the tool-call loop of one turn; also OpenRouter's speech recognition."""
+
 from __future__ import annotations
 
 import base64

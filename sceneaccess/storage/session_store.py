@@ -1,3 +1,6 @@
+"""The stored chats: each chat (VideoSession) in SQLite with its private copy of the video, its history in rounds
+of question, tool steps and answer, and what a request sends from it."""
+
 from __future__ import annotations
 
 import base64

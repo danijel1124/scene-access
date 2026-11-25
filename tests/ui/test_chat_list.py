@@ -3,14 +3,16 @@ from dataclasses import replace
 import pytest
 import wx
 
-from sceneaccess.ui import chat_list, gui
+from sceneaccess.ui import app, app_window, chat_list, chat_window
+from sceneaccess.request_control import RequestControl
+from sceneaccess.storage.session_store import OWNER_ID, SessionNotFound
 
 
 @pytest.fixture
 def windows(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
-    app = wx.App(False)
-    manager = gui.ChatWindows()
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
+    wx_app = wx.App(False)
+    manager = app.ChatWindows()
     manager.show_list()
     manager.video = tmp_path / 'fixture.mp4'
     manager.video.write_bytes(b'fixture, no media decoding')
@@ -19,11 +21,11 @@ def windows(tmp_path, monkeypatch):
     yield manager
     for window in list(manager.all_windows()):
         window.Destroy()
-    app.Destroy()
+    wx_app.Destroy()
 
 
 def add_chats(windows, *titles):
-    sessions = [windows.store.create_session(owner_id=gui.OWNER_ID, source_path=windows.video, title=title,
+    sessions = [windows.store.create_session(owner_id=OWNER_ID, source_path=windows.video, title=title,
                                              model='', initial_question='?') for title in titles]
     windows.refresh()
     return sessions
@@ -79,7 +81,7 @@ def test_all_windows_share_settings_and_openrouters_catalog(windows):
 
 
 def test_a_new_chat_opens_in_its_own_chat_window(windows, monkeypatch):
-    monkeypatch.setattr(gui.ChatFrame, '_send', lambda *a, **kw: None)
+    monkeypatch.setattr(chat_window.ChatFrame, '_send', lambda *a, **kw: None)
     main = windows.main
     main.pending_size_skip = 'fixture/model'
     main._start_chat(windows.video, 'New', 'Question', '', tools=())
@@ -102,7 +104,7 @@ def test_refreshing_the_list_keeps_the_selected_chat(windows):
 
 def test_a_chat_that_fails_to_start_never_shows_its_window(windows, monkeypatch):
     shown = []
-    monkeypatch.setattr(gui.ChatFrame, 'Show', lambda self, show=True: shown.append(self) or True)
+    monkeypatch.setattr(chat_window.ChatFrame, 'Show', lambda self, show=True: shown.append(self) or True)
     def fail(**kwargs): raise OSError('fixture: unreadable video')
     monkeypatch.setattr(windows.store, 'create_session', fail)
     windows.main._start_chat(windows.video, 'New', 'Question', '')
@@ -112,18 +114,18 @@ def test_a_chat_that_fails_to_start_never_shows_its_window(windows, monkeypatch)
 
 def test_closing_the_list_closes_every_chat_and_cancels_its_request(windows):
     frame = windows.open_session(add_chats(windows, 'A')[0].id)
-    control = frame._request = gui.RequestControl()
+    control = frame._request = RequestControl()
     windows.main.Close()
     assert control._cancelled and windows.frames == []
 
 
 def test_a_busy_chat_is_not_deleted(windows):
     chat = add_chats(windows, 'A')[0]
-    windows.requests[chat.id] = gui.RequestControl()
+    windows.requests[chat.id] = RequestControl()
     select(windows, chat.id)
     windows.main.on_delete(None)
     assert 'still answering' in windows.messages[-1]
-    assert windows.store.get_session(chat.id, gui.OWNER_ID)
+    assert windows.store.get_session(chat.id, OWNER_ID)
 
 
 def test_deleting_closes_the_chat_window_and_selects_a_neighbour(windows):
@@ -133,8 +135,8 @@ def test_deleting_closes_the_chat_window_and_selects_a_neighbour(windows):
     windows.main.on_delete(None)
     assert frame not in windows.frames
     assert windows.main.session_ids == [kept.id] and windows.main.sessions.GetSelection() == 0
-    with pytest.raises(gui.SessionNotFound):
-        windows.store.get_session(deleted.id, gui.OWNER_ID)
+    with pytest.raises(SessionNotFound):
+        windows.store.get_session(deleted.id, OWNER_ID)
 
 
 def test_a_failed_delete_keeps_the_chat_and_reports_why(windows, monkeypatch):

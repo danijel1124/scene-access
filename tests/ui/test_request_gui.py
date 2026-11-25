@@ -2,26 +2,33 @@ import pytest
 import wx
 
 from sceneaccess.pipeline import answering
-from sceneaccess.ui import gui, speech
+from sceneaccess.media import transcript
+from sceneaccess.ui import app_window, chat_request, chat_window, speech
 from sceneaccess.ui.chat_history import chat_history_entries
 from sceneaccess.llm.client import Completion, Turn
+import threading
+from dataclasses import replace
+from pathlib import Path
+from sceneaccess.llm.client import ChatClient
+from sceneaccess.request_control import RequestCancelled
+from sceneaccess.storage.session_store import OWNER_ID
 
 
 @pytest.fixture
 def frame(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
-    monkeypatch.setattr(gui.wx, 'MessageBox', lambda *a, **kw: wx.OK)
-    monkeypatch.setattr(gui.wx, 'CallAfter', lambda f, *a, **kw: f(*a, **kw))
-    app = wx.App(False)
-    window = gui.ChatFrame()
-    window.config = gui.replace(window.config, api_key='test-only')
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
+    monkeypatch.setattr(wx, 'MessageBox', lambda *a, **kw: wx.OK)
+    monkeypatch.setattr(wx, 'CallAfter', lambda f, *a, **kw: f(*a, **kw))
+    wx_app = wx.App(False)
+    window = chat_window.ChatFrame()
+    window.config = replace(window.config, api_key='test-only')
     video = tmp_path / 'fixture.mp4'
     video.write_bytes(b'fixture, no media decoding')
-    window.current = window.store.create_session(owner_id=gui.OWNER_ID, source_path=video,
+    window.current = window.store.create_session(owner_id=OWNER_ID, source_path=video,
         title='A', model='fixture/model', initial_question='Original question')
     yield window
     window.Destroy()
-    app.Destroy()
+    wx_app.Destroy()
 
 
 class InlineThread:
@@ -30,7 +37,7 @@ class InlineThread:
 
 
 def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, monkeypatch):
-    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
+    monkeypatch.setattr(threading, 'Thread', InlineThread)
     sent = []
     def answer(client, session, messages, *args, **kwargs):
         # The question is the first text, after the video.
@@ -38,7 +45,7 @@ def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, mon
         if len(sent) == 1:
             raise RuntimeError('Fixture provider failure')
         return Turn(entries=[{'role':'assistant','content':'Answer'}], completion=Completion('Answer','fixture',1,None,None))
-    monkeypatch.setattr(gui.ChatClient, 'run_turn', answer)
+    monkeypatch.setattr(ChatClient, 'run_turn', answer)
     frame.question.SetValue('Original question')
     frame.on_send(None)
     # The first request failed: nothing was answered and the question is back in the field.
@@ -46,25 +53,25 @@ def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, mon
     frame.question.SetValue('Revised question')
     frame.on_send(None)
     assert sent == ['Original question', 'Revised question']
-    stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    stored = frame.store.get_session(frame.current.id, OWNER_ID)
     assert stored.initial_question == 'Revised question'
     assert [item['content'] for item in stored.history] == ['Answer']
 
 
 def test_audio_only_routing_failure_does_not_transcribe(frame, monkeypatch):
     from sceneaccess.storage.session_store import TRANSCRIPT_PENDING
-    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
-    frame.store.update_chat_settings(frame.current.id, gui.OWNER_ID, 'openrouter/auto', True)
-    frame.store.update_transcript(frame.current.id, gui.OWNER_ID, TRANSCRIPT_PENDING)
-    frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    monkeypatch.setattr(threading, 'Thread', InlineThread)
+    frame.store.update_chat_settings(frame.current.id, OWNER_ID, 'openrouter/auto', True)
+    frame.store.update_transcript(frame.current.id, OWNER_ID, TRANSCRIPT_PENDING)
+    frame.current = frame.store.get_session(frame.current.id, OWNER_ID)
     class Unavailable:
         def audio_video_tool_models(self): return []
         def hears_audio(self, model): return None
     frame.catalog = Unavailable()
     called = []
     errors = []
-    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: errors.append(message))
-    monkeypatch.setattr(gui, 'make_transcript', lambda *a, **kw: called.append(True) or 'Unnecessary')
+    monkeypatch.setattr(wx, 'MessageBox', lambda message, *a, **kw: errors.append(message))
+    monkeypatch.setattr(transcript, 'make_transcript', lambda *a, **kw: called.append(True) or 'Unnecessary')
     frame._send('Original question', initial=True)
     assert called == []
     assert errors and 'model list could not be loaded' in errors[-1]
@@ -77,14 +84,14 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
     import imageio_ffmpeg
     from sceneaccess.llm.tool_calls import ZOOM_FRAME
     from sceneaccess.pipeline.tools import tool_definitions
-    # Only gui's own thread runs inline: the real tool starts subprocesses, whose reader threads
+    # Only the request's own thread runs inline: the real tool starts subprocesses, whose reader threads
     # need the real threading.Thread.
-    monkeypatch.setattr(gui, 'threading', types.SimpleNamespace(Thread=InlineThread))
+    monkeypatch.setattr(chat_request, 'threading', types.SimpleNamespace(Thread=InlineThread))
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: False)
-    video = gui.Path(frame.current.source_path).with_name('real.mp4')
+    video = Path(frame.current.source_path).with_name('real.mp4')
     subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-loglevel', 'error', '-f', 'lavfi', '-i',
                     'testsrc=duration=1:size=160x120:rate=5', '-pix_fmt', 'yuv420p', '-y', str(video)], check=True)
-    frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title='Real',
+    frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title='Real',
         model='fixture/model', initial_question='Original question', tools=tool_definitions(online_video=False))
     generated = []
     def answer(client, session, messages, run_tool, *args, **kwargs):
@@ -93,12 +100,12 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
         assert result.image, result.text
         generated.append(session.directory/result.image)
         if outcome == 'failure': raise RuntimeError('provider fixture failed')
-        if outcome == 'cancel': raise gui.RequestCancelled()
+        if outcome == 'cancel': raise RequestCancelled()
         return Turn(entries=[{'role': 'assistant', 'content': 'Answer'}],
                     completion=Completion('Answer', 'fixture', 1, None, None))
-    monkeypatch.setattr(gui.ChatClient, 'run_turn', answer)
+    monkeypatch.setattr(ChatClient, 'run_turn', answer)
     errors = []
-    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: errors.append(message))
+    monkeypatch.setattr(wx, 'MessageBox', lambda message, *a, **kw: errors.append(message))
     frame._send('Original question', initial=True)
     assert generated, errors
     assert generated[0].exists() is (outcome == 'success')
@@ -106,21 +113,21 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
 
 def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
     from sceneaccess.storage.session_store import TRANSCRIPT_PENDING, TRANSCRIPT_FAILED
-    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
+    monkeypatch.setattr(threading, 'Thread', InlineThread)
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: True)
-    frame.config = gui.replace(frame.config, ignored_providers=('elevenlabs',))
-    frame.store.update_transcript(frame.current.id, gui.OWNER_ID, TRANSCRIPT_PENDING)
-    frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    frame.config = replace(frame.config, ignored_providers=('elevenlabs',))
+    frame.store.update_transcript(frame.current.id, OWNER_ID, TRANSCRIPT_PENDING)
+    frame.current = frame.store.get_session(frame.current.id, OWNER_ID)
     transcriptions, requests = [], []
-    monkeypatch.setattr(gui, 'make_transcript', lambda *a: transcriptions.append(True) or 'should not run')
+    monkeypatch.setattr(transcript, 'make_transcript', lambda *a: transcriptions.append(True) or 'should not run')
     def answer(*args, **kwargs):
         requests.append(True)
         return Turn(entries=[{'role':'assistant','content':'Picture-only answer'}],
                     completion=Completion('Picture-only answer','fixture',1,None,None))
-    monkeypatch.setattr(gui.ChatClient,'run_turn',answer)
+    monkeypatch.setattr(ChatClient,'run_turn',answer)
     frame._send('Original question',initial=True)
     assert requests == [True] and not transcriptions
-    saved = frame.store.get_session(frame.current.id,gui.OWNER_ID)
+    saved = frame.store.get_session(frame.current.id,OWNER_ID)
     assert saved.transcript_state == TRANSCRIPT_FAILED
     assert 'excluded' in saved.transcript.lower() and 'elevenlabs' in saved.transcript.lower()
     entries = chat_history_entries(saved.initial_question,saved.history,saved.transcript_state,saved.transcript)
@@ -128,18 +135,18 @@ def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
 
 
 def test_missing_api_key_preserves_question(frame):
-    frame.config = gui.replace(frame.config, api_key="")
+    frame.config = replace(frame.config, api_key="")
     frame.question.SetValue("Keep this question")
     frame.on_send(None)
     assert frame.question.GetValue() == "Keep this question"
 
 
 def test_failed_followup_restores_question_for_retry(frame, monkeypatch):
-    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
-    frame.store.record_turn(frame.current.id, gui.OWNER_ID, [{'role':'assistant','content':'First answer'}])
-    frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    monkeypatch.setattr(threading, 'Thread', InlineThread)
+    frame.store.record_turn(frame.current.id, OWNER_ID, [{'role':'assistant','content':'First answer'}])
+    frame.current = frame.store.get_session(frame.current.id, OWNER_ID)
     def fail(*args, **kw): raise RuntimeError('Fixture provider failure')
-    monkeypatch.setattr(gui.ChatClient, 'run_turn', fail)
+    monkeypatch.setattr(ChatClient, 'run_turn', fail)
     frame.question.SetValue('Do not lose me')
     frame.on_send(None)
     assert frame.question.GetValue() == 'Do not lose me'
@@ -147,7 +154,7 @@ def test_failed_followup_restores_question_for_retry(frame, monkeypatch):
 
 def test_completion_for_other_chat_does_not_switch_active_chat(frame):
     a = frame.current
-    b = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=gui.Path(a.source_path),
+    b = frame.store.create_session(owner_id=OWNER_ID, source_path=Path(a.source_path),
         title='B', model='fixture/model', initial_question='Other question')
     frame.current = b
     frame.render_current()
@@ -157,7 +164,7 @@ def test_completion_for_other_chat_does_not_switch_active_chat(frame):
 
 def test_request_buttons_cancel_and_pause_without_sending_another_question(frame, monkeypatch):
     monkeypatch.setattr(InlineThread, 'start', lambda self: None)
-    monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
+    monkeypatch.setattr(threading, 'Thread', InlineThread)
     frame._send('Original question', initial=True)
     assert frame.send_button.GetLabel() == 'Cancel request'
     assert frame.send_button.IsEnabled()
@@ -165,7 +172,7 @@ def test_request_buttons_cancel_and_pause_without_sending_another_question(frame
     frame.on_pause(None)
     assert frame._request.pause_requested
     frame.on_send(None)
-    with pytest.raises(gui.RequestCancelled):
+    with pytest.raises(RequestCancelled):
         frame._request.check_cancelled()
     frame._cancelled()
     assert frame.send_button.GetLabel() == 'Send question'
@@ -173,7 +180,7 @@ def test_request_buttons_cancel_and_pause_without_sending_another_question(frame
 
 
 def test_a_background_answer_never_takes_the_focus(frame, monkeypatch):
-    frame.store.record_turn(frame.current.id, gui.OWNER_ID, [{'role': 'assistant', 'content': 'Answer'}])
+    frame.store.record_turn(frame.current.id, OWNER_ID, [{'role': 'assistant', 'content': 'Answer'}])
     focused, spoken = [], []
     monkeypatch.setattr(frame.chat_list, 'SetFocus', lambda: focused.append(True))
     monkeypatch.setattr(speech, 'announce', lambda text, **kw: spoken.append(text))
@@ -183,21 +190,21 @@ def test_a_background_answer_never_takes_the_focus(frame, monkeypatch):
     assert focused == [] and spoken == []
     # This window is active: the focus moves to the answer, so the screen reader reads it.
     monkeypatch.setattr(frame, 'IsActive', lambda: True)
-    monkeypatch.setattr(gui.wx.Window, 'FindFocus', staticmethod(lambda: frame.question))
+    monkeypatch.setattr(wx.Window, 'FindFocus', staticmethod(lambda: frame.question))
     frame._completed(frame.current.id, 'fixture')
     assert focused == [True] and spoken == []
     # The list already has the focus, so moving it would read nothing: the answer is announced.
-    monkeypatch.setattr(gui.wx.Window, 'FindFocus', staticmethod(lambda: frame.chat_list))
+    monkeypatch.setattr(wx.Window, 'FindFocus', staticmethod(lambda: frame.chat_list))
     frame._completed(frame.current.id, 'fixture')
     assert focused == [True] and spoken == ['Model: Answer']
 
 
 def test_the_newest_answer_is_selected_not_its_usage_line(frame):
-    frame.store.record_turn(frame.current.id, gui.OWNER_ID, [
+    frame.store.record_turn(frame.current.id, OWNER_ID, [
         {'role': 'assistant', 'content': 'First', 'usage': {'model': 'm', 'prompt_tokens': 1}},
         {'role': 'user', 'content': 'More?'},
         {'role': 'assistant', 'content': 'Second', 'usage': {'model': 'm', 'prompt_tokens': 2}}])
-    frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+    frame.current = frame.store.get_session(frame.current.id, OWNER_ID)
     frame.render_current()
     assert list(frame.chat_list.GetSelections()) == [frame.history_caret()]
     assert frame.history_items[frame.history_caret()] == 'Model: Second'

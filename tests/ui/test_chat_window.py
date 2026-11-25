@@ -4,27 +4,35 @@ import pytest
 import wx
 
 from sceneaccess.pipeline import answering
-from sceneaccess.ui import gui
+from sceneaccess.media import transcript
+from sceneaccess.ui import app_window, chat_setup, chat_window
 from sceneaccess.llm.client import Completion, Turn
 from sceneaccess import prompts
 from sceneaccess.prompts import BASE_SYSTEM_PROMPT
+import threading
+from dataclasses import replace
+from sceneaccess.llm.client import ChatClient
+from sceneaccess.request_control import RequestControl
+from sceneaccess.settings.config import load_config
+from sceneaccess.storage.session_store import OWNER_ID
+from sceneaccess.ui.chat_dialogs import SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK
 
 
 def test_the_history_menu_hides_shows_and_deletes_an_answer_round(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui.wx, "MessageBox", lambda *args, **kwargs: wx.YES)
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(wx, "MessageBox", lambda *args, **kwargs: wx.YES)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="V", model="",
                                                    initial_question="First?")
         for question, answer in ((None, "First answer."), ("Second?", "Second answer.")):
             entries = ([{"role": "user", "content": question}] if question else []) + [
                 {"role": "assistant", "content": answer}]
-            frame.store.record_turn(frame.current.id, gui.OWNER_ID, entries)
-        frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+            frame.store.record_turn(frame.current.id, OWNER_ID, entries)
+        frame.current = frame.store.get_session(frame.current.id, OWNER_ID)
         frame.render_current()
         menus = []
 
@@ -64,7 +72,7 @@ def test_the_history_menu_hides_shows_and_deletes_an_answer_round(tmp_path, monk
             def Close(self): pass
             def SetData(self, data): Clipboard.text = data.GetText()
 
-        monkeypatch.setattr(gui.wx, "TheClipboard", Clipboard())
+        monkeypatch.setattr(wx, "TheClipboard", Clipboard())
         choose(0)
         frame.show_history_menu([0, frame.history_items.index("Model: Second answer.")])
         assert menus[-1][0][0] == "Copy 2 items to clipboard"
@@ -77,41 +85,41 @@ def test_the_history_menu_hides_shows_and_deletes_an_answer_round(tmp_path, monk
         frame.show_history_menu([0])
         assert [label for label, _enabled in menus[-1]] == ["Copy to clipboard"]
         # A busy chat keeps its history: hiding and deleting are shown, but unavailable.
-        frame._request = gui.RequestControl()
+        frame._request = RequestControl()
         choose(0)
         frame.show_history_menu([frame.history_items.index("Model: Second answer.")])
         assert [enabled for _label, enabled in menus[-1]] == [True, False, False]
         frame._request = None
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_a_transcript_is_added_at_the_end_without_asking_the_model(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui.wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
     asked = []
-    monkeypatch.setattr(gui.wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or wx.YES)
-    monkeypatch.setattr(gui, "make_transcript", lambda session, client: "[00:01] Hello")
-    monkeypatch.setattr(gui.ChatClient, "run_turn", lambda *a, **kw: pytest.fail("the model was asked"))
+    monkeypatch.setattr(wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or wx.YES)
+    monkeypatch.setattr(transcript, "make_transcript", lambda session, client: "[00:01] Hello")
+    monkeypatch.setattr(ChatClient, "run_turn", lambda *a, **kw: pytest.fail("the model was asked"))
 
     class InlineThread:
         def __init__(self, target, **kw): self.target = target
         def start(self): self.target()
 
-    monkeypatch.setattr(gui.threading, "Thread", InlineThread)
+    monkeypatch.setattr(threading, "Thread", InlineThread)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="V", model="",
                                                    initial_question="First?", provider="llama.cpp")
         frame.render_current()
         frame.add_transcript()
         assert asked and "OpenRouter API key" in asked[-1] and not frame.current.history
-        frame.config = gui.replace(frame.config, api_key="openrouter-secret")
+        frame.config = replace(frame.config, api_key="openrouter-secret")
         asked.clear()
         frame.add_transcript()
         # Adding a transcript is the user's explicit choice, so it asks nothing, also in a llama.cpp chat.
@@ -122,13 +130,13 @@ def test_a_transcript_is_added_at_the_end_without_asking_the_model(tmp_path, mon
         assert frame._request is None and frame.send_button.GetLabel() == "Send question"
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     sent, opened = [], []
     monkeypatch.setattr(frame, "on_send", lambda _event: sent.append(True))
     monkeypatch.setattr(frame, "open_selected_message", lambda: opened.append(True))
@@ -143,48 +151,48 @@ def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path,
         assert frame.handle_enter(frame.question, ord("A"), shift=False) is False
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_dont_ask_again_is_kept_only_once_the_answer_arrived(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui.wx, "MessageBox", lambda *args, **kwargs: wx.OK)
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(wx, "MessageBox", lambda *args, **kwargs: wx.OK)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="a/one",
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="V", model="a/one",
                                                    initial_question="Describe it.")
         frame.size_skip_after_answer = (frame.current.id, "a/one")
         frame._failed("HTTP 400: Invalid content")
         assert frame.config.size_check_skipped_models == ()
         frame.size_skip_after_answer = (frame.current.id, "a/one")
         frame._completed(frame.current.id, "a/one")
-        assert gui.load_config(tmp_path / "config.json").size_check_skipped_models == ("a/one",)
+        assert load_config(tmp_path / "config.json").size_check_skipped_models == ("a/one",)
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_a_chat_without_its_own_model_follows_settings(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        frame.config = gui.replace(frame.config, model="openrouter/auto")
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+        frame.config = replace(frame.config, model="openrouter/auto")
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="V", model="",
                                                    initial_question="?")
         assert frame.chat_model(frame.current) == "openrouter/auto"
         frame.render_current()
         assert frame.status.GetLabel().startswith("V | openrouter/auto (from Settings)")
-        frame.store.update_chat_settings(frame.current.id, gui.OWNER_ID, "z-ai/glm-flash", False)
-        assert frame.chat_model(frame.store.get_session(frame.current.id, gui.OWNER_ID)) == "z-ai/glm-flash"
+        frame.store.update_chat_settings(frame.current.id, OWNER_ID, "z-ai/glm-flash", False)
+        assert frame.chat_model(frame.store.get_session(frame.current.id, OWNER_ID)) == "z-ai/glm-flash"
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 class InlineThread:
@@ -198,11 +206,11 @@ class InlineThread:
 
 
 def test_a_default_chat_sends_the_settings_model_and_gets_a_transcript_if_it_cannot_hear(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui.threading, "Thread", InlineThread)
-    monkeypatch.setattr(gui.wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(threading, "Thread", InlineThread)
+    monkeypatch.setattr(wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
     monkeypatch.setattr(answering, "wants_transcript", lambda session, _catalog: session.model == "z-ai/glm-flash")
-    monkeypatch.setattr(gui, "make_transcript", lambda _session, _client: "[00:01] Hello")
+    monkeypatch.setattr(transcript, "make_transcript", lambda _session, _client: "[00:01] Hello")
     payloads = []
 
     def fake_run_turn(_client, session, messages, run_tool, on_event=None, routing=None, max_tool_rounds=6, **kwargs):
@@ -210,52 +218,52 @@ def test_a_default_chat_sends_the_settings_model_and_gets_a_transcript_if_it_can
         return Turn(entries=[{"role": "assistant", "content": "Answer"}], completion=Completion(
             "Answer", model=session.model, prompt_tokens=1, cached_tokens=None, cache_write_tokens=None))
 
-    monkeypatch.setattr(gui.ChatClient, "run_turn", fake_run_turn)
+    monkeypatch.setattr(ChatClient, "run_turn", fake_run_turn)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        frame.config = gui.replace(frame.config, model="google/gemini-flash", api_key="test-key")
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+        frame.config = replace(frame.config, model="google/gemini-flash", api_key="test-key")
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="V", model="",
                                                    initial_question="?", transcript_state="none")
         frame._send("What happens?", initial=False)
         assert payloads[-1][0] == "google/gemini-flash" and payloads[-1][1] == {}
-        assert frame.store.get_session(frame.current.id, gui.OWNER_ID).transcript_state == "none"
+        assert frame.store.get_session(frame.current.id, OWNER_ID).transcript_state == "none"
         # Settings now name a model that cannot hear: the default chat gets a transcript first.
-        frame.config = gui.replace(frame.config, model="z-ai/glm-flash")
+        frame.config = replace(frame.config, model="z-ai/glm-flash")
         frame._send("And now?", initial=False)
         assert payloads[-1][0] == "z-ai/glm-flash"
         assert "[00:01] Hello" in json.dumps(payloads[-1][2])
-        stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        stored = frame.store.get_session(frame.current.id, OWNER_ID)
         assert stored.transcript_state == "done" and stored.model == ""
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_changing_the_profile_keeps_the_chats_own_hearing_choice(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        frame.config = gui.replace(frame.config, audio_only_auto=True)
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+        frame.config = replace(frame.config, audio_only_auto=True)
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="V", model="",
                                                    initial_question="?", audio_only=True)
-        frame.store.update_chat_settings(frame.current.id, gui.OWNER_ID, "", False)
-        frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        frame.store.update_chat_settings(frame.current.id, OWNER_ID, "", False)
+        frame.current = frame.store.get_session(frame.current.id, OWNER_ID)
         frame.apply_setup("Identify brand and model")
-        assert frame.store.get_session(frame.current.id, gui.OWNER_ID).audio_only is False
+        assert frame.store.get_session(frame.current.id, OWNER_ID).audio_only is False
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_a_question_in_a_chat_with_a_too_large_video_asks_first(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui, "SIZE_LIMIT", 50)
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(chat_setup, "SIZE_LIMIT", 50)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"x" * 300)
     shown, choices = [], []
@@ -274,27 +282,27 @@ def test_a_question_in_a_chat_with_a_too_large_video_asks_first(tmp_path, monkey
         def __exit__(self, *args):
             return False
 
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        monkeypatch.setattr(gui, "StoredSizeDialog", FakeStoredSizeDialog)
+        monkeypatch.setattr(chat_setup, "StoredSizeDialog", FakeStoredSizeDialog)
         sent, settings, shrunk = [], [], []
         monkeypatch.setattr(frame, "_send", lambda question, initial: sent.append(question))
         monkeypatch.setattr(frame, "change_chat_settings", lambda: settings.append(True))
         monkeypatch.setattr(frame, "shrink_stored_video", lambda: shrunk.append(True) or True)
-        frame.config = gui.replace(frame.config, model="a/one")
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+        frame.config = replace(frame.config, model="a/one")
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="V", model="",
                                                    initial_question="?")
         frame.question.SetValue("What happens?")
-        choices[:] = [wx.ID_CANCEL, gui.SIZE_CHAT_SETTINGS]
+        choices[:] = [wx.ID_CANCEL, SIZE_CHAT_SETTINGS]
         frame.on_send(None)
         frame.on_send(None)
         # Cancelled, then the chat settings opened: nothing was sent and the question is still there.
         assert sent == [] and settings == [True] and frame.question.GetValue() == "What happens?"
-        choices[:] = [gui.SIZE_SHRINK]
+        choices[:] = [SIZE_SHRINK]
         frame.on_send(None)
         assert shrunk == [True] and sent == ["What happens?"]
-        choices[:] = [gui.SIZE_SEND]
+        choices[:] = [SIZE_SEND]
         frame.question.SetValue("And then?")
         frame.on_send(None)
         assert sent[-1] == "And then?" and frame.size_skip_after_answer == (frame.current.id, "a/one")
@@ -304,35 +312,35 @@ def test_a_question_in_a_chat_with_a_too_large_video_asks_first(tmp_path, monkey
         frame.question.SetValue("More?")
         frame.on_send(None)
         assert sent[-1] == "More?" and len(shown) == 4
-        frame.store.update_chat_settings(frame.current.id, gui.OWNER_ID, "b/two", True)
-        frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        frame.store.update_chat_settings(frame.current.id, OWNER_ID, "b/two", True)
+        frame.current = frame.store.get_session(frame.current.id, OWNER_ID)
         choices[:] = [wx.ID_CANCEL]
         frame.question.SetValue("With the new model?")
         frame.on_send(None)
         assert len(shown) == 5
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_a_chat_from_before_tools_gets_the_prompt_and_tools(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     video = tmp_path / "old.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="Old", model="m",
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="Old", model="m",
                                                    initial_question="Describe it.")
         assert frame.current.tools == [] and frame.current.system_prompt == ""
         frame.apply_setup("Identify brand and model")
-        session = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        session = frame.store.get_session(frame.current.id, OWNER_ID)
         assert "zoom_frame" in json.dumps(session.tools) and "high_resolution_frame" not in json.dumps(session.tools)
         assert session.system_prompt.startswith(BASE_SYSTEM_PROMPT)
         assert session.system_prompt.endswith(frame.config.profile_text("Identify brand and model"))
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 OLD_BASE = ("You are SceneAccess, an assistant that describes videos for a blind person.\n\n"
@@ -358,28 +366,28 @@ def test_an_earlier_system_prompt_is_rebuilt_with_the_current_base_and_profile_t
 
 @pytest.mark.parametrize("answer", [wx.YES, wx.NO])
 def test_update_system_prompt_is_offered_only_for_an_earlier_version(tmp_path, monkeypatch, answer):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     asked = []
-    monkeypatch.setattr(gui.wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or answer)
+    monkeypatch.setattr(wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or answer)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
         tools = [{"type": "function", "function": {"name": "zoom_frame"}}]
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="V", model="",
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="V", model="",
                                                    initial_question="?", tools=tools,
                                                    system_prompt=prompts.system_prompt("Profile."))
         frame.render_current()
         assert not frame.prompt_button.IsShown()
-        frame.store.update_system_prompt(frame.current.id, gui.OWNER_ID, f"{OLD_BASE}\n\n{OLD_AUDIO_DESCRIPTION}")
-        frame.store.update_transcript(frame.current.id, gui.OWNER_ID, "done", "[00:01] Hello")
-        frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        frame.store.update_system_prompt(frame.current.id, OWNER_ID, f"{OLD_BASE}\n\n{OLD_AUDIO_DESCRIPTION}")
+        frame.store.update_transcript(frame.current.id, OWNER_ID, "done", "[00:01] Hello")
+        frame.current = frame.store.get_session(frame.current.id, OWNER_ID)
         frame.render_current()
         assert frame.prompt_button.IsShown()
         frame.update_system_prompt()
         assert asked and "uncached" in asked[-1]
-        stored = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        stored = frame.store.get_session(frame.current.id, OWNER_ID)
         if answer == wx.YES:
             assert stored.system_prompt == prompts.system_prompt(prompts.AUDIO_DESCRIPTION)
             # Only the prompt changes: the tools and the paid transcript stay.
@@ -389,35 +397,35 @@ def test_update_system_prompt_is_offered_only_for_an_earlier_version(tmp_path, m
             assert stored.system_prompt == f"{OLD_BASE}\n\n{OLD_AUDIO_DESCRIPTION}" and frame.prompt_button.IsShown()
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_a_failed_transcription_is_remembered_and_does_not_stop_the_answer(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     monkeypatch.setattr(answering, "wants_transcript", lambda _session, _catalog: True)
 
     def fail(_session, _client):
         raise RuntimeError("HTTP 502: upstream audio operation failed")
 
-    monkeypatch.setattr(gui, "make_transcript", fail)
+    monkeypatch.setattr(transcript, "make_transcript", fail)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
-        session = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="T", model="m",
+        session = frame.store.create_session(owner_id=OWNER_ID, source_path=video, title="T", model="m",
                                              initial_question="?", transcript_state="pending")
-        frame._prepare_transcript(session, client=gui.ChatClient('fixture-only'))
-        assert frame.store.get_session(session.id, gui.OWNER_ID).transcript_state == "failed"
+        frame._prepare_transcript(session, client=ChatClient('fixture-only'))
+        assert frame.store.get_session(session.id, OWNER_ID).transcript_state == "failed"
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_older_youtube_chats_are_recognized_by_the_id_in_the_file_name():
-    assert gui.youtube_link_in_file_name(r"C:\Videos\scene-access\Me at the zoo [jNQXAC9IVRw].mp4") == \
+    assert chat_setup.youtube_link_in_file_name(r"C:\Videos\scene-access\Me at the zoo [jNQXAC9IVRw].mp4") == \
         "https://www.youtube.com/watch?v=jNQXAC9IVRw"
-    assert gui.youtube_link_in_file_name(r"C:\Videos\holiday.mp4") is None
-    assert gui.is_local_file_chat("holiday.mp4") is True
+    assert chat_setup.youtube_link_in_file_name(r"C:\Videos\holiday.mp4") is None
+    assert chat_setup.is_local_file_chat("holiday.mp4") is True
     # A download is titled with the video title, so it is searched for even without an ID in the file name.
-    assert gui.is_local_file_chat("Me at the zoo") is False
+    assert chat_setup.is_local_file_chat("Me at the zoo") is False

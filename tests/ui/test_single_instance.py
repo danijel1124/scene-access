@@ -60,28 +60,28 @@ def test_relaunch_activates_existing_gui_and_exits(tmp_path):
     ready, activated = tmp_path/'ready', tmp_path/'activated'
     primary_script = '''import sys, wx
 from pathlib import Path
-from sceneaccess.ui import gui
+from sceneaccess.ui import app, app_window
 root = Path(sys.argv[1])
-gui.config_path_from_standard_paths = lambda _: root/'config.json'
-original_activate = gui.ChatWindows.activate
+app_window.config_path_from_standard_paths = lambda _: root/'config.json'
+original_activate = app.ChatWindows.activate
 def activate(self):
     original_activate(self)
     (root/'activated').write_text('activated')
     self.main.Close()  # Closing the chat list ends the app.
-gui.ChatWindows.activate = activate
+app.ChatWindows.activate = activate
 original_loop = wx.App.MainLoop
 def loop(self):
     (root/'ready').write_text('ready')
     wx.CallLater(15000, self.ExitMainLoop)
     return original_loop(self)
 wx.App.MainLoop = loop
-raise SystemExit(gui.main())
+raise SystemExit(app.main())
 '''
     secondary_script = '''import sys
 from pathlib import Path
-from sceneaccess.ui import gui
-gui.config_path_from_standard_paths = lambda _: Path(sys.argv[1])/'config.json'
-raise SystemExit(gui.main())
+from sceneaccess.ui import app, app_window
+app_window.config_path_from_standard_paths = lambda _: Path(sys.argv[1])/'config.json'
+raise SystemExit(app.main())
 '''
     primary = subprocess.Popen([sys.executable, '-c', HIDDEN + primary_script, str(tmp_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:

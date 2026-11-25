@@ -2,17 +2,18 @@
 import wx
 import pytest
 
-from sceneaccess.ui import gui
+from sceneaccess.ui import app_window, chat_setup, chat_window
+from sceneaccess.storage.session_store import OWNER_ID
 
 
 @pytest.mark.parametrize('path', ['/index.html', '/one.mp4', '/single.html'])
 def test_legacy_source_only_persists_single_video(tmp_path, video_server, monkeypatch, path):
     base_url, requests, _payload = video_server
     notices = []
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
-    monkeypatch.setattr(gui, 'search_videos', lambda *a, **kw: [])
-    monkeypatch.setattr(gui, 'url_from_clipboard', lambda: '')
-    monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: notices.append(message) or wx.OK)
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
+    monkeypatch.setattr(chat_setup, 'search_videos', lambda *a, **kw: [])
+    monkeypatch.setattr(chat_setup, 'url_from_clipboard', lambda: '')
+    monkeypatch.setattr(wx, 'MessageBox', lambda message, *a, **kw: notices.append(message) or wx.OK)
 
     class EnterLink:
         def __init__(self, *a, **kw): pass
@@ -22,21 +23,21 @@ def test_legacy_source_only_persists_single_video(tmp_path, video_server, monkey
         def GetSelection(self): return 0  # Enter a link, with no search results.
         def GetValue(self): return base_url + path
 
-    monkeypatch.setattr(gui.wx, 'SingleChoiceDialog', EnterLink)
-    monkeypatch.setattr(gui.wx, 'TextEntryDialog', EnterLink)
-    app = wx.App(False)
+    monkeypatch.setattr(wx, 'SingleChoiceDialog', EnterLink)
+    monkeypatch.setattr(wx, 'TextEntryDialog', EnterLink)
+    wx_app = wx.App(False)
     loop = wx.GUIEventLoop()
     activator = wx.EventLoopActivator(loop)
-    frame = gui.ChatFrame()
+    frame = chat_window.ChatFrame()
     try:
         source = tmp_path / 'fixture.mp4'
         source.write_bytes(b'fixture')
-        frame.current = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=source,
+        frame.current = frame.store.create_session(owner_id=OWNER_ID, source_path=source,
                                                    title='Old online chat', model='fixture', initial_question='?')
-        before = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        before = frame.store.get_session(frame.current.id, OWNER_ID)
         monkeypatch.setattr(frame, '_lookup_with_progress', lambda f, args, cookies: f(*args, cookies=cookies))
         assert frame._find_online_source() is True  # The chat remains usable without a source.
-        after = frame.store.get_session(frame.current.id, gui.OWNER_ID)
+        after = frame.store.get_session(frame.current.id, OWNER_ID)
         if path == '/index.html':
             assert after.source_url == before.source_url
             assert after.video_info == before.video_info
@@ -51,4 +52,4 @@ def test_legacy_source_only_persists_single_video(tmp_path, video_server, monkey
     finally:
         frame.Destroy()
         del activator, loop
-        app.Destroy()
+        wx_app.Destroy()

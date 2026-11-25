@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 import wx
 
-from sceneaccess.ui import gui, new_chat
+from sceneaccess.ui import app_window, chat_window, new_chat
+from dataclasses import replace
 
 
 @pytest.mark.parametrize('cancel', [False, True])
@@ -47,13 +48,13 @@ def test_cached_file_metadata_failure_warns_but_cancel_stops_selection(tmp_path,
 
 @pytest.mark.parametrize('requested_height', [360, 480, 720])
 def test_advanced_quality_change_replaces_cached_file_only_when_requested(tmp_path, monkeypatch, requested_height):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     monkeypatch.setattr(new_chat, 'url_from_clipboard', lambda: '')
     source = tmp_path/'old480.mp4'
     source.write_bytes(b'old video')
     app = wx.App(False)
-    frame = gui.ChatFrame()
-    frame.config = gui.replace(frame.config, youtube_max_height=480)
+    frame = chat_window.ChatFrame()
+    frame.config = replace(frame.config, youtube_max_height=480)
     calls = []
 
     class LinkDialog:
@@ -64,7 +65,7 @@ def test_advanced_quality_change_replaces_cached_file_only_when_requested(tmp_pa
         def GetValue(self): return 'https://www.youtube.com/watch?v=abcdefghijk'
 
     def ask(**kwargs):
-        frame.config = gui.replace(frame.config, youtube_max_height=requested_height)
+        frame.config = replace(frame.config, youtube_max_height=requested_height)
         return 'Describe', ''
 
     def download(url, folder, height):
@@ -94,10 +95,10 @@ def test_advanced_quality_change_replaces_cached_file_only_when_requested(tmp_pa
 @pytest.mark.parametrize('selection', [0, 1, None])
 @pytest.mark.parametrize('misleading_titles', [False, True])
 def test_playlist_hides_existing_chats_reuses_orphans_and_downloads_only_selected(tmp_path, monkeypatch, selection, misleading_titles):
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     monkeypatch.setattr(new_chat, 'url_from_clipboard', lambda: '')
     app = wx.App(False)
-    frame = gui.ChatFrame()
+    frame = chat_window.ChatFrame()
     downloads = tmp_path/'downloads'
     downloads.mkdir()
     hidden = downloads/('Hidden [ccccccccccc] [aaaaaaaaaaa].mp4' if misleading_titles else 'Hidden [aaaaaaaaaaa].mp4')

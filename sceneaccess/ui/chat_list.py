@@ -1,5 +1,5 @@
 """The main window: the list of chats, starting a new chat, Settings and deleting a chat. A chat opens in its
-own chat window (gui.ChatFrame) with Enter or a double click; moving through the list opens nothing."""
+own chat window (chat_window.ChatFrame) with Enter or a double click; moving through the list opens nothing."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from ..storage.session_store import SessionNotFound
 
 class ChatListFrame(AppWindow, NewChatMixin, wx.Frame):
     def __init__(self, windows: Any):
-        """windows is the gui.ChatWindows that holds the settings, the stored chats and the chat windows."""
+        """windows is the app.ChatWindows that holds the settings, the stored chats and the chat windows."""
         super().__init__(None, title="SceneAccess", size=(560, 640))
         self.windows = windows
         self.config_path = windows.config_path

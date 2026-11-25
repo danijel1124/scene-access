@@ -4,7 +4,7 @@ import wx
 
 import pytest
 
-from sceneaccess.ui import chat_list, gui
+from sceneaccess.ui import app, app_window, chat_list
 from sceneaccess.settings.config import AppConfig
 from sceneaccess.providers import LLAMA_CPP
 
@@ -14,10 +14,10 @@ from sceneaccess.providers import LLAMA_CPP
     (replace(AppConfig(), provider=LLAMA_CPP), 'URL is required'),
 ])
 def test_settings_reject_an_unusable_llama_cpp_address_without_saving(tmp_path, monkeypatch, settings, expected):
-    app = wx.App(False)
+    wx_app = wx.App(False)
     path = tmp_path/'config.json'
-    monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: path)
-    windows = gui.ChatWindows()
+    monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: path)
+    windows = app.ChatWindows()
     frame = windows.show_list()
     messages = []
     class Dialog:
@@ -35,4 +35,4 @@ def test_settings_reject_an_unusable_llama_cpp_address_without_saving(tmp_path, 
         assert not path.exists()
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()

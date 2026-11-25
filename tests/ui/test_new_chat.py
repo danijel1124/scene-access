@@ -1,18 +1,19 @@
 import wx
 import pytest
 
-from sceneaccess.ui import gui, new_chat
+from sceneaccess.ui import app, app_window, chat_window, new_chat
 from sceneaccess.llm.tool_calls import ZOOM_FRAME
 from sceneaccess.pipeline.tools import tool_key
+from dataclasses import replace
 
 @pytest.mark.parametrize("online", [False, True])
 @pytest.mark.parametrize("chosen", [None, (), (ZOOM_FRAME,)])
 def test_new_chat_freezes_the_chosen_tools_in_saved_session(tmp_path, monkeypatch, online, chosen):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     source = tmp_path / "video.mp4"
     source.write_bytes(b"video")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     monkeypatch.setattr(frame, "_send", lambda *args, **kwargs: None)
     try:
         frame._start_chat(source, "Video", "Describe", "", source_url="https://youtube.test/v" if online else "",
@@ -25,15 +26,15 @@ def test_new_chat_freezes_the_chosen_tools_in_saved_session(tmp_path, monkeypatc
         assert frame.store.list_sessions(frame.owner_id)[0].tools == frame.current.tools
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 @pytest.mark.parametrize("online", [False, True])
 def test_chosen_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monkeypatch, online):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     source = tmp_path / "video.mp4"
     source.write_bytes(b"video")
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     shown, started = [], []
     original = new_chat.StartChatDialog
 
@@ -73,14 +74,14 @@ def test_chosen_tools_survive_back_and_are_passed_to_chat_start(tmp_path, monkey
         assert shown[-1] == shown[0]
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_new_video_chat_menu_runs_the_chosen_entry(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    app = wx.App(False)
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    wx_app = wx.App(False)
     # New video chat is in the main window, the chat list.
-    frame = gui.ChatWindows().show_list()
+    frame = app.ChatWindows().show_list()
     calls = []
     monkeypatch.setattr(frame, "new_from_local_file", lambda: calls.append("local"))
     monkeypatch.setattr(frame, "new_from_youtube", lambda: calls.append("youtube"))
@@ -95,7 +96,7 @@ def test_new_video_chat_menu_runs_the_chosen_entry(tmp_path, monkeypatch):
         assert calls == ["local", "youtube"]
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 class FakeCheckBox:
@@ -131,48 +132,48 @@ def fake_size_dialog(choice, calls, dont_ask=False):
 
 
 def test_the_size_question_comes_only_for_too_large_videos_that_are_not_skipped(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     monkeypatch.setattr(new_chat, "SIZE_LIMIT", 100)
     small, large = tmp_path / "small.mp4", tmp_path / "large.mp4"
     small.write_bytes(b"x" * 60)  # 80 bytes once Base64-encoded
     large.write_bytes(b"x" * 300)
     calls = []
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
         monkeypatch.setattr(new_chat, "SizeDialog", fake_size_dialog(new_chat.SIZE_SEND, calls, dont_ask=True))
-        frame.config = gui.replace(frame.config, model="a/one")
+        frame.config = replace(frame.config, model="a/one")
         assert frame._video_to_send(small, online=False) == small and calls == []
         assert frame._video_to_send(large, online=True, lower_height=360) == large
         assert calls == [(300, "a/one", True, True)] and frame.pending_size_skip == "a/one"
-        frame.config = gui.replace(frame.config, size_check_skipped_models=("a/one",))
+        frame.config = replace(frame.config, size_check_skipped_models=("a/one",))
         assert frame._video_to_send(large, online=False) == large and len(calls) == 1
-        frame.config = gui.replace(frame.config, model="openrouter/auto", size_check_skipped_models=("openrouter/auto",))
+        frame.config = replace(frame.config, model="openrouter/auto", size_check_skipped_models=("openrouter/auto",))
         monkeypatch.setattr(new_chat, "SizeDialog", fake_size_dialog(new_chat.SIZE_BACK, calls))
         assert frame._video_to_send(large, online=False) == new_chat.SIZE_BACK  # openrouter/auto is never skipped
-        frame.config = gui.replace(frame.config, check_video_size=False)
+        frame.config = replace(frame.config, check_video_size=False)
         assert frame._video_to_send(large, online=False) == large and len(calls) == 2
         shrunk = []
         monkeypatch.setattr(frame, "_shrink_with_progress", lambda source: shrunk.append(source) or tmp_path / "s.mp4")
-        frame.config = gui.replace(frame.config, auto_shrink=True, shrink_target_mb=1)
+        frame.config = replace(frame.config, auto_shrink=True, shrink_target_mb=1)
         assert frame._video_to_send(large, online=False) == large  # below the user's own target
         monkeypatch.setattr(frame, "_shrink_target", lambda: 100)
         assert frame._video_to_send(large, online=False) == tmp_path / "s.mp4" and shrunk == [large]
         assert len(calls) == 2  # automatic shrinking never asks
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def run_youtube_chat(tmp_path, monkeypatch, sizes, choices):
     """Starts a chat from YouTube with fake downloads of the given sizes per height; returns the
     downloaded heights, the size dialog calls, the started chats and how often the start dialog came."""
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     monkeypatch.setattr(new_chat, "SIZE_LIMIT", 100)
     monkeypatch.setattr(new_chat, "url_from_clipboard", lambda: "")
     downloads, started, calls, asked = [], [], [], []
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
 
     def download(_url, target_dir, height):
         path = target_dir / f"Video [abcdefghijk] [{height}].mp4"
@@ -198,7 +199,7 @@ def run_youtube_chat(tmp_path, monkeypatch, sizes, choices):
             return False
 
     try:
-        monkeypatch.setattr(gui.wx, "TextEntryDialog", FakeEntry)
+        monkeypatch.setattr(wx, "TextEntryDialog", FakeEntry)
         monkeypatch.setattr(frame, "_ask_first_question",
                             lambda online, previous=None: asked.append(previous) or ("Describe it.", ""))
         monkeypatch.setattr(frame, "_download_dir", lambda: tmp_path)
@@ -207,12 +208,12 @@ def run_youtube_chat(tmp_path, monkeypatch, sizes, choices):
         monkeypatch.setattr(new_chat, "video_height", lambda path: downloads[-1])
         monkeypatch.setattr(new_chat, "SizeDialog", fake_size_dialog(choices, calls))
         monkeypatch.setattr(frame, "_start_chat", lambda path, title, *start, **options: started.append((path, options)))
-        frame.config = gui.replace(frame.config, youtube_max_height=480)
+        frame.config = replace(frame.config, youtube_max_height=480)
         frame.new_from_youtube()
         return downloads, calls, started, asked
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()
 
 
 def test_a_lower_resolution_is_requested_step_by_step_until_the_video_fits(tmp_path, monkeypatch):
@@ -235,14 +236,14 @@ def test_going_back_keeps_a_video_already_stepped_down(tmp_path, monkeypatch):
 
 
 def test_default_download_folder_is_created_inside_an_existing_videos_folder(tmp_path, monkeypatch):
-    monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
+    monkeypatch.setattr(app_window, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
     monkeypatch.setattr(new_chat, "default_download_dir", lambda: tmp_path / "Videos" / "scene-access")
     (tmp_path / "Videos").mkdir()
-    app = wx.App(False)
-    frame = gui.ChatFrame()
+    wx_app = wx.App(False)
+    frame = chat_window.ChatFrame()
     try:
         assert frame._download_dir() == tmp_path / "Videos" / "scene-access"
         assert (tmp_path / "Videos" / "scene-access").is_dir()
     finally:
         frame.Destroy()
-        app.Destroy()
+        wx_app.Destroy()

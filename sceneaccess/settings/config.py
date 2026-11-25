@@ -1,3 +1,6 @@
+"""The settings in config.json (AppConfig): where the file lies, loading and checking it, saving it privately,
+and the OpenRouter key, from the settings or the environment."""
+
 from __future__ import annotations
 
 import json
