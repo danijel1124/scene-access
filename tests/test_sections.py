@@ -6,11 +6,12 @@ from pathlib import Path
 import imageio_ffmpeg
 import pytest
 
-from sceneaccess import sections
+from sceneaccess import section_cuts
 from sceneaccess.chat_history import SECTION, chat_history_rows
 from sceneaccess.openrouter import Completion, Turn
-from sceneaccess.sections import (Section, cut_sections, describe_in_sections, needs_sections, section_bounds,
-                                  transcript_between, video_duration)
+from sceneaccess.section_cuts import (Section, cut_sections, needs_sections, section_bounds, transcript_between,
+                                      video_duration)
+from sceneaccess.sections import describe_in_sections
 from sceneaccess.session_store import SECTION_FILE_PREFIX, VideoSessionStore
 from sceneaccess.tools import video_size_and_duration
 
@@ -58,7 +59,7 @@ def test_the_video_is_cut_precisely_once_and_the_sections_are_reused(tmp_path: P
         # Encoded anew, so each section is as long as planned, not cut at the nearest key frame.
         assert section.path.name.startswith(f"{SECTION_FILE_PREFIX}3s-") and section.path.parent == session.directory
         assert abs(video_size_and_duration(section.path)[1] - (section.end - section.start)) < 0.3
-    monkeypatch.setattr(sections, "run_ffmpeg", lambda *a, **kw: pytest.fail("cut again"))
+    monkeypatch.setattr(section_cuts, "run_ffmpeg", lambda *a, **kw: pytest.fail("cut again"))
     assert [section.path for section in cut_sections(session, duration)] == [section.path for section in cut]
 
 

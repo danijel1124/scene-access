@@ -14,8 +14,8 @@ from .models import ModelCatalog, llama_cpp_catalog, routing
 from .openrouter import LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, OpenRouterClient, Turn, check_whole
 from .providers import LLAMA_CPP
 from .request_control import RequestCancelled, RequestControl
-from .sections import (Reviewer, cleaned_whole_answer, cut_sections, describe_in_sections, needs_sections,
-                       section_sound, video_duration)
+from .section_cuts import cut_sections, needs_sections, section_sound, video_duration
+from .sections import Reviewer, cleaned_whole_answer, describe_in_sections
 from .session_store import TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
 from .tools import ToolResult, ToolRunner, provider_tools
 from .transcript import model_hears, sound_parts, wants_transcript, with_sound

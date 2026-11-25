@@ -220,7 +220,7 @@ def section_reply(text, merged='The whole video.'):
 
 
 def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(frame, monkeypatch):
-    from sceneaccess.sections import Section
+    from sceneaccess.section_cuts import Section
     from sceneaccess.session_store import SECTION_FILE_PREFIX
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='Long', model='', initial_question='Describe it.',
@@ -263,7 +263,7 @@ def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(
 
 
 def test_a_reviewer_model_without_an_openrouter_key_stops_before_any_section_is_sent(frame, monkeypatch):
-    from sceneaccess.sections import Section
+    from sceneaccess.section_cuts import Section
     from sceneaccess.session_store import SECTION_FILE_PREFIX
     frame.config = gui.replace(frame.config, api_key='', section_reviewer_model='vendor/reviewer')
     frame.current = frame.store.create_session(
@@ -334,7 +334,7 @@ class ServerModel:
 
 
 def test_a_stopped_description_continues_on_sending_again_but_not_with_another_model(frame, monkeypatch):
-    from sceneaccess.sections import Section
+    from sceneaccess.section_cuts import Section
     from sceneaccess.session_store import SECTION_FILE_PREFIX
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='Long', model='', initial_question='Describe it.',
