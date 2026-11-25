@@ -65,6 +65,13 @@ class Completion:
         }
 
 
+def added_usage(usage: dict[str, Any] | None, more: dict[str, Any]) -> dict[str, Any]:
+    """Two requests' usage as one, e.g. for a section that was checked, or an answer split into moments."""
+    usage = usage or {}
+    return {**usage, "requests": int(usage.get("requests") or 1) + int(more.get("requests") or 1),
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0) + int(more.get("prompt_tokens") or 0)}
+
+
 class AnswerCutOff(RuntimeError):
     """An answer ended at the token or context limit, or empty: it is not stored as an answer."""
 

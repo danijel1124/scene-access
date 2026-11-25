@@ -250,8 +250,9 @@ def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(
 
     monkeypatch.setattr(ChatClient, 'run_turn', answer)
     frame._send('Describe it.', initial=True)
-    # Each section is described and checked, then all are put together.
-    assert frame.errors == [] and len(requests) == 5
+    # Each section is described and checked, then all are put together, and the answer is split into moments.
+    assert frame.errors == [] and len(requests) == 6
+    assert 'split that description into its moments' in requests[5] and 'The whole video.' in requests[5]
     assert 'describe part 1 of 2' in requests[0] and 'You are the reviewer' in requests[1] and 'Part 1 of the video' in requests[1]
     assert 'describe part 2 of 2' in requests[2] and 'video_url' not in requests[1]
     stored = frame.store.get_session(frame.current.id, OWNER_ID)

@@ -22,16 +22,16 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
-from .settings.config import resolve_openrouter_key
-from .storage.session_store import LEGACY_OWNER_ID, OWNER_ID, open_store
-from .ui.chat_history import chat_history_rows
-from .settings.config import AppConfig, load_config
-from .pipeline import answering
 from .llm.models import ModelCatalog
+from .pipeline import answering
+from .pipeline.hearing import wants_transcript
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
-from .storage.session_store import REMOVED, TRANSCRIBE_MODES, VideoSession, VideoSessionStore
-from .pipeline.hearing import wants_transcript
+from .settings.config import AppConfig, load_config, resolve_openrouter_key
+from .storage.session_store import (LEGACY_OWNER_ID, MOMENTS, OWNER_ID, REMOVED, TRANSCRIBE_MODES, VideoSession,
+                                    VideoSessionStore, open_store)
+from .timecodes import format_time
+from .ui.chat_history import chat_history_rows
 
 
 def default_data_dir() -> Path:
@@ -152,13 +152,20 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         track = " (sound sent as a track)" if request.hears and request.llama_cpp else ""
         print(f"\n===== {name} | hears: {request.hears}{track} | transcript sent: {sent} =====", file=out, flush=True)
         started = time.monotonic()
-        turn, runner = answering.answer(request, on_event=step, on_delta=piece)
+        # The step that splits the answer into moments is streamed too, under labels of its own.
+        turn, runner = answering.answer(request, on_event=step, on_delta=piece,
+                                        on_moments_delta=lambda kind, text: piece(f"Moments, {kind}", text))
         completion = turn.completion
         if not shown["text"]:
             # Not streamed, e.g. by a server that does not stream: the answer comes in one piece.
             print(f"\n{completion.answer}", file=out)
         if turn.entries and turn.entries[-1].get(REMOVED):
             print(f"\n\nRemoved from the answer:\n{turn.entries[-1][REMOVED]}", file=out, flush=True)
+        moments = turn.entries[-1].get(MOMENTS) if turn.entries else None
+        print("\n\nMoments:" if moments else "\n\nNo moments: the answer was not split into them.", file=out)
+        for moment in moments or []:
+            print(f"{format_time(round(moment['start']))} to {format_time(round(moment['end']))}: {moment['text']}",
+                  file=out, flush=True)
         print(f"\n\nTime: {time.monotonic() - started:.0f} s | answered by {completion.model} | requests "
               f"{completion.requests} | prompt tokens {completion.prompt_tokens}", file=out, flush=True)
         if follow_up and request.sectioned:

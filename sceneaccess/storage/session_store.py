@@ -58,6 +58,9 @@ TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCR
 EXCLUDED = "excluded"
 # What the mechanical cleaning took out of a stored answer, kept with it for the Chat history, never sent.
 REMOVED = "removed"
+# A first answer split into its moments, each {"start": seconds, "end": seconds, "text": words of the answer},
+# for an audio track later (pipeline/moments.py); kept with the answer, never sent.
+MOMENTS = "moments"
 # Marks the history entry of a transcript added later; it is sent as a user message.
 TRANSCRIPT_ENTRY = "transcript"
 # The video's sound kept beside it for a llama.cpp server, in pieces <prefix>000.mp3, ...; the other file marks

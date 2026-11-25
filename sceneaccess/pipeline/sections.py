@@ -17,7 +17,7 @@ from dataclasses import replace
 from typing import Any, Callable
 
 from .cleaning import clean_description, joined_without_repeats, mechanical_findings, without_lines_at
-from ..llm.client import AnswerCutOff, DeltaHandler, EventHandler, Turn
+from ..llm.client import AnswerCutOff, DeltaHandler, EventHandler, Turn, added_usage
 from ..prompts import (MERGE_CHECK, MERGE_FIX, MERGE_TASK, MERGE_TITLE_HINT, MERGE_TRANSCRIPT, SECTION_TASK,
                        SECTION_TRANSCRIPT_INTRO, SECTIONS_BEFORE, TITLE_HINT)
 from ..providers import LLAMA_CPP
@@ -158,7 +158,7 @@ class _SectionRun:
         section, entry = self.sections[position], self.described[position]
         heard = self.heard(section)
         turn = self.ask(section, self.described[:position], heard, fix)
-        entry["usage"] = _added(entry.get("usage"), turn.completion.usage_record())
+        entry["usage"] = added_usage(entry.get("usage"), turn.completion.usage_record())
         written = without_part_heading(turn.completion.answer)
         if turn.completion.cut_off or not written.strip():
             return "fix_failed", entry["text"]
@@ -199,7 +199,7 @@ class _SectionRun:
             review_messages(cleaned, heard if self.session.sends_transcript else None, number, section.start,
                             section.end, self.session.title),
             lambda *_: None, self.on_event, check_routing, max_tool_rounds=0, on_delta=self.on_delta)
-        entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())
+        entry["usage"] = added_usage(entry.get("usage"), check.completion.usage_record())
         # A check cut off, empty or not in the JSON form never passes: only the mechanical cleaning counts then,
         # and the Chat history says the check failed (Gemma 4 12B once thought until the context was full).
         failed, problems = ("cut off at the token limit" if check.completion.cut_off
@@ -342,10 +342,3 @@ def _section_parts(section: Section, count: int, total: str, question: str, befo
         number=section.index + 1, count=count, span=f"{start} to {end}", total=total, start=start, end=end,
         question=question).strip()})
     return parts + (sound(section) if sound else [])
-
-
-def _added(usage: dict[str, Any] | None, more: dict[str, Any]) -> dict[str, Any]:
-    """Two requests' usage as one, for a section that was checked or described anew."""
-    usage = usage or {}
-    return {**usage, "requests": int(usage.get("requests") or 1) + int(more.get("requests") or 1),
-            "prompt_tokens": int(usage.get("prompt_tokens") or 0) + int(more.get("prompt_tokens") or 0)}

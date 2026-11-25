@@ -184,3 +184,19 @@ FIX_TASK = ("\n\nYour first description of this part:\n\n{text}\n\nA check found
             "title or the transcript:\n\n{found}\n\nLook at the part again and write its description anew. Correct "
             "those lines from what you see; where you cannot see what is there, leave the line out. Add nothing that "
             "is not in the picture, and write the description once, without drafts.")
+
+# The second step of a first answer: a request of its own, without the video, the tools and, on the user's own
+# server, thinking, that only splits the finished text into moments with times, for an audio track later. Asked in
+# one step together with the answer, the grammar of the form switched the tools off on llama.cpp, and the model
+# wrote the moments as a second, different description (probe with Qwen3.5-9B, 25.11.2026).
+MOMENTS_SYSTEM_PROMPT = (
+    "You are a step in SceneAccess, an app that describes videos for blind people. Another model has described a "
+    "video; you only split that description into its moments, so each can later be read out at its time. You do "
+    "not see the video, and you change no word: every moment's text is copied exactly from the description.")
+MOMENTS_TASK = (
+    "Split this description of a {length} video into its moments, in order. A moment is a line or sentence of the "
+    "description, or a few that belong together, about one stretch of the video. Give each \"start\" and \"end\" as "
+    "mm:ss: the start from the time the description gives, the end where the next moment starts, the last one ending "
+    "at {length}. Copy each \"text\" exactly from the description, without its time, list mark or bold mark. Leave "
+    "out headings and lines with no time to go by. If nothing in the description has a time, answer with an empty "
+    "list.\n\nThe description:\n\n{text}")

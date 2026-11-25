@@ -12,13 +12,15 @@ from typing import Any, Callable
 from .cleaning import clean_description
 from ..settings.config import AppConfig
 from ..llm.models import ModelCatalog, llama_cpp_catalog, routing
-from ..llm.client import LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, ChatClient, Turn, check_whole
+from ..llm.client import (LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, ChatClient, Turn, added_usage,
+                          check_whole)
 from ..providers import LLAMA_CPP
 from ..request_control import RequestCancelled, RequestControl
 from .section_cuts import cut_sections, needs_sections, section_sound, video_duration
 from .section_review import Reviewer
 from .sections import describe_in_sections
-from ..storage.session_store import REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
+from ..storage.session_store import MOMENTS, REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
+from .moments import split_into_moments
 from ..llm.tool_calls import ToolResult
 from .tools import ToolRunner, provider_tools
 from .hearing import model_hears, wants_transcript, with_sound
@@ -154,10 +156,13 @@ def prepare(config: AppConfig, catalog: ModelCatalog, session: VideoSession, que
 
 
 def answer(request: Request, *, on_event: EventHandler | None = None, on_delta: DeltaHandler | None = None,
-           save_sections: Callable[[dict[str, Any]], None] = lambda _progress: None) -> tuple[Turn, ToolRunner | None]:
+           save_sections: Callable[[dict[str, Any]], None] = lambda _progress: None,
+           on_moments_delta: DeltaHandler | None = None) -> tuple[Turn, ToolRunner | None]:
     """Asks the model. Returns the answer and, for a video sent whole, the tool runner whose files belong to it:
     the caller commits them once the answer is stored, and cleans up in any case. An answer cut off at the token
-    limit raises AnswerCutOff: stored, it would read as a whole one. save_sections stores each section's progress."""
+    limit raises AnswerCutOff: stored, it would read as a whole one. save_sections stores each section's progress.
+    A first answer is then split into its moments (with_moments); on_moments_delta gets that step's text as it
+    arrives, for the command line, while the app shows only the step."""
     session, config, control = request.session, request.config, request.control
     if request.sectioned:
         # Each section's sound goes along for a model on a llama.cpp server that hears.
@@ -168,18 +173,43 @@ def answer(request: Request, *, on_event: EventHandler | None = None, on_delta: 
             request.new_runner, save_sections, duration=request.duration, sound=sound, on_event=on_event,
             on_delta=on_delta, routing=request.options, max_tool_rounds=config.max_tool_rounds,
             model_name=request.served_model, reviewer=request.reviewer)
-        return turn, None
+        return with_moments(request, turn, on_event, on_moments_delta), None
     runner = request.new_runner()
     try:
         turn = request.client.run_turn(request.tooled, request.messages, runner.run, on_event, request.options,
                                        max_tool_rounds=config.max_tool_rounds, on_delta=on_delta)
         check_whole(turn.completion)
         if request.initial:
-            turn = cleaned_whole_answer(turn, session)
+            turn = with_moments(request, cleaned_whole_answer(turn, session), on_event, on_moments_delta)
     except BaseException:
         runner.cleanup_files()
         raise
     return turn, runner
+
+
+def with_moments(request: Request, turn: Turn, on_event: EventHandler | None,
+                 on_delta: DeltaHandler | None) -> Turn:
+    """The first answer, as cleaned, with its moments (moments.py) on its entry and the step counted in its usage.
+    Once for the whole answer, also after sections: their times are already the whole video's."""
+    session, completion = request.session, turn.completion
+    # The step is text only: the model that answered, not the router again, with only the providers excluded.
+    model = completion.model if not request.llama_cpp and completion.model else session.model
+    routing = {"provider": request.options["provider"]} if "provider" in request.options else {}
+    try:
+        duration = request.duration or video_duration(session)
+    except RequestCancelled:
+        raise
+    except Exception:
+        return turn
+    moments, usage = split_into_moments(request.client, replace(session, model=model), completion.answer, duration,
+                                        routing, llama_cpp=request.llama_cpp, on_event=on_event, on_delta=on_delta)
+    if usage is None or not turn.entries:
+        return turn
+    last = {**turn.entries[-1], "usage": added_usage(turn.entries[-1].get("usage"), usage),
+            **({MOMENTS: moments} if moments else {})}
+    completion = replace(completion, requests=completion.requests + int(usage.get("requests") or 1),
+                         prompt_tokens=completion.prompt_tokens + int(usage.get("prompt_tokens") or 0))
+    return Turn(entries=[*turn.entries[:-1], last], completion=completion)
 
 
 def cleaned_whole_answer(turn: Turn, session: VideoSession) -> Turn:
