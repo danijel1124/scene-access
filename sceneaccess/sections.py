@@ -78,31 +78,85 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
     and only a contradiction has the section described anew, once. Before the last request the sections are also
     stored joined without a model, as "joined". Returns the turn of the last request, whose answer answers
     question and whose usage counts all requests."""
-    notify = on_event or (lambda _kind, _text: None)
-    key = progress_key(session, question, model_name)
-    stored = session.sections if session.sections and session.sections.get("key") == key else None
-    progress = stored or {"key": key, "sections": []}
-    described = progress["sections"]
-    # Whole seconds only: the model copies the format, and tenths are noise on a braille display.
-    total = format_time(round(duration))
+    run = _SectionRun(client, session, question, sections, new_runner, save, duration=duration, sound=sound,
+                      on_event=on_event, on_delta=on_delta, routing=routing, max_tool_rounds=max_tool_rounds,
+                      model_name=model_name, reviewer=reviewer)
+    for position in range(len(sections)):
+        if position >= len(run.described):
+            run.describe(position)
+        if review and "review" not in run.described[position]:
+            run.check(position)
+    return run.merge(review)
 
-    def ask(section: Section, before: list[dict[str, Any]], heard: str, fix: str = "") -> Turn:
-        runner = new_runner()
+
+class _SectionRun:
+    """One description of a video in sections: the sections, their stored progress, and what every request about
+    them needs. See describe_in_sections."""
+
+    def __init__(self, client: Any, session: VideoSession, question: str, sections: list[Section],
+                 new_runner: Callable[[], Any], save: Callable[[dict[str, Any]], None], *, duration: float,
+                 sound: Callable[[Section], list[dict[str, Any]]] | None, on_event: EventHandler | None,
+                 on_delta: DeltaHandler | None, routing: dict[str, Any] | None, max_tool_rounds: int,
+                 model_name: str, reviewer: Reviewer | None):
+        self.client, self.session, self.question, self.sections = client, session, question, sections
+        self.new_runner, self.sound, self.reviewer = new_runner, sound, reviewer
+        self.on_event, self.on_delta, self.routing, self.max_tool_rounds = on_event, on_delta, routing, max_tool_rounds
+        self.notify = on_event or (lambda _kind, _text: None)
+        self._save = save
+        key = progress_key(session, question, model_name)
+        stored = session.sections if session.sections and session.sections.get("key") == key else None
+        self.progress = stored or {"key": key, "sections": []}
+        self.described = self.progress["sections"]
+        # Whole seconds only: the model copies the format, and tenths are noise on a braille display.
+        self.total = format_time(round(duration))
+
+    def save(self) -> None:
+        self._save(self.progress)
+
+    def heard(self, section: Section) -> str:
+        """The transcript of the section, if the chat sends one."""
+        return (transcript_between(self.session.transcript, section.start, section.end)
+                if self.session.sends_transcript else "")
+
+    def ask(self, section: Section, before: list[dict[str, Any]], heard: str, fix: str = "") -> Turn:
+        runner = self.new_runner()
         try:
-            parts = _section_parts(section, len(sections), total, question, before, heard, sound, fix,
-                                   session.title)
-            return client.run_turn(session, [*session.system_messages, {"role": "user", "content": parts}],
-                                   runner.run, on_event, routing, max_tool_rounds=max_tool_rounds, on_delta=on_delta)
+            parts = _section_parts(section, len(self.sections), self.total, self.question, before, heard, self.sound,
+                                   fix, self.session.title)
+            return self.client.run_turn(self.session,
+                                        [*self.session.system_messages, {"role": "user", "content": parts}],
+                                        runner.run, self.on_event, self.routing, max_tool_rounds=self.max_tool_rounds,
+                                        on_delta=self.on_delta)
         finally:
             runner.cleanup_files()
 
-    def anew(position: int, fix: str) -> tuple[str, str]:
+    def describe(self, position: int) -> None:
+        """Describes the section at position and stores its description, unchecked."""
+        section = self.sections[position]
+        number = section.index + 1
+        span = f"{format_time(round(section.start))} to {format_time(round(section.end))}"
+        self.notify("section", f"Section {number} of {len(self.sections)}, {span}")
+        turn = self.ask(section, self.described[:position], self.heard(section))
+        if turn.completion.cut_off or not turn.completion.answer.strip():
+            # Not stored: a description cut off at the token limit is no description, and sending the first
+            # question again continues with this section.
+            self.notify("section", f"Section {number} was {'cut off' if turn.completion.cut_off else 'empty'}")
+            raise AnswerCutOff(f"The description of section {number} was "
+                                f"{'cut off at the token limit' if turn.completion.cut_off else 'empty'}; "
+                                "the sections before it are kept. Send the first question again to continue.")
+        self.described.append({"index": section.index, "start": section.start, "end": section.end,
+                               "text": without_part_heading(turn.completion.answer),
+                               "thinking": turn.entries[-1].get("thinking", ""),
+                               "usage": turn.completion.usage_record()})
+        self.save()
+
+    def anew(self, position: int, fix: str) -> tuple[str, str]:
         """Has the section at position described anew with its video, told what was wrong, and cleans the result.
         Returns the outcome, "rewritten", "fix_failed", "fix_worse" or "fix_unchanged", and the description to
         keep."""
-        section, entry = sections[position], described[position]
-        heard = transcript_between(session.transcript, section.start, section.end) if session.sends_transcript else ""
-        turn = ask(section, described[:position], heard, fix)
+        section, entry = self.sections[position], self.described[position]
+        heard = self.heard(section)
+        turn = self.ask(section, self.described[:position], heard, fix)
         entry["usage"] = _added(entry.get("usage"), turn.completion.usage_record())
         written = without_part_heading(turn.completion.answer)
         if turn.completion.cut_off or not written.strip():
@@ -121,44 +175,29 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
         entry["thinking"] = turn.entries[-1].get("thinking", "")
         return "rewritten", cleaned
 
-    for position, section in enumerate(sections):
+    def check(self, position: int) -> None:
+        """Cleans the section's description mechanically, has it checked, removes what adds nothing, has a
+        contradiction described anew once, and stores the result with what the check found."""
+        section, entry = self.sections[position], self.described[position]
         number = section.index + 1
-        span = f"{format_time(round(section.start))} to {format_time(round(section.end))}"
-        heard = transcript_between(session.transcript, section.start, section.end) if session.sends_transcript else ""
-        if position >= len(described):
-            notify("section", f"Section {number} of {len(sections)}, {span}")
-            turn = ask(section, described[:position], heard)
-            if turn.completion.cut_off or not turn.completion.answer.strip():
-                # Not stored: a description cut off at the token limit is no description, and sending the first
-                # question again continues with this section.
-                notify("section", f"Section {number} was {'cut off' if turn.completion.cut_off else 'empty'}")
-                raise AnswerCutOff(f"The description of section {number} was "
-                                    f"{'cut off at the token limit' if turn.completion.cut_off else 'empty'}; "
-                                    "the sections before it are kept. Send the first question again to continue.")
-            described.append({"index": section.index, "start": section.start, "end": section.end,
-                              "text": without_part_heading(turn.completion.answer),
-                              "thinking": turn.entries[-1].get("thinking", ""),
-                              "usage": turn.completion.usage_record()})
-            save(progress)
-        entry = described[position]
-        if not review or "review" in entry:
-            continue
+        heard = self.heard(section)
         first, first_thinking = entry["text"], entry.get("thinking", "")
         # What needs no model is removed first, mechanically: nothing is replaced, so nothing can be made up.
         cleaned, notes = clean_description(first, heard)
         # The check has no video and no chat, so it judges only the text against the title and what is said.
-        notify("section", f"Checking section {number}")
+        self.notify("section", f"Checking section {number}")
         # The same model on the user's own server checks without thinking: with it, Gemma 4 12B went over the
         # same lines again and again, however the prompt asked it to stop (user's wish, 18.11.2026). Its answer
         # is forced into the JSON form, so its reasoning never reads as findings.
-        check_routing = {**((reviewer.routing if reviewer else routing) or {}), **REVIEW_FORMAT}
-        if not reviewer and session.provider == LLAMA_CPP:
+        reviewer = self.reviewer
+        check_routing = {**((reviewer.routing if reviewer else self.routing) or {}), **REVIEW_FORMAT}
+        if not reviewer and self.session.provider == LLAMA_CPP:
             check_routing["chat_template_kwargs"] = {"enable_thinking": False}
-        check = (reviewer.client if reviewer else client).run_turn(
-            replace(session, tools=[], **({"model": reviewer.model} if reviewer else {})),
-            review_messages(cleaned, heard if session.sends_transcript else None, number, section.start,
-                            section.end, session.title),
-            lambda *_: None, on_event, check_routing, max_tool_rounds=0, on_delta=on_delta)
+        check = (reviewer.client if reviewer else self.client).run_turn(
+            replace(self.session, tools=[], **({"model": reviewer.model} if reviewer else {})),
+            review_messages(cleaned, heard if self.session.sends_transcript else None, number, section.start,
+                            section.end, self.session.title),
+            lambda *_: None, self.on_event, check_routing, max_tool_rounds=0, on_delta=self.on_delta)
         entry["usage"] = _added(entry.get("usage"), check.completion.usage_record())
         # A check cut off, empty or not in the JSON form never passes: only the mechanical cleaning counts then,
         # and the Chat history says the check failed (Gemma 4 12B once thought until the context was full).
@@ -170,7 +209,7 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
             except ValueError:
                 failed = "not in the form asked for"
         if failed:
-            notify("section", f"The check of section {number} was {failed}; only the mechanical cleaning counts")
+            self.notify("section", f"The check of section {number} was {failed}; only the mechanical cleaning counts")
         # A line that only says what the blind person would guess anyway is removed, not rewritten.
         obvious = [problem for problem in problems if problem["question"] == "f"]
         cleaned, removed = without_lines_at(cleaned, [problem["time"] for problem in obvious])
@@ -183,10 +222,10 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
                          "reviewer_model": check.completion.model if reviewer else ""}
         if contradictions:
             # Only a contradiction needs the video again: the model must look, not fill a gap.
-            notify("section", f"Describing section {number} again: {len(contradictions)} lines contradict the "
-                              "title or the transcript")
+            self.notify("section", f"Describing section {number} again: {len(contradictions)} lines contradict the "
+                                   "title or the transcript")
             entry["text"] = first
-            outcome, written = anew(position, fix_request(cleaned, contradictions))
+            outcome, written = self.anew(position, fix_request(cleaned, contradictions))
             review_record[outcome] = True
             if outcome == "rewritten":
                 cleaned = written
@@ -194,83 +233,91 @@ def describe_in_sections(client: Any, session: VideoSession, question: str, sect
             review_record.update(first_text=first, first_thinking=first_thinking)
         entry["text"] = cleaned
         entry["review"] = review_record
-        save(progress)
-    progress["joined"] = joined_without_repeats(described)
-    save(progress)
-    notify("section", f"Putting the {len(sections)} sections together")
-    # The merge may look at a moment again and have a part described anew: it is the last check.
-    merge_tools = [tool for tool in session.tools if tool.get("type") == "function"
-                   and tool["function"]["name"] in (ZOOM_FRAME, HD_FRAME)] + ([REDO_TOOL] if review else [])
-    # Parts the merge had described anew before, e.g. before it was cut off, count too: each part once.
-    redone = {entry["index"] + 1 for entry in described if (entry.get("review") or {}).get("merge")}
-    runner = new_runner()
+        self.save()
 
-    def run_merge_tool(name: str, arguments: str) -> ToolResult:
-        if name != REDO_SECTION:
-            return runner.run(name, arguments)
+    def merge(self, review: bool) -> Turn:
+        """Stores the sections joined without a model, then has them put together into the answer; the merge is
+        the last check and may look at a moment again or have a part described anew."""
+        described, session = self.described, self.session
+        self.progress["joined"] = joined_without_repeats(described)
+        self.save()
+        self.notify("section", f"Putting the {len(self.sections)} sections together")
+        # The merge may look at a moment again and have a part described anew: it is the last check.
+        merge_tools = [tool for tool in session.tools if tool.get("type") == "function"
+                       and tool["function"]["name"] in (ZOOM_FRAME, HD_FRAME)] + ([REDO_TOOL] if review else [])
+        # Parts the merge had described anew before, e.g. before it was cut off, count too: each part once.
+        redone = {entry["index"] + 1 for entry in described if (entry.get("review") or {}).get("merge")}
+        runner = self.new_runner()
+
+        def run_merge_tool(name: str, arguments: str) -> ToolResult:
+            if name != REDO_SECTION:
+                return runner.run(name, arguments)
+            try:
+                asked = json.loads(arguments or "{}")
+                number = int(asked["part"])
+            except (ValueError, KeyError, TypeError):
+                return ToolResult("Give the part's number and what is wrong with its description.")
+            if not 1 <= number <= len(self.sections):
+                return ToolResult(f"There are parts 1 to {len(self.sections)}.")
+            if number in redone:
+                return ToolResult(f"Part {number} was described anew already; use what it says now.")
+            redone.add(number)
+            position, problems = number - 1, str(asked.get("problems", "")).strip()
+            self.notify("section", f"Describing section {number} again, as the merge asked: {problems}")
+            entry = described[position]
+            outcome, written = self.anew(position, MERGE_FIX.format(text=entry["text"], found=problems))
+            record = entry.setdefault("review", {})
+            record["merge"] = {"problems": problems, "outcome": outcome}
+            if outcome == "rewritten":
+                record.setdefault("first_text", entry["text"])
+                entry["text"] = written
+            self.progress["joined"] = joined_without_repeats(described)
+            self.save()
+            if outcome != "rewritten":
+                return ToolResult(f"Part {number} could not be described better; keep its description as it is.")
+            return ToolResult(f"Part {number} ({format_time(round(entry['start']))} to "
+                              f"{format_time(round(entry['end']))}), described anew:\n\n{written}")
+
+        text = (joined_sections(described)
+                + ("\n\n" + MERGE_TRANSCRIPT.format(transcript=session.transcript) if session.sends_transcript else "")
+                + ("\n\n" + MERGE_TITLE_HINT.format(title=session.title) if session.title else "")
+                + MERGE_TASK.format(total=self.total, question=self.question) + _merge_check(merge_tools))
         try:
-            asked = json.loads(arguments or "{}")
-            number = int(asked["part"])
-        except (ValueError, KeyError, TypeError):
-            return ToolResult("Give the part's number and what is wrong with its description.")
-        if not 1 <= number <= len(sections):
-            return ToolResult(f"There are parts 1 to {len(sections)}.")
-        if number in redone:
-            return ToolResult(f"Part {number} was described anew already; use what it says now.")
-        redone.add(number)
-        position, problems = number - 1, str(asked.get("problems", "")).strip()
-        notify("section", f"Describing section {number} again, as the merge asked: {problems}")
-        entry = described[position]
-        outcome, written = anew(position, MERGE_FIX.format(text=entry["text"], found=problems))
-        record = entry.setdefault("review", {})
-        record["merge"] = {"problems": problems, "outcome": outcome}
-        if outcome == "rewritten":
-            record.setdefault("first_text", entry["text"])
-            entry["text"] = written
-        progress["joined"] = joined_without_repeats(described)
-        save(progress)
-        if outcome != "rewritten":
-            return ToolResult(f"Part {number} could not be described better; keep its description as it is.")
-        return ToolResult(f"Part {number} ({format_time(round(entry['start']))} to {format_time(round(entry['end']))}),"
-                          f" described anew:\n\n{written}")
-
-    text = (joined_sections(described)
-            + ("\n\n" + MERGE_TRANSCRIPT.format(transcript=session.transcript) if session.sends_transcript else "")
-            + ("\n\n" + MERGE_TITLE_HINT.format(title=session.title) if session.title else "")
-            + MERGE_TASK.format(total=total, question=question) + _merge_check(merge_tools))
-    try:
-        turn = client.run_turn(replace(session, tools=merge_tools),
-                               [*session.system_messages, {"role": "user", "content": text}], run_merge_tool,
-                               on_event, routing, max_tool_rounds=max_tool_rounds if merge_tools else 0,
-                               on_delta=on_delta)
-    except BaseException:
-        runner.cleanup_files()
-        raise
-    if turn.completion.cut_off or not turn.completion.answer.strip():
-        runner.cleanup_files()
-        # Every section and check is stored, so sending the first question again only puts them together anew.
-        notify("section", "Putting the sections together was cut off" if turn.completion.cut_off
-               else "Putting the sections together gave no answer")
-        raise AnswerCutOff("Putting the sections together was "
-                            f"{'cut off at the token limit' if turn.completion.cut_off else 'empty'}; every section "
-                            "is kept. Send the first question again to put them together anew.")
-    # The images the merge looked at belong to the answer now, which the chat stores with them.
-    runner.commit_files()
-    # Cleaned like each section: the answer is what the blind person reads, and the merge, given the whole
-    # transcript and asked to keep every detail, can bring back what was said ("Sie betont, wie griffig er ist").
-    # It also loses "Here is the description of the video:", which it wrote before the first time each run.
-    answer, notes = clean_description(turn.completion.answer,
-                                      session.transcript if session.sends_transcript else "")
-    turn.entries[-1]["content"] = answer
-    progress["answer_notes"] = "\n".join(notes)
-    save(progress)
-    # The usage line under the answer counts every request it took, the sections' included.
-    usages = [entry.get("usage") or {} for entry in described]
-    completion = replace(turn.completion, answer=answer,
-                         requests=turn.completion.requests + sum(int(u.get("requests") or 1) for u in usages),
-                         prompt_tokens=turn.completion.prompt_tokens + sum(int(u.get("prompt_tokens") or 0) for u in usages))
-    turn.entries[-1]["usage"] = completion.usage_record()
-    return Turn(entries=turn.entries, completion=completion)
+            turn = self.client.run_turn(replace(session, tools=merge_tools),
+                                        [*session.system_messages, {"role": "user", "content": text}], run_merge_tool,
+                                        self.on_event, self.routing,
+                                        max_tool_rounds=self.max_tool_rounds if merge_tools else 0,
+                                        on_delta=self.on_delta)
+        except BaseException:
+            runner.cleanup_files()
+            raise
+        if turn.completion.cut_off or not turn.completion.answer.strip():
+            runner.cleanup_files()
+            # Every section and check is stored, so sending the first question again only puts them together anew.
+            self.notify("section", "Putting the sections together was cut off" if turn.completion.cut_off
+                        else "Putting the sections together gave no answer")
+            raise AnswerCutOff("Putting the sections together was "
+                                f"{'cut off at the token limit' if turn.completion.cut_off else 'empty'}; every "
+                                "section is kept. Send the first question again to put them together anew.")
+        # The images the merge looked at belong to the answer now, which the chat stores with them.
+        runner.commit_files()
+        # Cleaned like each section: the answer is what the blind person reads, and the merge, given the whole
+        # transcript and asked to keep every detail, can bring back what was said ("Sie betont, wie griffig er
+        # ist"). It also loses "Here is the description of the video:", which it wrote before the first time each
+        # run.
+        answer, notes = clean_description(turn.completion.answer,
+                                          session.transcript if session.sends_transcript else "")
+        turn.entries[-1]["content"] = answer
+        self.progress["answer_notes"] = "\n".join(notes)
+        self.save()
+        # The usage line under the answer counts every request it took, the sections' included.
+        usages = [entry.get("usage") or {} for entry in described]
+        completion = replace(turn.completion, answer=answer,
+                             requests=turn.completion.requests + sum(int(u.get("requests") or 1) for u in usages),
+                             prompt_tokens=turn.completion.prompt_tokens
+                             + sum(int(u.get("prompt_tokens") or 0) for u in usages))
+        turn.entries[-1]["usage"] = completion.usage_record()
+        return Turn(entries=turn.entries, completion=completion)
 
 
 def _section_parts(section: Section, count: int, total: str, question: str, before: list[dict[str, Any]],
