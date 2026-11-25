@@ -37,6 +37,16 @@ def pytest_configure(config: pytest.Config) -> None:
         move_to_invisible_desktop()
 
 
+@pytest.fixture(autouse=True)
+def silent_screen_reader(monkeypatch):
+    """No test speaks through the screen reader: speech finds none, so speech.announce, through which the whole
+    app speaks, stays silent. A test that checks what is announced patches speech.announce itself; the tests of
+    speech set their own screen reader the same way."""
+    from sceneaccess.ui import speech
+    monkeypatch.setattr(speech, "_loaded", True)
+    monkeypatch.setattr(speech, "_auto", None)
+
+
 @pytest.fixture
 def video_server(tmp_path, request):
     """A local web server with a tiny real video, a page with two videos and a page with one."""

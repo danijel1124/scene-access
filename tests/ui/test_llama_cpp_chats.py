@@ -26,7 +26,6 @@ class InlineThread:
 def frame(tmp_path, monkeypatch):
     monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     monkeypatch.setattr(gui.wx, 'CallAfter', lambda f, *a, **kw: f(*a, **kw))
     monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
     # The fixture server does not exist: its model list is unknown at once, so its model does not hear.

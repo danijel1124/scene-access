@@ -40,7 +40,6 @@ def test_gui_delegates_download_and_preserves_unrelated_files(tmp_path, monkeypa
     monkeypatch.setattr(new_chat.wx, 'GenericProgressDialog', Dialog)
     monkeypatch.setattr(new_chat.wx, 'MilliSleep', lambda ms: pending.pop()())
     monkeypatch.setattr(new_chat.wx, 'MessageBox', lambda *args: None)
-    monkeypatch.setattr(new_chat, 'announce', lambda *args: None)
     monkeypatch.setattr(new_chat, 'download_video_isolated', download)
     host = types.SimpleNamespace(config=types.SimpleNamespace(filename_fields=(), youtube_cookies=''),
                                  status=types.SimpleNamespace(SetLabel=labels.append))

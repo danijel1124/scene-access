@@ -10,7 +10,6 @@ def test_legacy_source_only_persists_single_video(tmp_path, video_server, monkey
     base_url, requests, _payload = video_server
     notices = []
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     monkeypatch.setattr(gui, 'search_videos', lambda *a, **kw: [])
     monkeypatch.setattr(gui, 'url_from_clipboard', lambda: '')
     monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: notices.append(message) or wx.OK)

@@ -12,7 +12,6 @@ from sceneaccess.prompts import BASE_SYSTEM_PROMPT
 
 def test_the_history_menu_hides_shows_and_deletes_an_answer_round(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
     monkeypatch.setattr(gui.wx, "MessageBox", lambda *args, **kwargs: wx.YES)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
@@ -91,7 +90,6 @@ def test_the_history_menu_hides_shows_and_deletes_an_answer_round(tmp_path, monk
 def test_a_transcript_is_added_at_the_end_without_asking_the_model(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
     monkeypatch.setattr(gui.wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
     asked = []
     monkeypatch.setattr(gui.wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or wx.YES)
@@ -150,7 +148,6 @@ def test_enter_sends_the_question_and_shift_enter_keeps_the_line_break(tmp_path,
 
 def test_dont_ask_again_is_kept_only_once_the_answer_arrived(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
     monkeypatch.setattr(gui.wx, "MessageBox", lambda *args, **kwargs: wx.OK)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
@@ -202,7 +199,6 @@ class InlineThread:
 
 def test_a_default_chat_sends_the_settings_model_and_gets_a_transcript_if_it_cannot_hear(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
     monkeypatch.setattr(gui.threading, "Thread", InlineThread)
     monkeypatch.setattr(gui.wx, "CallAfter", lambda function, *args, **kwargs: function(*args, **kwargs))
     monkeypatch.setattr(answering, "wants_transcript", lambda session, _catalog: session.model == "z-ai/glm-flash")
@@ -304,7 +300,6 @@ def test_a_question_in_a_chat_with_a_too_large_video_asks_first(tmp_path, monkey
         assert sent[-1] == "And then?" and frame.size_skip_after_answer == (frame.current.id, "a/one")
         assert shown[0] == (frame.current.sent_video_size, "a/one") and len(shown) == 4
         # Once that answer arrived, the chat stops asking, until its Chat settings change.
-        monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
         frame._completed(frame.current.id, "a/one")
         frame.question.SetValue("More?")
         frame.on_send(None)
@@ -364,7 +359,6 @@ def test_an_earlier_system_prompt_is_rebuilt_with_the_current_base_and_profile_t
 @pytest.mark.parametrize("answer", [wx.YES, wx.NO])
 def test_update_system_prompt_is_offered_only_for_an_earlier_version(tmp_path, monkeypatch, answer):
     monkeypatch.setattr(gui, "config_path_from_standard_paths", lambda _paths: tmp_path / "config.json")
-    monkeypatch.setattr(gui, "announce", lambda *args, **kwargs: None)
     asked = []
     monkeypatch.setattr(gui.wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or answer)
     video = tmp_path / "v.mp4"

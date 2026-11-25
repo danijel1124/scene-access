@@ -11,7 +11,6 @@ from sceneaccess.llm.client import Completion, Turn
 
 def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     notices = []
     monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: notices.append(message) or wx.OK)
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: False)
@@ -65,7 +64,6 @@ def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, m
 
 def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: True)
     monkeypatch.setattr(gui, 'make_transcript', lambda *a: '[00:00] Old transcript')
     monkeypatch.setattr(gui.ChatClient, 'run_turn', lambda *a, **kw:
@@ -142,7 +140,6 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
 ])
 def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reopen, handler):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
 
     def forbidden(*a, **kw):
         pytest.fail(f'{handler} reached mutation work while the chat worker was still running')
@@ -197,7 +194,6 @@ def test_busy_chat_rejects_direct_mutation_handlers(tmp_path, monkeypatch, reope
 
 def test_reopened_mutations_work_after_worker_finishes_without_blocking_other_chats(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     app = wx.App(False)
     windows = gui.ChatWindows()
     try:

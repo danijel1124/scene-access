@@ -29,7 +29,7 @@ from ..request_control import RequestControl, RequestCancelled
 from ..prompts import current_system_prompt, system_prompt
 from ..storage.session_store import (EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING,
                                      VideoSession, VideoSessionStore, SessionNotFound, round_bounds)
-from .speech import announce
+from . import speech
 from .single_instance import SingleInstance
 from ..timecodes import format_time
 from ..llm.tool_calls import WEB_SEARCH
@@ -404,7 +404,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         # The button disappears with the old version, so the focus goes on to the question.
         self.question.SetFocus()
         self.status.SetLabel(self.status.GetLabel() + "\nSystem prompt updated to the current version.")
-        announce("System prompt updated.")
+        speech.announce("System prompt updated.")
 
     def _local_web_search(self) -> bool:
         """Whether the open llama.cpp chat was started with web search through OpenRouter."""
@@ -524,7 +524,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         choices: list[tuple[str, str]] = []
         if link:
             choices.append((f"The video ID in the file name: {link}", link))
-        announce("Searching YouTube…")
+        speech.announce("Searching YouTube…")
         try:
             results = self._with_youtube_sign_in(
                 lambda cookies: self._lookup_with_progress(search_videos, (session.title,), cookies))
@@ -551,7 +551,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                 url = dialog.GetValue().strip()
             if not url:
                 return True
-        announce("Loading the video information…")
+        speech.announce("Loading the video information…")
         try:
             info = self._with_youtube_sign_in(
                 lambda cookies: self._lookup_with_progress(fetch_video_info, (url,), cookies))
@@ -655,7 +655,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             wx.TheClipboard.Close()
         message = "Copied." if len(positions) == 1 else f"Copied {len(positions)} items."
         self.status.SetLabel(self.status.GetLabel().split("\n")[0] + f"\n{message}")
-        announce(message)
+        speech.announce(message)
 
     def set_answers_in_context(self, indices: list[int], in_context: bool) -> None:
         """Hides the answers' rounds (their questions, tool steps and answers) from the model, or shows them again."""
@@ -700,7 +700,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self._set_request_buttons(True)
         self.status.SetLabel("Transcribing the speech. It is added at the end of the chat; nothing is sent to the "
                              "model until you ask a question.")
-        announce("Transcribing the speech…")
+        speech.announce("Transcribing the speech…")
 
         def worker() -> None:
             try:
@@ -727,7 +727,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         message = ("The transcript was added at the end of the chat; the next question sends it." if found_speech
                    else "No speech was detected in the video.")
         self.status.SetLabel(self.status.GetLabel() + f"\n{message}")
-        announce(message)
+        speech.announce(message)
         self.chat_list.SetFocus()
 
     def _history_changed(self, index: int, message: str) -> None:
@@ -739,7 +739,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         if positions:
             self.select_history_item(positions[0])
         self.status.SetLabel(self.status.GetLabel() + f"\n{message}")
-        announce(message)
+        speech.announce(message)
         self.chat_list.SetFocus()
 
     def _chat_busy(self) -> bool:
@@ -811,7 +811,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self._pending_question = question
         self._set_request_buttons(True)
         self.status.SetLabel("Request in progress. The video is being sent from the private local context.")
-        announce("Generating answer…")
+        speech.announce("Generating answer…")
 
         if not initial:
             self._show_progress_item(session_id, f"You: {question}", announce_it=False)
@@ -906,18 +906,18 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             self._request.resume()
             self.pause_button.SetLabel("Pause request")
             self.status.SetLabel("Request resumed.")
-            announce("Request resumed.")
+            speech.announce("Request resumed.")
         else:
             self._request.pause()
             self.pause_button.SetLabel("Resume request")
             self.status.SetLabel("The request will pause after the current round, including its local tools.")
-            announce("The request will pause after the current round.")
+            speech.announce("The request will pause after the current round.")
 
     def _paused(self, text: str) -> None:
         if self._request and self._request.pause_requested:
             self.pause_button.SetLabel("Resume request")
             self.status.SetLabel(text)
-            announce(text)
+            speech.announce(text)
 
     def _finish_request(self, *, restore_question: bool = False) -> None:
         self._request = None
@@ -934,7 +934,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.render_current()
         self._show_unfinished(unfinished)
         self.status.SetLabel("Request cancelled. Completed chat history is preserved; provider charges may still apply.")
-        announce("Request cancelled.")
+        speech.announce("Request cancelled.")
 
     def _reload_current(self) -> None:
         """Reads the open chat again: a request that stopped may have stored sections of its description."""
@@ -995,7 +995,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self.history_rows.append((None, NOTE))  # Not stored yet, so not part of a round.
         self.chat_list.Append(item)
         if announce_it:
-            announce(item, interrupt=False)
+            speech.announce(item, interrupt=False)
 
     def _start_live_item(self, session_id: str, kind: str) -> None:
         """Adds the item that shows the model's thinking or writing while it is streamed. Once the answer is
@@ -1007,7 +1007,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         self._show_progress_item(session_id, f"{label}… (Enter shows it so far)", announce_it=False)
         if self.current and self.current.id == session_id and not self._closing:
             self._live_position = len(self.history_items) - 1
-            announce(f"{label}…", interrupt=False)
+            speech.announce(f"{label}…", interrupt=False)
 
     def _update_live_item(self, session_id: str, kind: str, text: str) -> None:
         position = getattr(self, "_live_position", None)
@@ -1043,7 +1043,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
         if not self.IsActive():
             return  # A background answer must not steal focus from another chat or application.
         if list_had_focus:
-            announce(self.history_items[self.history_caret()])
+            speech.announce(self.history_items[self.history_caret()])
         else:
             self.chat_list.SetFocus()
 

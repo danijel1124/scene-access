@@ -154,7 +154,6 @@ def test_gui_cancel_interrupts_http_header_stall(tmp_path, monkeypatch):
 
     monkeypatch.setattr(new_chat.wx, 'GenericProgressDialog', Dialog)
     monkeypatch.setattr(new_chat.wx, 'MilliSleep', lambda ms: time.sleep(.02))
-    monkeypatch.setattr(new_chat, 'announce', lambda *args: None)
     monkeypatch.setattr(new_chat.wx, 'MessageBox', lambda *args: pytest.fail('Cancellation is not an error'))
     host = types.SimpleNamespace(config=types.SimpleNamespace(filename_fields=(), youtube_cookies=''),
                                  status=types.SimpleNamespace(SetLabel=lambda text: None))

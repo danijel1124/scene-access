@@ -9,7 +9,6 @@ from sceneaccess.ui import chat_list, gui
 @pytest.fixture
 def windows(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     app = wx.App(False)
     manager = gui.ChatWindows()
     manager.show_list()

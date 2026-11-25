@@ -21,7 +21,7 @@ from ..llm.models import AUTO_ROUTER
 from ..prompts import system_prompt
 from ..providers import LLAMA_CPP, OPENROUTER
 from ..storage.session_store import TRANSCRIPT_PENDING
-from .speech import announce
+from . import speech
 from ..pipeline.tools import tool_definitions
 from ..request_control import RequestControl, RequestCancelled
 from ..media.playlist_files import playlist_options
@@ -239,7 +239,7 @@ class NewChatMixin:
             finally:
                 state["done"] = True
 
-        announce("Shrinking the video…")
+        speech.announce("Shrinking the video…")
         threading.Thread(target=worker, daemon=True).start()
         message = f"Shrinking the video with ffmpeg to at most {megabytes(self._shrink_target())} once sent"
         with wx.GenericProgressDialog("Shrinking the video", message, maximum=100, parent=self,
@@ -303,7 +303,7 @@ class NewChatMixin:
             finally:
                 state["done"] = True
 
-        announce("Downloading video…")
+        speech.announce("Downloading video…")
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
         message = f"Downloading the video (up to {max_height}p) to {target_dir}"
@@ -323,7 +323,7 @@ class NewChatMixin:
             notice = (f'The download was cancelled. Native HLS downloads may leave media fragment files in '
                       f'{target_dir}. These are not automatically removed unless owned by this job.')
             self.status.SetLabel(notice)
-            announce(notice)
+            speech.announce(notice)
             return None
         if state["error"] is not None:
             if needs_sign_in(state["error"]) and self._ask_youtube_sign_in():

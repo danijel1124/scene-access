@@ -64,7 +64,6 @@ def _post_when_started(marker: Path, done: Path, heartbeat: list) -> None:
 @pytest.mark.parametrize('cancel', [False, True])
 def test_old_source_lookup_pumps_gui_and_can_be_cancelled(tmp_path, monkeypatch, cancel):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     monkeypatch.setattr(gui, 'search_videos', _slow_search)
     marker = tmp_path/'lookup-started'
     done = tmp_path/'lookup-done'

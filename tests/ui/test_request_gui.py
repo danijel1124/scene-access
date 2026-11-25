@@ -2,7 +2,7 @@ import pytest
 import wx
 
 from sceneaccess.pipeline import answering
-from sceneaccess.ui import gui
+from sceneaccess.ui import gui, speech
 from sceneaccess.ui.chat_history import chat_history_entries
 from sceneaccess.llm.client import Completion, Turn
 
@@ -10,7 +10,6 @@ from sceneaccess.llm.client import Completion, Turn
 @pytest.fixture
 def frame(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'config_path_from_standard_paths', lambda _: tmp_path / 'config.json')
-    monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     monkeypatch.setattr(gui.wx, 'MessageBox', lambda *a, **kw: wx.OK)
     monkeypatch.setattr(gui.wx, 'CallAfter', lambda f, *a, **kw: f(*a, **kw))
     app = wx.App(False)
@@ -177,7 +176,7 @@ def test_a_background_answer_never_takes_the_focus(frame, monkeypatch):
     frame.store.record_turn(frame.current.id, gui.OWNER_ID, [{'role': 'assistant', 'content': 'Answer'}])
     focused, spoken = [], []
     monkeypatch.setattr(frame.chat_list, 'SetFocus', lambda: focused.append(True))
-    monkeypatch.setattr(gui, 'announce', lambda text, **kw: spoken.append(text))
+    monkeypatch.setattr(speech, 'announce', lambda text, **kw: spoken.append(text))
     # Another chat window or application is active: neither the focus nor the screen reader is taken.
     monkeypatch.setattr(frame, 'IsActive', lambda: False)
     frame._completed(frame.current.id, 'fixture')
