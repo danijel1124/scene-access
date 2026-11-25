@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import getpass
 import json
 import os
 import sqlite3
@@ -526,3 +527,24 @@ class VideoSessionStore:
         if row is None:
             raise SessionNotFound(session_id)
         return json.loads(row[0])
+
+
+def _local_user() -> str:
+    # getpass also reads USERNAME, so it works on Windows, where USER is usually not set.
+    try:
+        return getpass.getuser() or "user"
+    except Exception:
+        return "user"
+
+
+OWNER_ID = "local:" + _local_user()
+# Earlier versions read only USER, so on Windows every chat was stored under this owner.
+LEGACY_OWNER_ID = "local:" + os.environ.get("USER", "user")
+
+
+def open_store(config_path: Path, owner_id: str, legacy_owner_id: str) -> VideoSessionStore:
+    store = VideoSessionStore(config_path.parent / "chats")
+    if legacy_owner_id != owner_id:
+        # Earlier versions stored every chat on Windows under one owner; see LEGACY_OWNER_ID.
+        store.reassign_owner(legacy_owner_id, owner_id)
+    return store

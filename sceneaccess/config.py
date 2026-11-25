@@ -194,3 +194,7 @@ def save_config(path: Path, config: AppConfig) -> None:
     finally:
         temporary.unlink(missing_ok=True)
     os.chmod(path, 0o600)
+
+
+def resolve_openrouter_key(config: AppConfig) -> str | None:
+    return os.environ.get("OPENROUTER_API_KEY") or config.api_key or None

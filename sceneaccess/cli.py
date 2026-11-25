@@ -22,7 +22,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
-from .app_window import LEGACY_OWNER_ID, OWNER_ID, open_store, resolve_openrouter_key
+from .config import resolve_openrouter_key
+from .session_store import LEGACY_OWNER_ID, OWNER_ID, open_store
 from .chat_history import chat_history_rows
 from .config import AppConfig, load_config
 from . import answering

@@ -12,7 +12,9 @@ from pathlib import Path
 import wx
 
 from . import answering
-from .app_window import LEGACY_OWNER_ID, OWNER_ID, AppWindow, open_store, resolve_openrouter_key
+from .app_window import AppWindow
+from .config import resolve_openrouter_key
+from .session_store import LEGACY_OWNER_ID, OWNER_ID, open_store
 from .chat_history import ANSWER, NOTE, chat_history_rows, thinking_item, transcript_entry
 from .chat_list import ChatListFrame
 from .config import AppConfig, config_path_from_standard_paths, load_config, save_config

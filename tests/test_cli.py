@@ -4,7 +4,7 @@ import json
 import pytest
 
 from sceneaccess import answering, cli
-from sceneaccess.app_window import OWNER_ID
+from sceneaccess.session_store import OWNER_ID
 from sceneaccess.config import AppConfig, save_config
 from sceneaccess.openrouter import Completion, OpenRouterClient, Turn
 from sceneaccess.prompts import system_prompt
