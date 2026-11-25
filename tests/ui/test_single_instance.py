@@ -7,7 +7,7 @@ from pathlib import Path
 import wx
 
 # A child process starts on the user's desktop; this keeps the windows of a child running the GUI invisible.
-HIDDEN = (f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r}); import conftest; "
+HIDDEN = (f"import sys; sys.path.insert(0, {str(Path(__file__).parent.parent)!r}); import conftest; "
           "conftest.move_to_invisible_desktop()\n")
 
 
