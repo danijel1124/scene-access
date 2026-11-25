@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from sceneaccess.openrouter import OpenRouterClient, OpenRouterError
+from sceneaccess.llm.client import OpenRouterClient, OpenRouterError
 from sceneaccess.request_control import RequestControl, RequestCancelled
 
 

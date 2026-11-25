@@ -4,12 +4,12 @@ import types
 
 import pytest
 
-from sceneaccess import youtube
+from sceneaccess.media import youtube
 
 
 @pytest.mark.parametrize('cancel', [False, True])
 def test_gui_delegates_download_and_preserves_unrelated_files(tmp_path, monkeypatch, cancel):
-    from sceneaccess import new_chat
+    from sceneaccess.ui import new_chat
     unrelated = tmp_path / 'other-download.part'
     pending = []
     controls = []
@@ -191,7 +191,7 @@ def test_ownership_rejects_unsafe_paths(tmp_path, kind):
 def test_real_yt_dlp_download_stays_in_target_and_cleans_on_cancel(tmp_path, cancel):
     import http.server
     import threading
-    from sceneaccess.new_chat import DownloadCancelled
+    from sceneaccess.ui.new_chat import DownloadCancelled
 
     payload = b'video data' * 2000
 

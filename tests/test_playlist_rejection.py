@@ -5,7 +5,7 @@ import subprocess
 import imageio_ffmpeg
 import pytest
 
-from sceneaccess.youtube import download_video_isolated
+from sceneaccess.media.youtube import download_video_isolated
 
 
 def test_collection_is_rejected_before_downloading_any_video(tmp_path, video_server):
@@ -19,7 +19,7 @@ def test_collection_is_rejected_before_downloading_any_video(tmp_path, video_ser
 
 
 def test_hd_collection_is_rejected_before_any_media_transfer(tmp_path, video_server):
-    from sceneaccess.youtube import download_section
+    from sceneaccess.media.youtube import download_section
     url, requests, _payload = video_server
     target = tmp_path / 'hd'
     with pytest.raises(ValueError, match='single video'):
@@ -30,7 +30,7 @@ def test_hd_collection_is_rejected_before_any_media_transfer(tmp_path, video_ser
 
 
 def test_hd_single_video_still_produces_a_decodable_clip(tmp_path, video_server):
-    from sceneaccess.youtube import download_section
+    from sceneaccess.media.youtube import download_section
     url, requests, _payload = video_server
     target = tmp_path / 'hd'
     path = download_section(url + '/one.mp4', 0, 0.15, target)
@@ -42,9 +42,9 @@ def test_hd_single_video_still_produces_a_decodable_clip(tmp_path, video_server)
 
 
 def test_hd_tool_rejects_a_previously_stored_collection(tmp_path, video_server):
-    from sceneaccess.session_store import VideoSessionStore
-    from sceneaccess.tool_calls import HD_FRAME
-    from sceneaccess.tools import ToolRunner, tool_definitions
+    from sceneaccess.storage.session_store import VideoSessionStore
+    from sceneaccess.llm.tool_calls import HD_FRAME
+    from sceneaccess.pipeline.tools import ToolRunner, tool_definitions
     from sceneaccess.request_control import RequestControl
     url, requests, payload = video_server
     source = tmp_path / 'fixture.mp4'
@@ -69,7 +69,7 @@ def test_single_video_still_downloads_normally(tmp_path, video_server):
 
 
 def test_collection_choices_are_metadata_only_and_selected_url_downloads(tmp_path, video_server):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
     from sceneaccess.request_control import RequestControl
     from sceneaccess.worker_process import run_isolated_task
 
@@ -91,8 +91,8 @@ def test_collection_choices_are_metadata_only_and_selected_url_downloads(tmp_pat
 
 
 def test_collection_reopening_finds_completed_single_download(tmp_path, video_server, monkeypatch):
-    from sceneaccess.youtube import list_video_choices, download_video
-    from sceneaccess.playlist_files import playlist_options
+    from sceneaccess.media.youtube import list_video_choices, download_video
+    from sceneaccess.media.playlist_files import playlist_options
     url, _requests, _payload = video_server
     import yt_dlp
     with monkeypatch.context() as patch:
@@ -105,7 +105,7 @@ def test_collection_reopening_finds_completed_single_download(tmp_path, video_se
 
 
 def test_single_page_returns_one_choice_without_fetching_media(video_server):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
 
     url, requests, _payload = video_server
     result = list_video_choices(url + '/single.html')
@@ -137,7 +137,7 @@ def extractor_seam(monkeypatch):
 
 @pytest.mark.parametrize('kind', ['playlist', 'multi_video'])
 def test_extractor_collections_are_flat_and_lazy(video_server, extractor_seam, kind):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
 
     url, requests, _payload = video_server
     results, calls = extractor_seam
@@ -165,7 +165,7 @@ def test_extractor_collections_are_flat_and_lazy(video_server, extractor_seam, k
 
 @pytest.mark.parametrize('kind', ['playlist', 'multi_video'])
 def test_extractor_collection_guard_never_consumes_children(tmp_path, video_server, extractor_seam, kind):
-    from sceneaccess.youtube import download_video
+    from sceneaccess.media.youtube import download_video
 
     url, requests, _payload = video_server
     results, calls = extractor_seam
@@ -186,7 +186,7 @@ def test_extractor_collection_guard_never_consumes_children(tmp_path, video_serv
 
 
 def test_nested_collections_are_not_recursively_expanded(video_server, extractor_seam):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
 
     url, requests, _payload = video_server
     results, _calls = extractor_seam
@@ -209,7 +209,7 @@ def test_nested_collections_are_not_recursively_expanded(video_server, extractor
 
 
 def test_missing_and_unavailable_entries_are_skipped(video_server, extractor_seam):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
 
     url, requests, _payload = video_server
     results, _calls = extractor_seam
@@ -227,7 +227,7 @@ def test_missing_and_unavailable_entries_are_skipped(video_server, extractor_sea
 
 
 def test_watch_with_playlist_keeps_single_video_and_cookie_options(tmp_path, video_server, monkeypatch):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
     from yt_dlp.extractor.youtube import YoutubeIE
 
     url, requests, _payload = video_server
@@ -259,7 +259,7 @@ def test_watch_with_playlist_keeps_single_video_and_cookie_options(tmp_path, vid
 
 @pytest.mark.parametrize('failed_index', [0, 1, 2])
 def test_failed_entry_metadata_preserves_other_choices(video_server, extractor_seam, failed_index):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
     from yt_dlp.utils import ExtractorError
 
     url, requests, _payload = video_server
@@ -289,7 +289,7 @@ def test_failed_entry_metadata_preserves_other_choices(video_server, extractor_s
 
 @pytest.mark.parametrize('scope', ['collection', 'child'])
 def test_metadata_cancellation_propagates(video_server, extractor_seam, scope):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
     from sceneaccess.request_control import RequestCancelled
 
     url, requests, _payload = video_server
@@ -308,7 +308,7 @@ def test_metadata_cancellation_propagates(video_server, extractor_seam, scope):
 
 
 def test_root_collection_error_propagates(video_server, extractor_seam):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
     from yt_dlp.utils import DownloadError, ExtractorError
 
     url, requests, _payload = video_server
@@ -325,7 +325,7 @@ def test_root_collection_error_propagates(video_server, extractor_seam):
 
 @pytest.mark.parametrize('ext', ['mp4', 'webm', 'mov'])
 def test_known_extension_does_not_offer_other_container_names(video_server, extractor_seam, ext):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
 
     url, requests, _payload = video_server
     results, calls = extractor_seam
@@ -343,7 +343,7 @@ def test_known_extension_does_not_offer_other_container_names(video_server, extr
 @pytest.mark.parametrize('fields, expected', [(('title', 'id'), 'First [first].mp4'),
                                              (('title',), 'First.mp4')])
 def test_flat_choices_predict_expected_basename(video_server, extractor_seam, fields, expected):
-    from sceneaccess.youtube import list_video_choices
+    from sceneaccess.media.youtube import list_video_choices
 
     url, requests, _payload = video_server
     results, _calls = extractor_seam
@@ -361,8 +361,8 @@ def test_flat_choices_predict_expected_basename(video_server, extractor_seam, fi
 @pytest.mark.parametrize('title_length', [40, 220])
 def test_flat_unknown_extension_reuses_real_container_download(
         tmp_path, video_server, extractor_seam, request, job_id, title_length):
-    from sceneaccess.youtube import download_video, list_video_choices
-    from sceneaccess.playlist_files import playlist_options
+    from sceneaccess.media.youtube import download_video, list_video_choices
+    from sceneaccess.media.playlist_files import playlist_options
 
     url, requests, payload = video_server
     ext = request.node.callspec.params['video_server']
@@ -388,8 +388,8 @@ def test_flat_unknown_extension_reuses_real_container_download(
 
 @pytest.mark.parametrize('title_length', [40, 220])
 def test_job_prefixed_download_is_found_by_predicted_name(tmp_path, video_server, extractor_seam, title_length):
-    from sceneaccess.youtube import download_video, list_video_choices
-    from sceneaccess.playlist_files import playlist_options
+    from sceneaccess.media.youtube import download_video, list_video_choices
+    from sceneaccess.media.playlist_files import playlist_options
     url, _requests, _payload = video_server
     results, _calls = extractor_seam
     source = url + '/long-title'
@@ -404,7 +404,7 @@ def test_job_prefixed_download_is_found_by_predicted_name(tmp_path, video_server
 
 @pytest.mark.parametrize('fields', [('title', 'id'), ('title',)])
 def test_predicted_single_filename_matches_real_download(tmp_path, video_server, fields):
-    from sceneaccess.youtube import download_video, list_video_choices
+    from sceneaccess.media.youtube import download_video, list_video_choices
 
     url, requests, payload = video_server
     result = list_video_choices(url + '/single.html', filename_fields=fields)

@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .request_control import RequestControl
-from .session_store import SECTION_FILE_PREFIX, VideoSession
-from .video import local_video, run_ffmpeg, video_size_and_duration
-from .transcript import sound_parts
+from ..request_control import RequestControl
+from ..storage.session_store import SECTION_FILE_PREFIX, VideoSession
+from ..media.video import local_video, run_ffmpeg, video_size_and_duration
+from ..media.transcript import sound_parts
 
 # Sections end a little before the limit, as encoding can make a cut a few hundredths of a second longer.
 LIMIT_MARGIN = 0.98

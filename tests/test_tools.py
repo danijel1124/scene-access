@@ -4,10 +4,10 @@ from pathlib import Path
 import imageio_ffmpeg
 import pytest
 
-from sceneaccess.session_store import VideoSessionStore
+from sceneaccess.storage.session_store import VideoSessionStore
 from sceneaccess.timecodes import format_time, parse_time
-from sceneaccess.tool_calls import HD_FRAME, VIDEO_INFO, ZOOM_FRAME, describe_call
-from sceneaccess.tools import ToolRunner, function_tool_names, tool_definitions
+from sceneaccess.llm.tool_calls import HD_FRAME, VIDEO_INFO, ZOOM_FRAME, describe_call
+from sceneaccess.pipeline.tools import ToolRunner, function_tool_names, tool_definitions
 
 
 def test_time_parsing_and_formatting():

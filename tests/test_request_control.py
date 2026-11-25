@@ -7,7 +7,7 @@ def test_cancelling_ffmpeg_terminates_the_process(monkeypatch):
     import subprocess
     import sys
     import threading
-    from sceneaccess import video
+    from sceneaccess.media import video
     from sceneaccess.request_control import RequestControl, RequestCancelled
     real_popen = subprocess.Popen
     started, done = threading.Event(), threading.Event()
@@ -42,8 +42,8 @@ def test_cancelling_ffmpeg_terminates_the_process(monkeypatch):
 
 
 def test_cancelled_transcription_does_not_extract_or_send_audio():
-    from sceneaccess.transcript import make_transcript
-    from sceneaccess.openrouter import OpenRouterClient
+    from sceneaccess.media.transcript import make_transcript
+    from sceneaccess.llm.client import OpenRouterClient
     from sceneaccess.request_control import RequestControl, RequestCancelled
     control = RequestControl()
     control.cancel()

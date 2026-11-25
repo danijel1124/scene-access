@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .config import AppConfig, resolve_openrouter_key
-from .models import ModelCatalog
+from ..settings.config import AppConfig, resolve_openrouter_key
+from ..llm.models import ModelCatalog
 
 
 class AppWindow:

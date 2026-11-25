@@ -4,7 +4,7 @@ import time
 import types
 
 import pytest
-from sceneaccess import youtube
+from sceneaccess.media import youtube
 from sceneaccess.request_control import RequestControl, RequestCancelled
 
 

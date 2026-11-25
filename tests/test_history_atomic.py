@@ -1,8 +1,8 @@
 import json
 import threading
 
-from sceneaccess import session_store
-from sceneaccess.session_store import VideoSessionStore
+from sceneaccess.storage import session_store
+from sceneaccess.storage.session_store import VideoSessionStore
 
 
 def test_parallel_turn_appends_are_atomic(tmp_path, monkeypatch):

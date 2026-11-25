@@ -8,8 +8,8 @@ import stat
 import uuid
 from typing import Any, Callable
 
-from .request_control import RequestControl
-from .worker_process import run_isolated_task
+from ..request_control import RequestControl
+from ..worker_process import run_isolated_task
 
 
 def _single_video_downloader_class() -> Any:

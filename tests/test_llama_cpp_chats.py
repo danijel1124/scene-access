@@ -4,13 +4,15 @@ import sqlite3
 import pytest
 import wx
 
-from sceneaccess import answering, gui, models
-from sceneaccess.openrouter import Completion, OpenRouterClient, Turn
+from sceneaccess.llm import models
+from sceneaccess.pipeline import answering
+from sceneaccess.ui import gui
+from sceneaccess.llm.client import Completion, OpenRouterClient, Turn
 from sceneaccess.providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL
-from sceneaccess.session_store import (TRANSCRIBE_AUTO, TRANSCRIBE_OFF, TRANSCRIBE_ON, TRANSCRIPT_DONE,
-                                       TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSessionStore)
-from sceneaccess.tool_calls import WEB_SEARCH, ToolResult
-from sceneaccess.tools import ToolRunner, function_tool_names, provider_tools, tool_definitions
+from sceneaccess.storage.session_store import (TRANSCRIBE_AUTO, TRANSCRIBE_OFF, TRANSCRIBE_ON, TRANSCRIPT_DONE,
+                                               TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSessionStore)
+from sceneaccess.llm.tool_calls import WEB_SEARCH, ToolResult
+from sceneaccess.pipeline.tools import ToolRunner, function_tool_names, provider_tools, tool_definitions
 
 LLAMA_URL = 'http://192.0.2.1:8080/v1/chat/completions'
 
@@ -221,8 +223,8 @@ def section_reply(text, merged='The whole video.'):
 
 
 def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(frame, monkeypatch):
-    from sceneaccess.section_cuts import Section
-    from sceneaccess.session_store import SECTION_FILE_PREFIX
+    from sceneaccess.pipeline.section_cuts import Section
+    from sceneaccess.storage.session_store import SECTION_FILE_PREFIX
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='Long', model='', initial_question='Describe it.',
         system_prompt='Base.', tools=tool_definitions(online_video=False, web_search=False), provider=LLAMA_CPP,
@@ -264,8 +266,8 @@ def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(
 
 
 def test_a_reviewer_model_without_an_openrouter_key_stops_before_any_section_is_sent(frame, monkeypatch):
-    from sceneaccess.section_cuts import Section
-    from sceneaccess.session_store import SECTION_FILE_PREFIX
+    from sceneaccess.pipeline.section_cuts import Section
+    from sceneaccess.storage.session_store import SECTION_FILE_PREFIX
     frame.config = gui.replace(frame.config, api_key='', section_reviewer_model='vendor/reviewer')
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='Long', model='', initial_question='Describe it.',
@@ -335,8 +337,8 @@ class ServerModel:
 
 
 def test_a_stopped_description_continues_on_sending_again_but_not_with_another_model(frame, monkeypatch):
-    from sceneaccess.section_cuts import Section
-    from sceneaccess.session_store import SECTION_FILE_PREFIX
+    from sceneaccess.pipeline.section_cuts import Section
+    from sceneaccess.storage.session_store import SECTION_FILE_PREFIX
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='Long', model='', initial_question='Describe it.',
         system_prompt='Base.', tools=tool_definitions(online_video=False, web_search=False), provider=LLAMA_CPP,
@@ -443,8 +445,8 @@ def test_an_error_names_the_chats_provider_and_explains_a_too_small_context(fram
 
 @pytest.mark.parametrize('openrouter_key', [False, True])
 def test_a_llama_cpp_chat_offers_the_web_search_only_with_an_openrouter_key(frame, openrouter_key):
-    from sceneaccess.chat_dialogs import StartChatDialog
-    from sceneaccess.tool_calls import ZOOM_FRAME
+    from sceneaccess.ui.chat_dialogs import StartChatDialog
+    from sceneaccess.llm.tool_calls import ZOOM_FRAME
     dialog = StartChatDialog(frame, (), '', llama_cpp=True, openrouter_key=openrouter_key, transcribe=TRANSCRIBE_OFF)
     try:
         assert dialog.chosen_tools() == ((ZOOM_FRAME, WEB_SEARCH) if openrouter_key else (ZOOM_FRAME,))
@@ -459,7 +461,7 @@ def test_a_llama_cpp_chat_offers_the_web_search_only_with_an_openrouter_key(fram
 @pytest.mark.parametrize('llama_cpp', [False, True])
 @pytest.mark.parametrize('mode', [TRANSCRIBE_AUTO, TRANSCRIBE_ON, TRANSCRIBE_OFF])
 def test_every_new_chat_offers_the_transcript_mode_preselected_from_settings(frame, llama_cpp, mode):
-    from sceneaccess.chat_dialogs import StartChatDialog
+    from sceneaccess.ui.chat_dialogs import StartChatDialog
     dialog = StartChatDialog(frame, (), '', llama_cpp=llama_cpp, openrouter_key=True, transcribe=mode)
     try:
         assert dialog.transcribe.IsShown() and dialog.chosen_transcribe() == mode
@@ -476,8 +478,8 @@ def test_a_new_chat_gets_the_transcript_mode_chosen_when_starting(frame):
 
 
 def test_chat_settings_move_a_chat_with_its_tools_to_the_other_provider(frame, monkeypatch):
-    from sceneaccess.tool_calls import ZOOM_FRAME
-    from sceneaccess.tools import tool_key
+    from sceneaccess.llm.tool_calls import ZOOM_FRAME
+    from sceneaccess.pipeline.tools import tool_key
     start(frame, web_search=True)
 
     class Dialog:
@@ -499,8 +501,8 @@ def test_chat_settings_move_a_chat_with_its_tools_to_the_other_provider(frame, m
 
 
 def test_moving_to_llama_cpp_without_an_openrouter_key_drops_the_web_search(frame, monkeypatch):
-    from sceneaccess.tool_calls import ZOOM_FRAME
-    from sceneaccess.tools import tool_key
+    from sceneaccess.llm.tool_calls import ZOOM_FRAME
+    from sceneaccess.pipeline.tools import tool_key
     frame.config = gui.replace(frame.config, api_key='')
     frame.current = frame.store.create_session(
         owner_id=gui.OWNER_ID, source_path=frame.video, title='B', model='', initial_question='?',

@@ -1,4 +1,4 @@
-from sceneaccess.chat_history import chat_history_entries, usage_text
+from sceneaccess.ui.chat_history import chat_history_entries, usage_text
 
 
 def chat_history_items(*arguments):
@@ -76,7 +76,7 @@ def test_chat_history_shows_tool_steps_readably_and_ends_with_the_answer():
 
 
 def test_the_models_thinking_is_folded_and_belongs_to_its_round():
-    from sceneaccess.chat_history import THINKING, chat_history_rows
+    from sceneaccess.ui.chat_history import THINKING, chat_history_rows
     thinking = " ".join(f"word{number}" for number in range(40))
     rows = chat_history_rows("Brand?", [
         {"role": "assistant", "content": None, "thinking": "Zoom first.", "tool_calls": [

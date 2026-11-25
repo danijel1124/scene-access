@@ -22,16 +22,16 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
-from .config import resolve_openrouter_key
-from .session_store import LEGACY_OWNER_ID, OWNER_ID, open_store
-from .chat_history import chat_history_rows
-from .config import AppConfig, load_config
-from . import answering
-from .models import ModelCatalog
+from .settings.config import resolve_openrouter_key
+from .storage.session_store import LEGACY_OWNER_ID, OWNER_ID, open_store
+from .ui.chat_history import chat_history_rows
+from .settings.config import AppConfig, load_config
+from .pipeline import answering
+from .llm.models import ModelCatalog
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
-from .session_store import REMOVED, TRANSCRIBE_MODES, VideoSession, VideoSessionStore
-from .hearing import wants_transcript
+from .storage.session_store import REMOVED, TRANSCRIBE_MODES, VideoSession, VideoSessionStore
+from .pipeline.hearing import wants_transcript
 
 
 def default_data_dir() -> Path:

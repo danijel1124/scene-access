@@ -4,8 +4,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from sceneaccess import transcript
-from sceneaccess.config import AppConfig, save_config
+from sceneaccess.media import transcript
+from sceneaccess.settings.config import AppConfig, save_config
 
 
 def test_partial_extraction_failure_is_not_accepted(tmp_path, monkeypatch):

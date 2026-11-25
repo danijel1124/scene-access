@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import AUTO_ROUTER, ModelCatalog
-from .providers import LLAMA_CPP
-from .session_store import TRANSCRIBE_AUTO, TRANSCRIBE_ON, VideoSession
+from ..llm.models import AUTO_ROUTER, ModelCatalog
+from ..providers import LLAMA_CPP
+from ..storage.session_store import TRANSCRIBE_AUTO, TRANSCRIBE_ON, VideoSession
 
 
 def model_hears(session: VideoSession, catalog: ModelCatalog) -> bool:

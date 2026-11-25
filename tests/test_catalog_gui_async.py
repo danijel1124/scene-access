@@ -3,9 +3,9 @@ import time
 
 import wx
 import pytest
-from sceneaccess import gui, dialogs
-from sceneaccess.config import AppConfig
-from sceneaccess.models import api_url
+from sceneaccess.ui import gui, dialogs
+from sceneaccess.settings.config import AppConfig
+from sceneaccess.llm.models import api_url
 from sceneaccess.providers import OPENROUTER_URL
 
 

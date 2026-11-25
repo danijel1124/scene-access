@@ -3,15 +3,15 @@ import sys
 import threading
 import time
 
-import sceneaccess.video_size as video_size
+import sceneaccess.media.video_size as video_size
 
 import imageio_ffmpeg
 import pytest
 
-from sceneaccess.video import video_size_and_duration
-from sceneaccess.video_size import (ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_plan,
-                                    shrink_video)
-from sceneaccess.youtube import MAX_HEIGHT_CHOICES
+from sceneaccess.media.video import video_size_and_duration
+from sceneaccess.media.video_size import (ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_plan,
+                                          shrink_video)
+from sceneaccess.media.youtube import MAX_HEIGHT_CHOICES
 
 
 def make_video(path, seconds=6):

@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 import wx
 
-from sceneaccess import chat_list, gui
+from sceneaccess.ui import chat_list, gui
 
 
 @pytest.fixture

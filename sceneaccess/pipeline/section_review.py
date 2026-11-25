@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from .cleaning import TIME_AT_START
-from .prompts import FIX_TASK, REVIEW_TASK, REVIEWER_SYSTEM_PROMPT
-from .timecodes import format_time
+from ..prompts import FIX_TASK, REVIEW_TASK, REVIEWER_SYSTEM_PROMPT
+from ..timecodes import format_time
 
 
 @dataclass(frozen=True)

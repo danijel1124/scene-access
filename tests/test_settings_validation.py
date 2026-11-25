@@ -4,8 +4,8 @@ import wx
 
 import pytest
 
-from sceneaccess import chat_list, gui
-from sceneaccess.config import AppConfig
+from sceneaccess.ui import chat_list, gui
+from sceneaccess.settings.config import AppConfig
 from sceneaccess.providers import LLAMA_CPP
 
 

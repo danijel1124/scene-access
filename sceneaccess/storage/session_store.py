@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .prompts import (LANGUAGE_HINT, SECTIONS_INSTEAD_OF_VIDEO, TITLE_HINT, TRANSCRIPT_HEARD_INTRO, TRANSCRIPT_INTRO,
-                      TRANSCRIPT_LATER_INTRO, sound_blocks)
-from .providers import OPENROUTER
-from .timecodes import format_time
+from ..prompts import (LANGUAGE_HINT, SECTIONS_INSTEAD_OF_VIDEO, TITLE_HINT, TRANSCRIPT_HEARD_INTRO, TRANSCRIPT_INTRO,
+                       TRANSCRIPT_LATER_INTRO, sound_blocks)
+from ..providers import OPENROUTER
+from ..timecodes import format_time
 
 
 class SessionNotFound(KeyError):

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from sceneaccess.models import ModelCatalog, api_url, routing
+from sceneaccess.llm.models import ModelCatalog, api_url, routing
 
 MODELS = {"data": [
     {"id": "google/gemini-flash", "architecture": {"input_modalities": ["text", "image", "audio", "video"]},

@@ -11,9 +11,9 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
-from .request_control import RequestControl
-from .session_store import NO_SOUND_FILE, SOUND_FILE_PREFIX, VideoSession
-from .timecodes import format_time
+from ..request_control import RequestControl
+from ..storage.session_store import NO_SOUND_FILE, SOUND_FILE_PREFIX, VideoSession
+from ..timecodes import format_time
 from .video import local_video, run_ffmpeg
 
 # Audio is sent in pieces of this length, so long videos stay within request size limits.

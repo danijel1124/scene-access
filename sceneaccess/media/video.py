@@ -12,8 +12,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from .request_control import RequestControl
-from .session_store import VideoSession
+from ..request_control import RequestControl
+from ..storage.session_store import VideoSession
 
 
 def _ffmpeg() -> str:

@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from sceneaccess.session_store import SessionNotFound, VideoSessionStore, round_bounds
+from sceneaccess.storage.session_store import SessionNotFound, VideoSessionStore, round_bounds
 
 
 def test_chats_from_the_first_release_still_open_after_the_new_columns_are_added(tmp_path: Path):

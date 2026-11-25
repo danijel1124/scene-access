@@ -4,8 +4,9 @@ import time
 import pytest
 import wx
 
-from sceneaccess import answering, gui
-from sceneaccess.openrouter import Completion, Turn
+from sceneaccess.pipeline import answering
+from sceneaccess.ui import gui
+from sceneaccess.llm.client import Completion, Turn
 
 
 def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, monkeypatch):

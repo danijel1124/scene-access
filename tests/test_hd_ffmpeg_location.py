@@ -7,7 +7,7 @@ import imageio_ffmpeg
 import pytest
 from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
 
-from sceneaccess.youtube import download_section
+from sceneaccess.media.youtube import download_section
 
 
 @pytest.fixture

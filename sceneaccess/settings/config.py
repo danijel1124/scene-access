@@ -5,11 +5,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .prompts import DEFAULT_PROFILE, DEFAULT_PROFILES, UPGRADED_PROFILE_TEXTS
-from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, PROVIDERS
-from .session_store import TRANSCRIBE_AUTO, TRANSCRIBE_MODES
-from .video_size import DEFAULT_SHRINK_TARGET_MB
-from .youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
+from ..prompts import DEFAULT_PROFILE, DEFAULT_PROFILES, UPGRADED_PROFILE_TEXTS
+from ..providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, PROVIDERS
+from ..storage.session_store import TRANSCRIBE_AUTO, TRANSCRIBE_MODES
+from ..media.video_size import DEFAULT_SHRINK_TARGET_MB
+from ..media.youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
 
 
 class InvalidConfigError(ValueError):

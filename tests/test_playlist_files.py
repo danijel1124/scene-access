@@ -1,6 +1,6 @@
 import pytest
 
-from sceneaccess.playlist_files import playlist_options, video_key
+from sceneaccess.media.playlist_files import playlist_options, video_key
 
 
 def choice(identifier='abcdefghijk'):

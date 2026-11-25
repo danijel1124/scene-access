@@ -10,19 +10,19 @@ from functools import partial
 from typing import Any, Callable
 
 from .cleaning import clean_description
-from .config import AppConfig
-from .models import ModelCatalog, llama_cpp_catalog, routing
-from .openrouter import LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, OpenRouterClient, Turn, check_whole
-from .providers import LLAMA_CPP
-from .request_control import RequestCancelled, RequestControl
+from ..settings.config import AppConfig
+from ..llm.models import ModelCatalog, llama_cpp_catalog, routing
+from ..llm.client import LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, OpenRouterClient, Turn, check_whole
+from ..providers import LLAMA_CPP
+from ..request_control import RequestCancelled, RequestControl
 from .section_cuts import cut_sections, needs_sections, section_sound, video_duration
 from .section_review import Reviewer
 from .sections import describe_in_sections
-from .session_store import REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
-from .tool_calls import ToolResult
+from ..storage.session_store import REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
+from ..llm.tool_calls import ToolResult
 from .tools import ToolRunner, provider_tools
 from .hearing import model_hears, wants_transcript, with_sound
-from .transcript import sound_parts
+from ..media.transcript import sound_parts
 
 # Called when the chat's transcript is still to be decided, with the chat, whether the model answering now needs
 # one, and OpenRouter (None without a key); returns the chat as it is afterwards.

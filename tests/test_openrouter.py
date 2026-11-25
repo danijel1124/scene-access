@@ -5,10 +5,10 @@ from urllib.error import HTTPError
 
 import pytest
 
-from sceneaccess.openrouter import OpenRouterClient, OpenRouterError
-from sceneaccess.session_store import VideoSessionStore
-from sceneaccess.tool_calls import ToolResult
-from sceneaccess.tools import tool_definitions
+from sceneaccess.llm.client import OpenRouterClient, OpenRouterError
+from sceneaccess.storage.session_store import VideoSessionStore
+from sceneaccess.llm.tool_calls import ToolResult
+from sceneaccess.pipeline.tools import tool_definitions
 
 
 class FakeResponse:
@@ -131,7 +131,7 @@ def test_run_turn_runs_tool_calls_and_shows_images_until_the_model_answers(tmp_p
 
 
 def test_run_turn_stops_when_a_model_never_stops_calling_tools(tmp_path: Path):
-    from sceneaccess.openrouter import MAX_TOOL_ROUNDS
+    from sceneaccess.llm.client import MAX_TOOL_ROUNDS
 
     _store, session = _tool_session(tmp_path)
     bodies = []

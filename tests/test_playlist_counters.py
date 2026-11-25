@@ -7,8 +7,8 @@ import imageio_ffmpeg
 import pytest
 import yt_dlp
 
-from sceneaccess.playlist_files import playlist_options
-from sceneaccess.youtube import download_video, list_video_choices
+from sceneaccess.media.playlist_files import playlist_options
+from sceneaccess.media.youtube import download_video, list_video_choices
 
 
 @pytest.fixture

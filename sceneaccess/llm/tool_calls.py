@@ -7,8 +7,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from .session_store import SESSION_FILE_PREFIX
-from .timecodes import format_time, parse_time
+from ..storage.session_store import SESSION_FILE_PREFIX
+from ..timecodes import format_time, parse_time
 
 ZOOM_FRAME = "zoom_frame"
 HD_FRAME = "high_resolution_frame"

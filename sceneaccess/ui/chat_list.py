@@ -8,12 +8,12 @@ from typing import Any
 import wx
 
 from .app_window import AppWindow
-from .config import save_config
+from ..settings.config import save_config
 from .dialogs import SettingsDialog
-from .models import api_url
+from ..llm.models import api_url
 from .new_chat import NewChatMixin
-from .providers import LLAMA_CPP
-from .session_store import SessionNotFound
+from ..providers import LLAMA_CPP
+from ..storage.session_store import SessionNotFound
 
 
 class ChatListFrame(AppWindow, NewChatMixin, wx.Frame):

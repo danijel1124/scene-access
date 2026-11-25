@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from sceneaccess import new_chat, youtube
+from sceneaccess.media import youtube
+from sceneaccess.ui import new_chat
 
 
 def test_quality_change_keeps_previous_file_until_replacement_succeeds(tmp_path, monkeypatch):

@@ -1,5 +1,5 @@
-from sceneaccess.config import AppConfig
-from sceneaccess.session_store import VideoSessionStore
+from sceneaccess.settings.config import AppConfig
+from sceneaccess.storage.session_store import VideoSessionStore
 
 
 def test_sceneaccess_uses_its_own_persistent_database_name(tmp_path):

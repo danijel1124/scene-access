@@ -1,7 +1,7 @@
 import pytest
 import wx
 
-from sceneaccess import chat_dialogs, dialogs
+from sceneaccess.ui import chat_dialogs, dialogs
 
 
 def test_start_chat_dialog_returns_the_question_and_profile():
@@ -21,7 +21,7 @@ def test_start_chat_dialog_returns_the_question_and_profile():
 
 
 def test_start_chat_offers_each_tool_with_select_all_and_keeps_the_choice(monkeypatch):
-    from sceneaccess.tool_calls import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME
+    from sceneaccess.llm.tool_calls import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME
     app = wx.App(False)
     frame = wx.Frame(None)
     class Advanced:

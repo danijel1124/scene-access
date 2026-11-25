@@ -8,12 +8,13 @@ from typing import Collection
 import wx
 
 from .dialogs import NO_PROFILE, AddModelDialog, youtube_quality_labels
-from .models import AUTO_ROUTER
-from .providers import LLAMA_CPP, OPENROUTER, PROVIDER_LABELS, PROVIDERS
-from .session_store import TRANSCRIBE_AUTO, TRANSCRIBE_HEADING, TRANSCRIBE_LABELS, TRANSCRIBE_MODES, TRANSCRIBE_OFF
-from .tool_calls import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME
-from .video_size import DEFAULT_SHRINK_TARGET_MB, SIZE_LIMIT, base64_size, megabytes
-from .youtube import DEFAULT_MAX_HEIGHT, MAX_HEIGHT_CHOICES
+from ..llm.models import AUTO_ROUTER
+from ..providers import LLAMA_CPP, OPENROUTER, PROVIDER_LABELS, PROVIDERS
+from ..storage.session_store import (TRANSCRIBE_AUTO, TRANSCRIBE_HEADING, TRANSCRIBE_LABELS, TRANSCRIBE_MODES,
+                                     TRANSCRIBE_OFF)
+from ..llm.tool_calls import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME
+from ..media.video_size import DEFAULT_SHRINK_TARGET_MB, SIZE_LIMIT, base64_size, megabytes
+from ..media.youtube import DEFAULT_MAX_HEIGHT, MAX_HEIGHT_CHOICES
 
 
 class AdvancedDialog(wx.Dialog):

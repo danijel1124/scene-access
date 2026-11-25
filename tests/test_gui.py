@@ -3,8 +3,9 @@ import json
 import pytest
 import wx
 
-from sceneaccess import answering, gui
-from sceneaccess.openrouter import Completion, Turn
+from sceneaccess.pipeline import answering
+from sceneaccess.ui import gui
+from sceneaccess.llm.client import Completion, Turn
 from sceneaccess import prompts
 from sceneaccess.prompts import BASE_SYSTEM_PROMPT
 

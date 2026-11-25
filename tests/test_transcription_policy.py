@@ -1,5 +1,5 @@
 import pytest
-from sceneaccess.openrouter import OpenRouterClient
+from sceneaccess.llm.client import OpenRouterClient
 
 
 def test_excluded_transcriber_is_blocked_before_the_http_boundary():

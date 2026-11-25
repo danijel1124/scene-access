@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from sceneaccess.config import AppConfig, config_path_from_standard_paths, load_config, save_config
+from sceneaccess.settings.config import AppConfig, config_path_from_standard_paths, load_config, save_config
 
 @pytest.mark.parametrize("content", ["[]", "null", "42", "true", '"text"', "{broken", '{"model":'])
 def test_invalid_config_raises_with_path_and_preserves_original_file(tmp_path, content):
@@ -11,7 +11,7 @@ def test_invalid_config_raises_with_path_and_preserves_original_file(tmp_path, c
     path.write_text(content, encoding="utf-8")
     with pytest.raises(ValueError) as raised:
         load_config(path)
-    from sceneaccess.config import InvalidConfigError
+    from sceneaccess.settings.config import InvalidConfigError
 
     assert isinstance(raised.value, InvalidConfigError)
     assert str(path) in str(raised.value)

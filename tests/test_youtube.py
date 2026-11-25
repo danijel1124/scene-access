@@ -2,7 +2,7 @@ import sys
 import types
 from pathlib import Path
 
-from sceneaccess import youtube
+from sceneaccess.media import youtube
 
 
 def test_download_options_cap_resolution_and_merge_video_with_audio(tmp_path: Path):

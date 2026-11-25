@@ -2,7 +2,7 @@
 import wx
 import pytest
 
-from sceneaccess import gui
+from sceneaccess.ui import gui
 
 
 @pytest.mark.parametrize('path', ['/index.html', '/one.mp4', '/single.html'])

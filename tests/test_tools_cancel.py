@@ -1,8 +1,9 @@
 import pytest
 
-from sceneaccess import tools, youtube
+from sceneaccess.media import youtube
+from sceneaccess.pipeline import tools
 from sceneaccess.request_control import RequestControl, RequestCancelled
-from sceneaccess.session_store import VideoSessionStore
+from sceneaccess.storage.session_store import VideoSessionStore
 
 
 def test_cancelled_hd_download_never_starts_metadata_probe(tmp_path, monkeypatch):

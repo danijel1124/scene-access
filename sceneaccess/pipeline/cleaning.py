@@ -11,7 +11,7 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
-from .timecodes import format_time
+from ..timecodes import format_time
 
 # A time at the start of a line, with the end of a span after it, as in "**00:00 - 00:25:**" or "1:17 – Ende".
 TIME_AT_START = re.compile(r"^\W*(\d{1,2}):(\d{2})(?::(\d{2}))?(\.\d+)?"

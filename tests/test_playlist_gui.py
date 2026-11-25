@@ -3,13 +3,13 @@ from pathlib import Path
 import pytest
 import wx
 
-from sceneaccess import gui, new_chat
+from sceneaccess.ui import gui, new_chat
 
 
 @pytest.mark.parametrize('cancel', [False, True])
 def test_cached_file_metadata_failure_warns_but_cancel_stops_selection(tmp_path, monkeypatch, cancel):
     from types import SimpleNamespace
-    from sceneaccess.config import AppConfig
+    from sceneaccess.settings.config import AppConfig
     from sceneaccess.request_control import RequestCancelled
     source = tmp_path/'Video [abcdefghijk].mp4'
     source.write_bytes(b'existing video')

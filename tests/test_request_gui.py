@@ -1,9 +1,10 @@
 import pytest
 import wx
 
-from sceneaccess import answering, gui
-from sceneaccess.chat_history import chat_history_entries
-from sceneaccess.openrouter import Completion, Turn
+from sceneaccess.pipeline import answering
+from sceneaccess.ui import gui
+from sceneaccess.ui.chat_history import chat_history_entries
+from sceneaccess.llm.client import Completion, Turn
 
 
 @pytest.fixture
@@ -52,7 +53,7 @@ def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, mon
 
 
 def test_audio_only_routing_failure_does_not_transcribe(frame, monkeypatch):
-    from sceneaccess.session_store import TRANSCRIPT_PENDING
+    from sceneaccess.storage.session_store import TRANSCRIPT_PENDING
     monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
     frame.store.update_chat_settings(frame.current.id, gui.OWNER_ID, 'openrouter/auto', True)
     frame.store.update_transcript(frame.current.id, gui.OWNER_ID, TRANSCRIPT_PENDING)
@@ -75,8 +76,8 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
     import subprocess
     import types
     import imageio_ffmpeg
-    from sceneaccess.tool_calls import ZOOM_FRAME
-    from sceneaccess.tools import tool_definitions
+    from sceneaccess.llm.tool_calls import ZOOM_FRAME
+    from sceneaccess.pipeline.tools import tool_definitions
     # Only gui's own thread runs inline: the real tool starts subprocesses, whose reader threads
     # need the real threading.Thread.
     monkeypatch.setattr(gui, 'threading', types.SimpleNamespace(Thread=InlineThread))
@@ -105,7 +106,7 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
 
 
 def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
-    from sceneaccess.session_store import TRANSCRIPT_PENDING, TRANSCRIPT_FAILED
+    from sceneaccess.storage.session_store import TRANSCRIPT_PENDING, TRANSCRIPT_FAILED
     monkeypatch.setattr(gui.threading, 'Thread', InlineThread)
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: True)
     frame.config = gui.replace(frame.config, ignored_providers=('elevenlabs',))

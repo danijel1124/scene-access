@@ -9,13 +9,13 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Collection
 
-from .providers import OPENROUTER
-from .request_control import RequestCancelled, RequestControl
-from .session_store import VideoSession
-from .timecodes import format_time, parse_time
-from .tool_calls import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME, ToolResult, frame_region
-from .video import extract_frame, local_video, video_size_and_duration
-from .worker_process import run_isolated_task
+from ..providers import OPENROUTER
+from ..request_control import RequestCancelled, RequestControl
+from ..storage.session_store import VideoSession
+from ..timecodes import format_time, parse_time
+from ..llm.tool_calls import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME, ToolResult, frame_region
+from ..media.video import extract_frame, local_video, video_size_and_duration
+from ..worker_process import run_isolated_task
 
 _REGION_PROPERTIES = {
     "x": {"type": "number", "description": "Left edge of the region, 0 to 1 of the frame width. Default 0."},
@@ -151,7 +151,7 @@ class ToolRunner:
             return self._frame_from(source, seconds, region, "the chat video")
 
     def _high_resolution_frame(self, arguments: dict[str, Any]) -> ToolResult:
-        from .youtube import download_section
+        from ..media.youtube import download_section
 
         if not self.session.source_url:
             raise ValueError("This chat has no online source.")

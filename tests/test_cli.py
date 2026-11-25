@@ -3,12 +3,13 @@ import json
 
 import pytest
 
-from sceneaccess import answering, cli
-from sceneaccess.session_store import OWNER_ID
-from sceneaccess.config import AppConfig, save_config
-from sceneaccess.openrouter import Completion, OpenRouterClient, Turn
+from sceneaccess import cli
+from sceneaccess.pipeline import answering
+from sceneaccess.storage.session_store import OWNER_ID
+from sceneaccess.settings.config import AppConfig, save_config
+from sceneaccess.llm.client import Completion, OpenRouterClient, Turn
 from sceneaccess.prompts import system_prompt
-from sceneaccess.session_store import VideoSessionStore
+from sceneaccess.storage.session_store import VideoSessionStore
 
 LLAMA_URL = 'http://192.0.2.1:8080/v1/chat/completions'
 OLD_PROMPT = ("You are SceneAccess, an assistant that describes videos for a blind person.\n\n"

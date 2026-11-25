@@ -6,14 +6,14 @@ from pathlib import Path
 import imageio_ffmpeg
 import pytest
 
-from sceneaccess import section_cuts
-from sceneaccess.chat_history import SECTION, chat_history_rows
-from sceneaccess.openrouter import Completion, Turn
-from sceneaccess.section_cuts import (Section, cut_sections, needs_sections, section_bounds, transcript_between,
-                                      video_duration)
-from sceneaccess.sections import describe_in_sections
-from sceneaccess.session_store import SECTION_FILE_PREFIX, VideoSessionStore
-from sceneaccess.video import video_size_and_duration
+from sceneaccess.pipeline import section_cuts
+from sceneaccess.ui.chat_history import SECTION, chat_history_rows
+from sceneaccess.llm.client import Completion, Turn
+from sceneaccess.pipeline.section_cuts import (Section, cut_sections, needs_sections, section_bounds,
+                                               transcript_between, video_duration)
+from sceneaccess.pipeline.sections import describe_in_sections
+from sceneaccess.storage.session_store import SECTION_FILE_PREFIX, VideoSessionStore
+from sceneaccess.media.video import video_size_and_duration
 
 
 def _video(path: Path, seconds: int = 7) -> Path:
@@ -71,14 +71,14 @@ def test_each_section_gets_the_transcript_lines_of_its_own_time():
 
 
 def test_a_copied_part_heading_is_cut_from_a_sections_description():
-    from sceneaccess.sections import without_part_heading
+    from sceneaccess.pipeline.sections import without_part_heading
     assert without_part_heading("Part 2 (00:28.1 bis 00:56.1):\n\n00:28 Sie hält ein Tuch.") == "00:28 Sie hält ein Tuch."
     assert without_part_heading("**Teil 3 von 3**\n00:56 Sieb.") == "00:56 Sieb."
     assert without_part_heading("00:00 Part 1 of her day.") == "00:00 Part 1 of her day."
 
 
 def test_a_whole_video_comes_before_its_text_and_its_sound_after_it(tmp_path: Path):
-    from sceneaccess.hearing import with_sound
+    from sceneaccess.pipeline.hearing import with_sound
     store, session = _session(tmp_path, seconds=0, transcribe="on")
     store.update_transcript(session.id, "o", "done", "[00:05] Hello.")
     session = store.get_session(session.id, "o")
@@ -116,7 +116,7 @@ def test_the_reviewer_on_the_users_own_server_checks_without_thinking(tmp_path: 
 
 def test_the_reviewer_gets_the_title_and_may_report_a_contradiction_to_it():
     from sceneaccess.prompts import REVIEWER_SYSTEM_PROMPT
-    from sceneaccess.section_review import review_messages
+    from sceneaccess.pipeline.section_review import review_messages
     part = review_messages("00:09 Sie hält die Tube mit beiden Händen.", "", 1, 0, 30,
                            "Mein Einarmiger Alltag")[1]["content"]
     assert "The video's title: Mein Einarmiger Alltag" in part
@@ -312,7 +312,7 @@ class MergeCut(Scripted):
 
 
 def test_putting_the_sections_together_cut_off_is_no_answer_and_sending_again_only_merges(tmp_path: Path):
-    from sceneaccess.openrouter import AnswerCutOff
+    from sceneaccess.llm.client import AnswerCutOff
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)
 
@@ -330,7 +330,7 @@ def test_putting_the_sections_together_cut_off_is_no_answer_and_sending_again_on
 
 
 def test_an_empty_section_is_not_stored_and_the_merge_keeps_its_images_only_when_it_answers(tmp_path: Path):
-    from sceneaccess.openrouter import AnswerCutOff
+    from sceneaccess.llm.client import AnswerCutOff
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)
     saved, runners = [], []
@@ -372,7 +372,7 @@ def test_an_empty_section_is_not_stored_and_the_merge_keeps_its_images_only_when
 
 
 def test_a_description_cut_off_is_not_stored_and_one_described_anew_cut_off_keeps_the_first(tmp_path: Path):
-    from sceneaccess.openrouter import AnswerCutOff
+    from sceneaccess.llm.client import AnswerCutOff
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)
 
@@ -441,7 +441,7 @@ def test_what_needs_no_model_is_removed_and_only_a_contradiction_is_described_an
 
 
 def test_the_merge_is_the_last_check_and_can_have_a_part_described_anew(tmp_path: Path):
-    from sceneaccess.tools import tool_definitions
+    from sceneaccess.pipeline.tools import tool_definitions
     store, session = _session(tmp_path, seconds=30, transcribe="on",
                               tools=tool_definitions(online_video=False, web_search=False))
     store.update_transcript(session.id, "o", "done", "[00:05] Hallo.\n[00:40] Ich habe keinen Kabelstaubsauger.")
@@ -491,13 +491,13 @@ def test_the_merge_is_the_last_check_and_can_have_a_part_described_anew(tmp_path
     assert any(row.startswith("Section 2 (00:30 to 01:00, described again at the merge)") for row in rows)
     assert any(row.startswith("Removed from the answer") for row in rows)
     # The tool call reads as a sentence in the Chat history, not as JSON.
-    from sceneaccess.tool_calls import describe_call
+    from sceneaccess.llm.tool_calls import describe_call
     assert describe_call("describe_section_again", json.dumps({"part": 2, "problems": "a vacuum cleaner"})) == (
         "Have section 2 described again: a vacuum cleaner")
 
 
 def test_the_merge_has_a_part_described_anew_only_once_also_after_it_was_cut_off(tmp_path: Path):
-    from sceneaccess.openrouter import AnswerCutOff
+    from sceneaccess.llm.client import AnswerCutOff
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)
     answers = []
@@ -549,7 +549,7 @@ def test_a_description_sent_back_unchanged_does_not_count_as_written_anew(tmp_pa
 
 
 def test_the_mechanical_cleaning_removes_speech_and_keeps_what_is_seen():
-    from sceneaccess.cleaning import clean_description, without_preamble
+    from sceneaccess.pipeline.cleaning import clean_description, without_preamble
     heard = "[00:00] So und dann mach ich das drauf."
     cleaned, notes = clean_description(
         "Hier ist die Beschreibung:\n\n00:00 So und dann mach ich das drauf.\n00:09 Sie hält eine Tube hoch.\n"
@@ -563,7 +563,7 @@ def test_the_mechanical_cleaning_removes_speech_and_keeps_what_is_seen():
 
 
 def test_the_cleaning_of_a_whole_video_keeps_the_overview_and_cuts_only_the_sentences_about_speech():
-    from sceneaccess.cleaning import clean_description
+    from sceneaccess.pipeline.cleaning import clean_description
     answer = ("The video features a woman with one arm.\n\n"
               "*   **00:51 - 01:13:** She holds a sieve. She explains it allows for scooping. A black cat walks by.\n"
               "*   **01:14 - 01:16:** She mentions the toilet paper.\n\n"
@@ -586,8 +586,8 @@ def test_the_cleaning_of_a_whole_video_keeps_the_overview_and_cuts_only_the_sent
 
 
 def test_a_whole_answer_is_stored_cleaned_with_what_was_removed(tmp_path: Path):
-    from sceneaccess.answering import cleaned_whole_answer
-    from sceneaccess.session_store import REMOVED
+    from sceneaccess.pipeline.answering import cleaned_whole_answer
+    from sceneaccess.storage.session_store import REMOVED
     _store, session = _session(tmp_path, seconds=0)
     answer = "00:01 She lifts a cup.\n00:05 She mentions the lid."
     turn = cleaned_whole_answer(Turn(entries=[{"role": "assistant", "content": answer}],
@@ -600,7 +600,7 @@ def test_a_whole_answer_is_stored_cleaned_with_what_was_removed(tmp_path: Path):
 
 
 def test_a_reviewer_model_of_its_own_checks_with_text_only(tmp_path: Path):
-    from sceneaccess.section_review import Reviewer
+    from sceneaccess.pipeline.section_review import Reviewer
     store, session = _session(tmp_path, seconds=30)
     cut = _fixture_sections(session, count=2)
     writer = Scripted(describe=["00:01 A cup.", "00:31 A plate."], fix=["00:02 She lifts a cup."])
@@ -650,7 +650,7 @@ def test_a_description_stopped_before_its_check_is_checked_when_continued(tmp_pa
 
 
 def test_the_mechanical_check_finds_repeated_speech_and_wrong_times():
-    from sceneaccess.cleaning import mechanical_findings
+    from sceneaccess.pipeline.cleaning import mechanical_findings
     heard = "[00:00] So und dann mach ich das drauf.\n[00:26] Ich kann keinen Kabelstaubsauger haben."
     found = mechanical_findings('00:00 "So und dann mach ich das drauf."\n00:09 Sie hält eine Tube hoch.\n'
                                 "00:33.0 Ein Staubsauger.\n00:13 Sie zeigt auf den Deckel.", heard, 0, 28.1)
@@ -677,7 +677,7 @@ def test_the_mechanical_check_finds_repeated_speech_and_wrong_times():
 
 
 def test_the_sections_are_joined_without_what_repeats_where_two_meet():
-    from sceneaccess.cleaning import joined_without_repeats
+    from sceneaccess.pipeline.cleaning import joined_without_repeats
     joined = joined_without_repeats([
         {"text": "00:44 Sie hält ein Sieb hoch.\n00:51 Sie deutet auf ihre Prothese an der linken Hand."},
         {"text": "00:56 Sie deutet auf ihre Prothese an der linken Hand.\n01:00 Töpfe.\n"
@@ -690,7 +690,7 @@ def test_the_sections_are_joined_without_what_repeats_where_two_meet():
 
 
 def test_the_reviewers_answer_is_read_only_from_the_json_asked_for():
-    from sceneaccess.section_review import reviewer_findings
+    from sceneaccess.pipeline.section_review import reviewer_findings
     assert reviewer_findings(NONE) == []
     assert reviewer_findings(found(("00:13", "f", "obvious"), ("00:19", "e", "contradicts"))) == [
         {"time": "00:13", "question": "f", "why": "obvious"}, {"time": "00:19", "question": "e", "why": "contradicts"}]
@@ -703,7 +703,7 @@ def test_the_reviewers_answer_is_read_only_from_the_json_asked_for():
 
 
 def test_the_reviewer_is_not_told_nothing_is_said_when_it_gets_no_transcript():
-    from sceneaccess.section_review import review_messages
+    from sceneaccess.pipeline.section_review import review_messages
 
     def review_request(*args):
         return review_messages(*args)[1]["content"]

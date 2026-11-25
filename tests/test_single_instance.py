@@ -12,7 +12,7 @@ HIDDEN = (f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r}); impo
 
 
 def test_second_process_activates_primary_without_becoming_primary(tmp_path):
-    from sceneaccess.single_instance import SingleInstance
+    from sceneaccess.ui.single_instance import SingleInstance
     app = wx.App(False)
     primary = SingleInstance(tmp_path)
     activated = threading.Event()
@@ -21,7 +21,7 @@ def test_second_process_activates_primary_without_becoming_primary(tmp_path):
         primary.start(activated.set)
         script = '''import sys, wx
 from pathlib import Path
-from sceneaccess.single_instance import SingleInstance
+from sceneaccess.ui.single_instance import SingleInstance
 app = wx.App(False)
 instance = SingleInstance(Path(sys.argv[1]))
 print(instance.is_primary)
@@ -39,7 +39,7 @@ app.Destroy()
 
 
 def test_primary_shutdown_releases_lock_and_endpoint(tmp_path):
-    from sceneaccess.single_instance import SingleInstance
+    from sceneaccess.ui.single_instance import SingleInstance
     app = wx.App(False)
     first = SingleInstance(tmp_path)
     try:
@@ -60,7 +60,7 @@ def test_relaunch_activates_existing_gui_and_exits(tmp_path):
     ready, activated = tmp_path/'ready', tmp_path/'activated'
     primary_script = '''import sys, wx
 from pathlib import Path
-from sceneaccess import gui
+from sceneaccess.ui import gui
 root = Path(sys.argv[1])
 gui.config_path_from_standard_paths = lambda _: root/'config.json'
 original_activate = gui.ChatWindows.activate
@@ -79,7 +79,7 @@ raise SystemExit(gui.main())
 '''
     secondary_script = '''import sys
 from pathlib import Path
-from sceneaccess import gui
+from sceneaccess.ui import gui
 gui.config_path_from_standard_paths = lambda _: Path(sys.argv[1])/'config.json'
 raise SystemExit(gui.main())
 '''

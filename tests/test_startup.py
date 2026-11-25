@@ -1,7 +1,7 @@
 import pytest
 import wx
 
-from sceneaccess import gui
+from sceneaccess.ui import gui
 
 
 def test_invalid_config_reports_path_and_exits_without_modifying_file(tmp_path, monkeypatch):

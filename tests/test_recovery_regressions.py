@@ -3,7 +3,7 @@ import sys
 import threading
 import time
 
-from sceneaccess import video_size
+from sceneaccess.media import video_size
 
 
 def test_shrink_drains_stderr_while_process_runs(monkeypatch):

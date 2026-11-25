@@ -8,11 +8,11 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
 from .models import api_url
-from .providers import OPENROUTER_URL
-from .request_control import RequestControl
-from .session_store import WIRE_KEYS, VideoSession
+from ..providers import OPENROUTER_URL
+from ..request_control import RequestControl
+from ..storage.session_store import WIRE_KEYS, VideoSession
 from .tool_calls import describe_call, image_message
-from .worker_process import run_isolated_task
+from ..worker_process import run_isolated_task
 
 # A question may trigger several rounds of tool calls; after this many the model must answer.
 MAX_TOOL_ROUNDS = 6

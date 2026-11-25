@@ -11,33 +11,33 @@ from pathlib import Path
 
 import wx
 
-from . import answering
+from ..pipeline import answering
 from .app_window import AppWindow
-from .config import resolve_openrouter_key
-from .session_store import LEGACY_OWNER_ID, OWNER_ID, open_store
+from ..settings.config import resolve_openrouter_key
+from ..storage.session_store import LEGACY_OWNER_ID, OWNER_ID, open_store
 from .chat_history import ANSWER, NOTE, chat_history_rows, thinking_item, transcript_entry
 from .chat_list import ChatListFrame
-from .config import AppConfig, config_path_from_standard_paths, load_config, save_config
+from ..settings.config import AppConfig, config_path_from_standard_paths, load_config, save_config
 from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, MessageReaderDialog,
                            StoredSizeDialog)
 from .dialogs import NO_PROFILE
-from .models import AUTO_ROUTER, ModelCatalog, llama_cpp_catalog
+from ..llm.models import AUTO_ROUTER, ModelCatalog, llama_cpp_catalog
 from .new_chat import NewChatMixin, url_from_clipboard
-from .openrouter import OpenRouterClient
-from .providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
-from .request_control import RequestControl, RequestCancelled
-from .prompts import current_system_prompt, system_prompt
-from .session_store import (EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING,
-                            VideoSession, VideoSessionStore, SessionNotFound, round_bounds)
+from ..llm.client import OpenRouterClient
+from ..providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
+from ..request_control import RequestControl, RequestCancelled
+from ..prompts import current_system_prompt, system_prompt
+from ..storage.session_store import (EXCLUDED, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING,
+                                     VideoSession, VideoSessionStore, SessionNotFound, round_bounds)
 from .speech import announce
 from .single_instance import SingleInstance
-from .timecodes import format_time
-from .tool_calls import WEB_SEARCH
-from .tools import function_tool_names, tool_definitions, tool_key, tools_for_provider
-from .video import local_video
-from .transcript import make_transcript
-from .video_size import SIZE_LIMIT, megabytes
-from .youtube import fetch_video_info, search_videos
+from ..timecodes import format_time
+from ..llm.tool_calls import WEB_SEARCH
+from ..pipeline.tools import function_tool_names, tool_definitions, tool_key, tools_for_provider
+from ..media.video import local_video
+from ..media.transcript import make_transcript
+from ..media.video_size import SIZE_LIMIT, megabytes
+from ..media.youtube import fetch_video_info, search_videos
 
 # Windows list box messages for the item the keyboard is on, which a multiple-selection list keeps apart.
 LB_SETCARETINDEX, LB_GETCARETINDEX = 0x019E, 0x019F

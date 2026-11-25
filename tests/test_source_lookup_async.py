@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 import wx
-from sceneaccess import gui
+from sceneaccess.ui import gui
 
 
 def _slow_search(*args, **kwargs):
