@@ -5,7 +5,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from sceneaccess.llm.client import OpenRouterClient, OpenRouterError
+from sceneaccess.llm.client import ChatClient, ChatError
 from sceneaccess.storage.session_store import VideoSessionStore
 from sceneaccess.llm.tool_calls import ToolResult
 from sceneaccess.pipeline.tools import tool_definitions
@@ -44,7 +44,7 @@ def test_client_sends_stable_session_id_and_returns_cache_usage(tmp_path: Path):
         })
 
     routing = {"provider": {"ignore": ["novita"]}, "plugins": [{"id": "auto-router", "excluded_models": ["a/b"]}]}
-    result = OpenRouterClient("test-key", base_url="https://router.example/chat", opener=opener).run_turn(
+    result = ChatClient("test-key", base_url="https://router.example/chat", opener=opener).run_turn(
         session, session.messages, lambda *_: None, routing=routing).completion
 
     assert seen["body"]["session_id"] == session.id
@@ -67,7 +67,7 @@ def test_client_keeps_missing_cache_details_distinct_from_zero(tmp_path: Path):
     def opener(request, timeout):
         return FakeResponse({"choices": [{"message": {"content": "A jacket."}}], "usage": {"prompt_tokens": 42}})
 
-    result = OpenRouterClient("test-key", opener=opener).run_turn(session, session.messages, lambda *_: None).completion
+    result = ChatClient("test-key", opener=opener).run_turn(session, session.messages, lambda *_: None).completion
 
     assert result.model == "openrouter/auto"
     assert result.cached_tokens is None
@@ -108,7 +108,7 @@ def test_run_turn_runs_tool_calls_and_shows_images_until_the_model_answers(tmp_p
         calls.append((name, json.loads(arguments)))
         return ToolResult("Image of 02:51 follows.", image="frame_1.jpg", caption="Image of 02:51")
 
-    turn = OpenRouterClient("k", opener=opener).run_turn(session, session.messages, run_tool,
+    turn = ChatClient("k", opener=opener).run_turn(session, session.messages, run_tool,
                                                          lambda kind, text: events.append((kind, text)))
 
     assert calls == [("zoom_frame", {"time": "02:51"})]
@@ -142,7 +142,7 @@ def test_run_turn_stops_when_a_model_never_stops_calling_tools(tmp_path: Path):
             {"id": f"c{len(bodies)}", "type": "function", "function": {"name": "video_information", "arguments": "{}"}}]}}]})
 
     ran = []
-    turn = OpenRouterClient("k", opener=opener).run_turn(
+    turn = ChatClient("k", opener=opener).run_turn(
         session, session.messages, lambda name, arguments: ran.append(name) or ToolResult("info"))
 
     assert len(bodies) == MAX_TOOL_ROUNDS + 1
@@ -163,7 +163,7 @@ def test_run_turn_answers_without_tools_when_the_model_rejects_them(tmp_path: Pa
             raise HTTPError(request.full_url, 404, "Not Found", {}, io.BytesIO(body))
         return FakeResponse({"model": "m", "choices": [{"message": {"content": "Plain answer."}}], "usage": {}})
 
-    turn = OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None)
+    turn = ChatClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None)
 
     assert turn.completion.answer == "Plain answer."
     assert turn.completion.tools_unavailable is True
@@ -179,7 +179,7 @@ def test_transcription_asks_for_word_times_next_to_the_chat_endpoint():
         seen["authorization"] = request.get_header("Authorization")
         return FakeResponse(words)
 
-    client = OpenRouterClient("test-key", base_url="https://router.example/api/v1/chat/completions", opener=opener)
+    client = ChatClient("test-key", base_url="https://router.example/api/v1/chat/completions", opener=opener)
     assert client.transcribe(b"audio bytes", "mp3") == words
     assert seen["url"] == "https://router.example/api/v1/audio/transcriptions"
     assert seen["authorization"] == "Bearer test-key"
@@ -194,8 +194,8 @@ def test_an_error_in_a_successful_response_is_reported(tmp_path: Path):
     def opener(request, timeout):
         return FakeResponse({"error": {"message": "Rate limit exceeded", "code": 429}})
 
-    with pytest.raises(OpenRouterError, match="Rate limit exceeded") as raised:
-        OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None)
+    with pytest.raises(ChatError, match="Rate limit exceeded") as raised:
+        ChatClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None)
     assert raised.value.status == 429
 
 
@@ -210,7 +210,7 @@ def test_a_pause_during_the_final_answer_still_completes(tmp_path: Path):
         return FakeResponse({"choices": [{"message": {"content": "Done"}}]})
 
     answers = []
-    worker = threading.Thread(target=lambda: answers.append(OpenRouterClient("k", opener=opener, control=control)
+    worker = threading.Thread(target=lambda: answers.append(ChatClient("k", opener=opener, control=control)
                                                             .run_turn(session, session.messages, lambda *_: None)))
     worker.start()
     worker.join(3)
@@ -229,8 +229,8 @@ def test_http_errors_show_the_providers_reason(tmp_path: Path):
         body = json.dumps({"error": {"message": "Provider returned error", "metadata": {"raw": "File too large"}}}).encode()
         raise HTTPError(request.full_url, 500, "Internal Server Error", {}, io.BytesIO(body))
 
-    with pytest.raises(OpenRouterError, match=r"HTTP 500: Provider returned error \(File too large\)"):
-        OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None)
+    with pytest.raises(ChatError, match=r"HTTP 500: Provider returned error \(File too large\)"):
+        ChatClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None)
 
 
 @pytest.mark.parametrize("limit", [0, 1, 9])
@@ -241,7 +241,7 @@ def test_configured_round_limit_controls_tool_execution(tmp_path, limit):
         bodies.append(json.loads(request.data))
         return FakeResponse({"choices": [{"message": {"content": None, "tool_calls": [
             {"id": f"c{len(bodies)}", "function": {"name": "zoom_frame", "arguments": "{}"}}]}}]})
-    turn = OpenRouterClient("k", opener=opener).run_turn(
+    turn = ChatClient("k", opener=opener).run_turn(
         session, session.messages, lambda *args: ran.append(True) or ToolResult("fixture"), max_tool_rounds=limit)
     assert len(ran) == limit
     assert len(bodies) == limit + 1
@@ -262,7 +262,7 @@ def test_cancel_during_response_prevents_tool_execution(tmp_path):
             {"id": "x", "function": {"name": "zoom_frame", "arguments": "{}"}}]}}]})
     ran = []
     with pytest.raises(RequestCancelled):
-        OpenRouterClient("k", opener=opener, control=control).run_turn(
+        ChatClient("k", opener=opener, control=control).run_turn(
             session, session.messages, lambda *args: ran.append(True) or ToolResult("fixture"))
     assert ran == []
 
@@ -282,7 +282,7 @@ def test_pause_finishes_tools_then_resumes_without_repeating_them(tmp_path):
                 {"id": "x", "function": {"name": "zoom_frame", "arguments": "{}"}}]}}]})
         return FakeResponse({"choices": [{"message": {"content": "Done"}}]})
     def run():
-        answers.append(OpenRouterClient("k", opener=opener, control=control).run_turn(
+        answers.append(ChatClient("k", opener=opener, control=control).run_turn(
             session, session.messages, lambda *args: ran.append(True) or ToolResult("fixture"),
             lambda kind, text: paused.set() if kind == "paused" else None))
     worker = threading.Thread(target=run)
@@ -331,7 +331,7 @@ def test_a_streamed_answer_is_reported_as_it_comes_and_put_together(tmp_path: Pa
                                _delta(content="A Moncler "), _delta(content="logo."),
                                {"choices": [], "usage": {"prompt_tokens": 50}}])
 
-    turn = OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None,
+    turn = ChatClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None,
                                                          on_delta=lambda kind, text: pieces.append((kind, text)))
     assert bodies[0]["stream"] is True
     assert pieces == [("thinking", "Look at "), ("thinking", "the logo."), ("text", "A Moncler "), ("text", "logo.")]
@@ -367,7 +367,7 @@ def test_streamed_tool_calls_and_reasoning_go_back_as_without_streaming(tmp_path
         calls.append((name, json.loads(arguments)))
         return ToolResult("Image follows.", image="frame_1.jpg", caption="Image of 02:51")
 
-    turn = OpenRouterClient("k", opener=opener).run_turn(session, session.messages, run_tool, on_delta=lambda *_: None)
+    turn = ChatClient("k", opener=opener).run_turn(session, session.messages, run_tool, on_delta=lambda *_: None)
     assert calls == [("zoom_frame", {"time": "02:51"})]
     sent = bodies[1]["messages"][-3]
     assert sent["tool_calls"] == [{"id": "call_1", "type": "function",
@@ -393,7 +393,7 @@ def test_a_llama_cpp_server_gets_the_reasoning_of_a_tool_round_back_within_the_a
         return StreamResponse(rounds[len(bodies) - 1])
 
     # Decided by where the request goes: the user's own server, not OpenRouter.
-    client = OpenRouterClient("k", base_url="http://gpu:8080/v1/chat/completions", opener=opener)
+    client = ChatClient("k", base_url="http://gpu:8080/v1/chat/completions", opener=opener)
     turn = client.run_turn(session, session.messages, lambda *_: ToolResult("No image."), on_delta=lambda *_: None)
     # Qwen3.5's chat template puts it before the call; it is not stored in a form that goes to later questions.
     call_round = bodies[1]["messages"][-2]
@@ -407,11 +407,11 @@ def test_an_answer_cut_off_at_the_token_limit_says_so(tmp_path: Path):
     _store, session = _tool_session(tmp_path)
     # llama.cpp sends why the answer ended in the last chunk with a choice; "length" means it was cut off.
     cut = [_delta(reasoning="Wait, let me check again."), {"choices": [{"delta": {}, "finish_reason": "length"}]}]
-    turn = OpenRouterClient("k", opener=lambda request, timeout: StreamResponse(cut)).run_turn(
+    turn = ChatClient("k", opener=lambda request, timeout: StreamResponse(cut)).run_turn(
         session, session.messages, lambda *_: None, on_delta=lambda *_: None)
     assert turn.completion.cut_off and turn.completion.answer == ""
     done = [_delta(content="A jacket."), {"choices": [{"delta": {}, "finish_reason": "stop"}]}]
-    turn = OpenRouterClient("k", opener=lambda request, timeout: StreamResponse(done)).run_turn(
+    turn = ChatClient("k", opener=lambda request, timeout: StreamResponse(done)).run_turn(
         session, session.messages, lambda *_: None, on_delta=lambda *_: None)
     assert not turn.completion.cut_off and turn.completion.finish_reason == "stop"
 
@@ -424,7 +424,7 @@ def test_a_server_that_does_not_stream_still_gives_the_whole_answer(tmp_path: Pa
             self.lines = [line.encode("utf-8") for line in json.dumps(payload, indent=2).splitlines(keepends=True)]
 
     answer = {"model": "m", "choices": [{"message": {"content": "A jacket."}}], "usage": {"prompt_tokens": 7}}
-    turn = OpenRouterClient("k", opener=lambda request, timeout: Unstreamed(answer)).run_turn(
+    turn = ChatClient("k", opener=lambda request, timeout: Unstreamed(answer)).run_turn(
         session, session.messages, lambda *_: None, on_delta=lambda *_: None)
     assert turn.completion.answer == "A jacket." and turn.completion.prompt_tokens == 7
 
@@ -432,8 +432,8 @@ def test_a_server_that_does_not_stream_still_gives_the_whole_answer(tmp_path: Pa
 def test_an_error_in_the_stream_fails_the_request(tmp_path: Path):
     _store, session = _tool_session(tmp_path)
     opener = lambda request, timeout: StreamResponse([_delta(content="Half"), {"error": {"message": "overloaded"}}])
-    with pytest.raises(OpenRouterError, match="overloaded"):
-        OpenRouterClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None,
+    with pytest.raises(ChatError, match="overloaded"):
+        ChatClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None,
                                                       on_delta=lambda *_: None)
 
 
@@ -479,7 +479,7 @@ def test_a_request_that_can_be_cancelled_streams_through_its_worker_process(tmp_
     url, hold = stream_server
     hold.set()
     pieces = []
-    turn = OpenRouterClient("", base_url=url, control=RequestControl()).run_turn(
+    turn = ChatClient("", base_url=url, control=RequestControl()).run_turn(
         session, session.messages, lambda *_: None, on_delta=lambda kind, text: pieces.append((kind, text)))
     assert pieces == [("thinking", "Thinking."), ("text", "Half "), ("text", "done.")]
     assert turn.completion.answer == "Half done."
@@ -498,5 +498,5 @@ def test_cancelling_a_streamed_request_stops_it_at_once(tmp_path: Path, stream_s
             control.cancel()
 
     with pytest.raises(RequestCancelled):
-        OpenRouterClient("", base_url=url, control=control).run_turn(session, session.messages, lambda *_: None,
+        ChatClient("", base_url=url, control=control).run_turn(session, session.messages, lambda *_: None,
                                                                      on_delta=piece)

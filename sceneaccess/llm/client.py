@@ -22,7 +22,7 @@ READ_TIMEOUT = 300
 LLAMA_CPP_READ_TIMEOUT = 900
 
 
-class OpenRouterError(RuntimeError):
+class ChatError(RuntimeError):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
@@ -173,7 +173,7 @@ def _read_stream(response: Any, on_delta: DeltaHandler) -> dict[str, Any]:
     return {**data, "choices": [{"message": message, "finish_reason": finish_reason}]}
 
 
-class OpenRouterClient:
+class ChatClient:
     """Chat completions with OpenRouter, or with a llama.cpp server at another endpoint."""
     endpoint = OPENROUTER_URL
 
@@ -211,11 +211,11 @@ class OpenRouterClient:
                     data = json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
             # The body says why, e.g. that a file is too large or a model does not support tools.
-            raise OpenRouterError(f"HTTP {error.code}: {_error_message(error)}", error.code) from None
+            raise ChatError(f"HTTP {error.code}: {_error_message(error)}", error.code) from None
         if self.control:
             self.control.check_cancelled()
         if "error" in data:
-            raise OpenRouterError(data["error"].get("message", "OpenRouter request failed"), data["error"].get("code"))
+            raise ChatError(data["error"].get("message", "OpenRouter request failed"), data["error"].get("code"))
         return data
 
     def _post_stream(self, payload: dict[str, Any], on_delta: DeltaHandler) -> dict[str, Any]:
@@ -233,17 +233,17 @@ class OpenRouterClient:
                                              control=self.control, timeout=3600,
                                              progress_callback=lambda piece: on_delta(*piece))
             if status is not None:
-                raise OpenRouterError(f"HTTP {status}: {data}", status)
+                raise ChatError(f"HTTP {status}: {data}", status)
         else:
             try:
                 with self.opener(request, timeout=self.read_timeout) as response:
                     data = _read_stream(response, on_delta)
             except HTTPError as error:
-                raise OpenRouterError(f"HTTP {error.code}: {_error_message(error)}", error.code) from None
+                raise ChatError(f"HTTP {error.code}: {_error_message(error)}", error.code) from None
         if self.control:
             self.control.check_cancelled()
         if "error" in data:
-            raise OpenRouterError(data["error"].get("message", "Request failed"), data["error"].get("code"))
+            raise ChatError(data["error"].get("message", "Request failed"), data["error"].get("code"))
         return data
 
     def _controlled_post(self, request: Request) -> dict[str, Any]:
@@ -253,7 +253,7 @@ class OpenRouterClient:
                                       (request.full_url, request.data, dict(request.header_items())),
                                       control=self.control, timeout=330)
         if status is not None:
-            raise OpenRouterError(f"HTTP {status}: {data}", status)
+            raise ChatError(f"HTTP {status}: {data}", status)
         return data
 
     def transcribe(self, audio: bytes, audio_format: str = "mp3", model: str = "elevenlabs/scribe-v2") -> dict[str, Any]:
@@ -300,7 +300,7 @@ class OpenRouterClient:
                     payload["tool_choice"] = "none"
             try:
                 data = self._post_stream(payload, on_delta) if on_delta else self._post(payload)
-            except OpenRouterError as error:
+            except ChatError as error:
                 if tools and _rejects_tools(error):
                     # The model cannot use tools; answer without them rather than not at all.
                     tools, tools_unavailable = [], True
@@ -388,7 +388,7 @@ def _merge_detail(details: dict[tuple[Any, Any], dict[str, Any]], detail: dict[s
             merged[name] = value
 
 
-def _rejects_tools(error: OpenRouterError) -> bool:
+def _rejects_tools(error: ChatError) -> bool:
     text = str(error).lower()
     return error.status in (400, 404) and ("tool" in text or "function" in text)
 

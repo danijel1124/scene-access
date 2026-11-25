@@ -96,7 +96,7 @@ def test_a_transcript_is_added_at_the_end_without_asking_the_model(tmp_path, mon
     asked = []
     monkeypatch.setattr(gui.wx, "MessageBox", lambda message, *args, **kwargs: asked.append(message) or wx.YES)
     monkeypatch.setattr(gui, "make_transcript", lambda session, client: "[00:01] Hello")
-    monkeypatch.setattr(gui.OpenRouterClient, "run_turn", lambda *a, **kw: pytest.fail("the model was asked"))
+    monkeypatch.setattr(gui.ChatClient, "run_turn", lambda *a, **kw: pytest.fail("the model was asked"))
 
     class InlineThread:
         def __init__(self, target, **kw): self.target = target
@@ -214,7 +214,7 @@ def test_a_default_chat_sends_the_settings_model_and_gets_a_transcript_if_it_can
         return Turn(entries=[{"role": "assistant", "content": "Answer"}], completion=Completion(
             "Answer", model=session.model, prompt_tokens=1, cached_tokens=None, cache_write_tokens=None))
 
-    monkeypatch.setattr(gui.OpenRouterClient, "run_turn", fake_run_turn)
+    monkeypatch.setattr(gui.ChatClient, "run_turn", fake_run_turn)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")
     app = wx.App(False)
@@ -413,7 +413,7 @@ def test_a_failed_transcription_is_remembered_and_does_not_stop_the_answer(tmp_p
     try:
         session = frame.store.create_session(owner_id=gui.OWNER_ID, source_path=video, title="T", model="m",
                                              initial_question="?", transcript_state="pending")
-        frame._prepare_transcript(session, client=gui.OpenRouterClient('fixture-only'))
+        frame._prepare_transcript(session, client=gui.ChatClient('fixture-only'))
         assert frame.store.get_session(session.id, gui.OWNER_ID).transcript_state == "failed"
     finally:
         frame.Destroy()

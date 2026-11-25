@@ -7,7 +7,7 @@ from sceneaccess import cli
 from sceneaccess.pipeline import answering
 from sceneaccess.storage.session_store import OWNER_ID
 from sceneaccess.settings.config import AppConfig, save_config
-from sceneaccess.llm.client import Completion, OpenRouterClient, Turn
+from sceneaccess.llm.client import Completion, ChatClient, Turn
 from sceneaccess.prompts import system_prompt
 from sceneaccess.storage.session_store import VideoSessionStore
 
@@ -72,7 +72,7 @@ def test_compare_asks_each_model_as_the_app_would_and_leaves_the_chat_unchanged(
     monkeypatch.setattr(cli, 'ModelCatalog', Catalog)
     monkeypatch.setattr(answering, 'llama_cpp_catalog', Catalog)
     monkeypatch.setattr(answering, 'routing', lambda *a, **kw: {})
-    monkeypatch.setattr(OpenRouterClient, 'run_turn', answer)
+    monkeypatch.setattr(ChatClient, 'run_turn', answer)
     store = VideoSessionStore(data_dir / 'chats')
     [before] = store.list_sessions(OWNER_ID)
     text = run(data_dir, 'compare', 'Chat', 'llama.cpp', 'hearing/model', 'seeing/model')
@@ -102,7 +102,7 @@ def test_compare_sends_a_hearing_llama_cpp_model_its_sound_and_can_try_another_t
     monkeypatch.setattr(answering, 'llama_cpp_catalog', Server)
     monkeypatch.setattr(cli, 'ModelCatalog', Server)
     monkeypatch.setattr(answering, 'sound_parts', lambda session, control=None: [{'type': 'input_audio', 'input_audio': {'data': 'x'}}])
-    monkeypatch.setattr(OpenRouterClient, 'run_turn', lambda client, session, messages, *a, **kw: sent.append(
+    monkeypatch.setattr(ChatClient, 'run_turn', lambda client, session, messages, *a, **kw: sent.append(
         json.dumps(messages)) or Turn(entries=[], completion=Completion('Answer', 'omni', 1, None, None)))
     text = run(data_dir, 'compare', 'Chat', 'llama.cpp')
     assert 'input_audio' in sent[0] and '[00:01] Hello' not in sent[0]
@@ -124,7 +124,7 @@ def test_compare_repeats_as_new_chats_and_asks_a_follow_up_with_the_answer_as_hi
 
     monkeypatch.setattr(cli, 'ModelCatalog', lambda url: type('Catalog', (), {'hears_audio': lambda self, m: False})())
     monkeypatch.setattr(answering, 'routing', lambda *a, **kw: {})
-    monkeypatch.setattr(OpenRouterClient, 'run_turn', answer)
+    monkeypatch.setattr(ChatClient, 'run_turn', answer)
     text = run(data_dir, 'compare', 'Chat', 'a/model', '--runs', '2', '--follow-up', 'Which hand?')
     # Two new chats, each with its answer and then the follow-up.
     assert text.count('Run 1 of 2') == 1 and text.count('Run 2 of 2') == 1 and text.count('Follow-up: Which hand?') == 2
@@ -143,6 +143,6 @@ def test_compare_reports_a_failing_model_and_goes_on(data_dir, monkeypatch):
 
     monkeypatch.setattr(cli, 'ModelCatalog', lambda url: type('Catalog', (), {'hears_audio': lambda self, m: False})())
     monkeypatch.setattr(answering, 'routing', lambda *a, **kw: {})
-    monkeypatch.setattr(OpenRouterClient, 'run_turn', fail)
+    monkeypatch.setattr(ChatClient, 'run_turn', fail)
     text = run(data_dir, 'compare', 'Chat', 'a/model', 'b/model')
     assert text.count('Failed after') == 2 and 'HTTP 502: fixture' in text

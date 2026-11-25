@@ -12,7 +12,7 @@ from typing import Any, Callable
 from .cleaning import clean_description
 from ..settings.config import AppConfig
 from ..llm.models import ModelCatalog, llama_cpp_catalog, routing
-from ..llm.client import LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, OpenRouterClient, Turn, check_whole
+from ..llm.client import LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, ChatClient, Turn, check_whole
 from ..providers import LLAMA_CPP
 from ..request_control import RequestCancelled, RequestControl
 from .section_cuts import cut_sections, needs_sections, section_sound, video_duration
@@ -26,11 +26,11 @@ from ..media.transcript import sound_parts
 
 # Called when the chat's transcript is still to be decided, with the chat, whether the model answering now needs
 # one, and OpenRouter (None without a key); returns the chat as it is afterwards.
-TranscriptStep = Callable[[VideoSession, bool, "OpenRouterClient | None"], VideoSession]
+TranscriptStep = Callable[[VideoSession, bool, "ChatClient | None"], VideoSession]
 NO_OPENROUTER_KEY = "No API key is configured. Enter one in Settings or set OPENROUTER_API_KEY."
 
 
-def search_through_openrouter(client: OpenRouterClient, model: str, options: dict, query: str) -> ToolResult:
+def search_through_openrouter(client: ChatClient, model: str, options: dict, query: str) -> ToolResult:
     """The web_search tool of a llama.cpp chat: OpenRouter's search, given only the query. options holds
     the provider and model exclusions from Settings."""
     text, sources = client.web_search(query, model, options)
@@ -42,13 +42,13 @@ def search_through_openrouter(client: OpenRouterClient, model: str, options: dic
 
 
 def clients(config: AppConfig, provider: str, openrouter_key: str | None,
-            control: RequestControl | None = None) -> tuple[OpenRouterClient, OpenRouterClient | None]:
+            control: RequestControl | None = None) -> tuple[ChatClient, ChatClient | None]:
     """The client that answers the chat, and OpenRouter for the extras of a llama.cpp chat (None without a key;
     never given the chat's video). Only the llama.cpp key goes to the user's server, never the OpenRouter key."""
-    openrouter = (OpenRouterClient(openrouter_key, control=control, ignored_providers=config.ignored_providers)
+    openrouter = (ChatClient(openrouter_key, control=control, ignored_providers=config.ignored_providers)
                   if openrouter_key else None)
     if provider == LLAMA_CPP:
-        return OpenRouterClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url, control=control,
+        return ChatClient(config.llama_cpp_api_key, base_url=config.llama_cpp_url, control=control,
                                 read_timeout=LLAMA_CPP_READ_TIMEOUT), openrouter
     if openrouter is None:
         raise ValueError(NO_OPENROUTER_KEY)
@@ -63,8 +63,8 @@ class Request:
     session: VideoSession
     question: str
     initial: bool
-    client: OpenRouterClient
-    openrouter: OpenRouterClient | None
+    client: ChatClient
+    openrouter: ChatClient | None
     options: dict[str, Any]
     search_options: dict[str, Any]
     # What is sent when the video goes whole; empty when it is described in sections.

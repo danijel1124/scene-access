@@ -15,7 +15,7 @@ def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, m
     notices = []
     monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: notices.append(message) or wx.OK)
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: False)
-    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', lambda *a, **kw:
+    monkeypatch.setattr(gui.ChatClient, 'run_turn', lambda *a, **kw:
                         Turn(entries=[{'role':'assistant','content':'Saved answer'}],
                              completion=Completion('Saved answer','fixture',0,None,None)))
     app = wx.App(False)
@@ -68,7 +68,7 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'announce', lambda *a, **kw: None)
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: True)
     monkeypatch.setattr(gui, 'make_transcript', lambda *a: '[00:00] Old transcript')
-    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', lambda *a, **kw:
+    monkeypatch.setattr(gui.ChatClient, 'run_turn', lambda *a, **kw:
                         Turn(entries=[{'role': 'assistant', 'content': 'Must not be saved'}],
                              completion=Completion('Must not be saved', 'fixture', 0, None, None)))
     app = wx.App(False)

@@ -43,12 +43,12 @@ def test_cancelling_ffmpeg_terminates_the_process(monkeypatch):
 
 def test_cancelled_transcription_does_not_extract_or_send_audio():
     from sceneaccess.media.transcript import make_transcript
-    from sceneaccess.llm.client import OpenRouterClient
+    from sceneaccess.llm.client import ChatClient
     from sceneaccess.request_control import RequestControl, RequestCancelled
     control = RequestControl()
     control.cancel()
     with pytest.raises(RequestCancelled):
-        make_transcript(None, OpenRouterClient('fixture', control=control))
+        make_transcript(None, ChatClient('fixture', control=control))
 
 
 def test_cancel_interrupts_registered_io_and_rejects_more_work():

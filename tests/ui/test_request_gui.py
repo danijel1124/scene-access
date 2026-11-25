@@ -39,7 +39,7 @@ def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, mon
         if len(sent) == 1:
             raise RuntimeError('Fixture provider failure')
         return Turn(entries=[{'role':'assistant','content':'Answer'}], completion=Completion('Answer','fixture',1,None,None))
-    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answer)
+    monkeypatch.setattr(gui.ChatClient, 'run_turn', answer)
     frame.question.SetValue('Original question')
     frame.on_send(None)
     # The first request failed: nothing was answered and the question is back in the field.
@@ -97,7 +97,7 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
         if outcome == 'cancel': raise gui.RequestCancelled()
         return Turn(entries=[{'role': 'assistant', 'content': 'Answer'}],
                     completion=Completion('Answer', 'fixture', 1, None, None))
-    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', answer)
+    monkeypatch.setattr(gui.ChatClient, 'run_turn', answer)
     errors = []
     monkeypatch.setattr(gui.wx, 'MessageBox', lambda message, *a, **kw: errors.append(message))
     frame._send('Original question', initial=True)
@@ -118,7 +118,7 @@ def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
         requests.append(True)
         return Turn(entries=[{'role':'assistant','content':'Picture-only answer'}],
                     completion=Completion('Picture-only answer','fixture',1,None,None))
-    monkeypatch.setattr(gui.OpenRouterClient,'run_turn',answer)
+    monkeypatch.setattr(gui.ChatClient,'run_turn',answer)
     frame._send('Original question',initial=True)
     assert requests == [True] and not transcriptions
     saved = frame.store.get_session(frame.current.id,gui.OWNER_ID)
@@ -140,7 +140,7 @@ def test_failed_followup_restores_question_for_retry(frame, monkeypatch):
     frame.store.record_turn(frame.current.id, gui.OWNER_ID, [{'role':'assistant','content':'First answer'}])
     frame.current = frame.store.get_session(frame.current.id, gui.OWNER_ID)
     def fail(*args, **kw): raise RuntimeError('Fixture provider failure')
-    monkeypatch.setattr(gui.OpenRouterClient, 'run_turn', fail)
+    monkeypatch.setattr(gui.ChatClient, 'run_turn', fail)
     frame.question.SetValue('Do not lose me')
     frame.on_send(None)
     assert frame.question.GetValue() == 'Do not lose me'

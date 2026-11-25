@@ -23,7 +23,7 @@ from .chat_dialogs import (SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSetti
 from .dialogs import NO_PROFILE
 from ..llm.models import AUTO_ROUTER, ModelCatalog, llama_cpp_catalog
 from .new_chat import NewChatMixin, url_from_clipboard
-from ..llm.client import OpenRouterClient
+from ..llm.client import ChatClient
 from ..providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from ..request_control import RequestControl, RequestCancelled
 from ..prompts import current_system_prompt, system_prompt
@@ -689,7 +689,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                           "OpenRouter API key required", wx.OK | wx.ICON_ERROR)
             return
         control = RequestControl()
-        client = OpenRouterClient(key, control=control, ignored_providers=self.config.ignored_providers)
+        client = ChatClient(key, control=control, ignored_providers=self.config.ignored_providers)
         if not client.transcription_allowed():
             wx.MessageBox("ElevenLabs, which makes the transcript, is excluded in Settings, Providers and models.",
                           "Speech recognition excluded", wx.OK | wx.ICON_ERROR)
@@ -849,7 +849,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
             sections.append(("step", item))
             wx.CallAfter(self._request_callback, control, self._show_progress_item, session_id, item)
 
-        def transcript_step(session: VideoSession, wanted: bool, openrouter: OpenRouterClient | None) -> VideoSession:
+        def transcript_step(session: VideoSession, wanted: bool, openrouter: ChatClient | None) -> VideoSession:
             # Made, or marked as not needed for now; the chat is read again to have the stored transcript.
             if wanted:
                 self._prepare_transcript(session, openrouter)
@@ -955,7 +955,7 @@ class ChatFrame(AppWindow, NewChatMixin, wx.Frame):
                 shown = full = f"Unfinished, not saved: {text}"
             self._show_progress_item(self.current.id, shown, announce_it=False, full=full)
 
-    def _prepare_transcript(self, session: VideoSession, client: OpenRouterClient | None) -> None:
+    def _prepare_transcript(self, session: VideoSession, client: ChatClient | None) -> None:
         """Runs in the request thread: transcribes the sound once, as the chat's transcript mode asks.
         A failure never stops the answer; the chat remembers it, so it is not paid for on every question.
         client is OpenRouter, also for a llama.cpp chat; None if no OpenRouter key is configured."""
