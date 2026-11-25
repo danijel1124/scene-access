@@ -155,33 +155,67 @@ Der API-Key kann alternativ über `OPENROUTER_API_KEY` gesetzt werden, diese Umg
 
 ## Code-Struktur
 
-Der gesamte Code liegt im Paket `sceneaccess`:
+Der gesamte Code liegt im Paket `sceneaccess`. Seine Ordner bilden Schichten, die unterste zuerst: storage, llm, media, settings, pipeline, ui. Ein Modul importiert aus seinem eigenen Ordner, aus den Ordnern davor und aus den gemeinsamen Modulen direkt in `sceneaccess/`, nie aus einem Ordner danach; `tools/check_layers.py` prüft das. Nur `cli.py`, die Kommandozeile, darf alles importieren.
 
-- `gui.py`: die Chatfenster, der gemeinsame Zustand aller Fenster (`ChatWindows`) und der App-Start
+Gemeinsame Module direkt in `sceneaccess/`, die aus keinem Ordner importieren:
+
+- `prompts.py`: jeder Text, der an ein Modell geht: der Grund-Prompt, die Blöcke zum Ton, die Standardprofile, die Hinweise und die Anweisungen der einzelnen Schritte
+- `providers.py`: die beiden Anbieter und die feste Adresse von OpenRouter
+- `request_control.py`: Abbrechen sowie Grenzen für Pausieren und Fortsetzen
+- `timecodes.py`: Zeiten im Video als mm:ss oder h:mm:ss, und wie sie zurückgelesen werden
+- `worker_process.py`: unterbrechbare Arbeitsprozesse für Netz und Medien und das Aufräumen von Kindprozessen
+- `cli.py`: die Kommandozeile, siehe Start aus dem Quellcode
+
+`storage/`:
+
+- `session_store.py`: Chats in SQLite, ihr Verlauf in Runden und die privaten Videokopien
+
+`llm/`, das Gespräch mit einem Modell:
+
+- `client.py`: Anfragen an OpenRouter oder einen llama.cpp-Server, die gestreamte Antwort, die Schleife der Tool-Aufrufe und die Spracherkennung
+- `models.py`: die Modell- und Anbieterliste von OpenRouter: welche Modelle Ton hören, und die Routing-Felder, die Anbieter und Modelle ausschließen
+- `tool_calls.py`: wie ein Tool-Aufruf in einem Chat aussieht: die Namen der Tools, ein Ergebnis, seine Zeile in der Chat history und die Nachricht mit dem Bild eines Tools
+
+`media/`, das Video und sein Ton:
+
+- `video.py`: das Video eines Chats als Datei, seine Größe und Dauer, und ein mit ffmpeg herausgeschnittenes Standbild
+- `video_size.py`: wie groß ein Video gesendet ist, und das Verkleinern mit ffmpeg
+- `transcript.py`: das Transkript der Sprache mit Zeitstempeln, und der Ton als eigene Spur
+- `youtube.py`: yt-dlp-Downloads, Dateinamen und Videoinformationen
+- `playlist_files.py`: Einträge einer Playlist den fertigen Downloads zuordnen
+
+`settings/`:
+
+- `config.py`: Einstellungen in `config.json`, und der OpenRouter-Key
+
+`pipeline/`, wie eine Frage beantwortet wird, gleich für die App, die Kommandozeile und `tools/e2e_llama.py`:
+
+- `answering.py`: der Weg durch alles: wer antwortet, das Transkript, Abschnitte oder das ganze Video, und die Websuche für llama.cpp-Chats
+- `hearing.py`: ob das Modell den Ton hört, und wo der Ton in einer Anfrage steht
+- `sections.py`: ein langes Video, Abschnitt für Abschnitt beschrieben
+- `section_cuts.py`: die Abschnitte als Dateien: ihre Grenzen, ihr Ton und die Zeilen des Transkripts darin
+- `cleaning.py`: was ohne Modell aus einer Beschreibung entfernt wird
+- `section_review.py`: das Prüfer-Modell, das eine Beschreibung kontrolliert
+- `tools.py`: die Tools für das Modell und der Code, der sie ausführt (ffmpeg-Standbilder, Ausschnitte in hoher Auflösung)
+
+`ui/`, die Fenster:
+
+- `app.py`: alle Fenster der App zusammen (`ChatWindows`) und der App-Start
+- `app_window.py`: was Hauptfenster und Chatfenster teilen: wo die Einstellungen liegen, die Einstellungen und der Modellkatalog
 - `chat_list.py`: das Hauptfenster mit der Chatliste, Settings und dem Löschen eines Chats
-- `app_window.py`: was Hauptfenster und Chatfenster teilen: Einstellungen, Modellkatalog und gespeicherte Chats
-- `single_instance.py`: Prozesssperre und lokaler Aktivierungskanal mit festem Nachrichtentyp
+- `chat_window.py`: das Fenster eines Chats, seine Tasten und die Chat history mit ihrem Menü
+- `chat_setup.py`: einen Chat einrichten: Prompt-Profil und Tools, Systemprompt, Chat settings, Verkleinern, die Online-Quelle und ein späteres Transkript
+- `chat_request.py`: eine Frage senden: die Anfrage in einem eigenen Thread, Pausieren, Abbrechen und die Einträge, die wachsen, während die Antwort gestreamt wird
 - `new_chat.py`: einen Chat aus einer lokalen Datei oder von YouTube starten: Chatstart-Dialog, Frage zur Videogröße, Verkleinern und Download
 - `dialogs.py`: Settings mit den Unterdialogen File name, Prompt profiles und Providers and models
 - `chat_dialogs.py`: der Chatstart-Dialog mit Advanced…, die Fragen zur Videogröße, Chat settings und der Nachrichtenleser
 - `chat_history.py`: die Einträge der Chat history und die Nutzungszeile
-- `answering.py`: wie eine Frage beantwortet wird, gleich für die App, die Kommandozeile und `tools/e2e_llama.py`: wer antwortet, ob das Modell den Ton hört oder ein Transkript braucht, Abschnitte oder das ganze Video, der Prüfer und die geprüfte und bereinigte Antwort; dazu die Websuche für llama.cpp-Chats
-- `openrouter.py`: Anfragen an OpenRouter oder einen llama.cpp-Server und die Schleife der Tool-Aufrufe
-- `providers.py`: die beiden Anbieter und die feste Adresse von OpenRouter
-- `tools.py`: die Tools für das Modell und der Code, der sie ausführt (ffmpeg-Standbilder, Ausschnitte in hoher Auflösung)
-- `prompts.py`: der Grund-Prompt und die Standardprofile
-- `models.py`: die Modell- und Anbieterliste von OpenRouter: welche Modelle Ton hören, und die Routing-Felder, die Anbieter und Modelle ausschließen
-- `transcript.py`: das Transkript der Sprache eines Videos mit Zeitstempeln, und ob ein Chat eines braucht
-- `video_size.py`: wie groß ein Video gesendet ist, und das Verkleinern mit ffmpeg
-- `session_store.py`: Chats in SQLite und die privaten Videokopien
-- `youtube.py`: yt-dlp-Downloads, Dateinamen und Videoinformationen
-- `config.py`: Einstellungen in `config.json`
-- `speech.py`: Ansagen über den laufenden Screenreader
-- `cli.py`: die Kommandozeile, siehe Start aus dem Quellcode
+- `single_instance.py`: Prozesssperre und lokaler Aktivierungskanal mit festem Nachrichtentyp
+- `speech.py`: Ansagen über den laufenden Screenreader; die App spricht nur über `speech.announce`
 
-`SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`: eine Datei pro Modul (`prompts.py` wird in den Tests von Hauptfenster und Dialogen mitgeprüft), weitere Dateien für modulübergreifendes Verhalten (Lebensdauer und Steuerung von Anfragen, llama.cpp-Chats, Downloads und ihr Aufräumen, Arbeitsprozesse, Ein-Instanz-Betrieb, Start) sowie Prüfungen der Doku-Sprache, des Datenbanknamens, des Standardmodells und der Release-Dateien. `tests/conftest.py` enthält Fixtures, die mehrere Dateien teilen, etwa einen lokalen Video-Webserver, und lässt unter Windows alle Tests auf einem eigenen, unsichtbaren Desktop laufen, damit ihre Fenster weder auf dem Bildschirm erscheinen noch beim Screenreader ankommen.
+`SceneAccess.py` ist der Starter, den PyInstaller verwendet. Die Tests liegen in `tests/`, in denselben Ordnern wie der Code, den sie prüfen. Eine Datei prüft ein Modul oder ein Verhalten eines Ordners: `tests/ui/test_chat_window.py` prüft ein Chatfenster als Ganzes, sein Einrichten und seine Anfragen werden zusätzlich in `test_request_gui.py`, `test_request_lifetime.py` und `test_llama_cpp_chats.py` geprüft; `prompts.py` wird in den Tests der Module mitgeprüft, die es benutzen. Direkt in `tests/` liegen Dateien für ordnerübergreifendes Verhalten (Kommandozeile, Downloads und ihr Aufräumen, Arbeitsprozesse, Steuerung von Anfragen, private Vorverarbeitung) sowie Prüfungen der Doku-Sprache und der Release-Dateien. `tests/conftest.py` enthält Fixtures, die mehrere Dateien teilen, etwa einen lokalen Video-Webserver, hält jeden Test für den Screenreader stumm und lässt unter Windows alle Tests auf einem eigenen, unsichtbaren Desktop laufen, damit ihre Fenster weder auf dem Bildschirm erscheinen noch beim Screenreader ankommen.
 
-`tools/` enthält Hilfsskripte für die Entwicklung: `guarded_pytest.py` startet pytest und bricht sofort ab, wenn ein Testfenster auf dem sichtbaren Desktop erscheint, `e2e_llama.py` schickt einen echten Chat an den llama.cpp-Server aus den Settings (oder an eine als Argument übergebene URL), und `live_window.ps1` führt einen Aufruf der Kommandozeile in einem eigenen Konsolenfenster aus, sodass er sich live verfolgen und mit Strg+C abbrechen lässt, und schreibt dieselbe Ausgabe in eine Logdatei; das Fenster schließt sich am Ende selbst.
+`tools/` enthält Hilfsskripte für die Entwicklung: `guarded_pytest.py` startet pytest und bricht sofort ab, wenn ein Testfenster auf dem sichtbaren Desktop erscheint; `check_layers.py` prüft die Schichtregel oben; `check_patches.py` prüft, dass jeder Patch, den ein Test an einem Modul des Pakets setzt, auch wirkt, etwa dass ein Test seinen eigenen Datenordner über `app_window.config_path_from_standard_paths` setzt, die eine Stelle, die jedes Fenster fragt, damit er nie die echten Chats des Nutzers liest; `e2e_llama.py` schickt einen echten Chat an den llama.cpp-Server aus den Settings (oder an eine als Argument übergebene URL); und `live_window.ps1` führt einen Aufruf der Kommandozeile in einem eigenen Konsolenfenster aus, sodass er sich live verfolgen und mit Strg+C abbrechen lässt, und schreibt dieselbe Ausgabe in eine Logdatei; das Fenster schließt sich am Ende selbst.
 
 Bekannte Lücken der Tests:
 

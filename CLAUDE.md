@@ -21,7 +21,7 @@ pytest darf damit ganz normal gestartet werden. **Diese Absicherung nie entferne
 neue Tests, die Fenster in einem anderen Thread oder Prozess als dem pytest-Hauptthread erzeugen, ebenfalls
 auf den unsichtbaren Desktop bringen: Ein neuer Thread oder Prozess landet sonst wieder auf dem Desktop
 des Nutzers. **Kindprozesse beachten:** Ein neuer Prozess startet auf dem Desktop des Nutzers, nicht auf dem
-unsichtbaren. Tests, die einen Kindprozess mit GUI starten (z. B. `gui.main()` in
+unsichtbaren. Tests, die einen Kindprozess mit GUI starten (z. B. `app.main()` in
 `test_single_instance.py`), müssen darin vor dem ersten Fenster `conftest.move_to_invisible_desktop()`
 aufrufen. Real passiert (30.10.2026): Ein solcher Kindprozess öffnete sein Fenster sichtbar, und ein
 Wächter, der nur die Fenster des pytest-Prozesses selbst prüfte, hat es übersehen. Ein Wächter muss
@@ -51,7 +51,13 @@ Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpa
 - `tools\guarded_pytest.py <Logdatei> <pytest-Argumente>`: startet pytest und bricht sofort ab, wenn
   pytest oder ein Kindprozess ein sichtbares Fenster öffnet. So werden Tests gestartet.
 - `tools\e2e_llama.py [URL]`: schickt einen echten Chat an den llama.cpp-Server (ohne URL die aus den
-  Settings), über SceneAccess' eigene Pipeline (`sceneaccess/answering.py`), ohne OpenRouter-Key, also ohne Kosten.
+  Settings), über SceneAccess' eigene Pipeline (`sceneaccess/pipeline/answering.py`), ohne OpenRouter-Key, also ohne Kosten.
+- `tools\check_layers.py`: prüft, dass das Paket nur nach unten importiert (Schichten storage, llm, media, settings,
+  pipeline, ui; die Module direkt in `sceneaccess/` importieren aus keinem Ordner, nur `cli.py` darf alles).
+- `tools\check_patches.py`: prüft, dass jeder `monkeypatch.setattr` eines Tests auf ein Modul des Pakets wirkt, auch in
+  Kindprozess-Skripten. Den Datenordner setzt ein Test immer über `app_window.config_path_from_standard_paths`, die
+  eine Stelle, die jedes Fenster fragt; ein Patch anderswo ginge ins Leere, und der Test läse die echten Chats.
+  Beide nach jedem Umbau laufen lassen, zusammen mit pyflakes.
 - `tools\live_window.ps1 <Logdatei> <cli-Argumente>`: führt einen Aufruf der Kommandozeile in einem eigenen
   Konsolenfenster aus, in dem der Nutzer live mitliest und mit Strg+C abbricht; dieselbe Ausgabe landet in der
   Logdatei, an deren Ende `=== Ende` steht, und das Fenster schließt sich dann selbst (Nutzer-Vorgabe 17.11.2026).
@@ -60,7 +66,7 @@ Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpa
 
 Chats des Nutzers lesen und Modelle vergleichen geht über die Kommandozeile der App (siehe README, „Start
 aus dem Quellcode“): `python -m sceneaccess.cli chats`, `show "<Titel>"` und `compare "<Titel>" <Modelle…>`.
-`compare` arbeitet auf einer Kopie des Chats und über dieselbe Pipeline wie die App (`sceneaccess/answering.py`).
+`compare` arbeitet auf einer Kopie des Chats und über dieselbe Pipeline wie die App (`sceneaccess/pipeline/answering.py`).
 Geld kosten dabei OpenRouter-Modelle, ein Prüfer-Modell aus den Settings und, seit 25.11.2026, auch die Websuche
 über OpenRouter, wenn ein Modell auf dem eigenen Server sie aufruft (nur mit eingetragenem OpenRouter-Key).
 
