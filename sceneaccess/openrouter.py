@@ -7,9 +7,11 @@ from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
+from .models import api_url
 from .providers import OPENROUTER_URL
-from .session_store import VideoSession
 from .request_control import RequestControl
+from .session_store import WIRE_KEYS, VideoSession
+from .tool_calls import describe_call, image_message
 from .worker_process import run_isolated_task
 
 # A question may trigger several rounds of tool calls; after this many the model must answer.
@@ -258,8 +260,6 @@ class OpenRouterClient:
         """Speech to text with word timestamps through OpenRouter's transcription endpoint."""
         if not self.transcription_allowed(model):
             raise ValueError('Speech recognition skipped because the transcription provider is excluded.')
-        from .models import api_url
-
         payload = {"model": model, "input_audio": {"data": base64.b64encode(audio).decode("ascii"), "format": audio_format},
                    "response_format": "verbose_json", "timestamp_granularities": ["word", "segment"]}
         return self._post(payload, api_url(self.endpoint, "audio/transcriptions"))
@@ -277,11 +277,9 @@ class OpenRouterClient:
     def run_turn(self, session: VideoSession, messages: list[dict[str, Any]], run_tool: Callable[[str, str], Any],
                  on_event: EventHandler | None = None, routing: dict[str, Any] | None = None,
                  max_tool_rounds: int = MAX_TOOL_ROUNDS, on_delta: DeltaHandler | None = None) -> Turn:
-        """Asks the model and runs its tool calls until it answers. run_tool returns a tools.ToolResult.
+        """Asks the model and runs its tool calls until it answers. run_tool returns a tool_calls.ToolResult.
         routing holds extra request fields such as plugins and provider, see models.routing. With on_delta, each
         request is streamed and on_delta gets its reasoning and text as they arrive."""
-        from .tools import describe_call, image_message
-
         notify = on_event or (lambda _kind, _text: None)
         if type(max_tool_rounds) is not int or max_tool_rounds < 0:
             raise ValueError("The maximum number of tool rounds must be a nonnegative integer.")
@@ -372,7 +370,6 @@ class OpenRouterClient:
 
 
 def _wire(message: dict[str, Any]) -> dict[str, Any]:
-    from .session_store import WIRE_KEYS
     return {key: message[key] for key in WIRE_KEYS if key in message}
 
 

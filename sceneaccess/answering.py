@@ -19,7 +19,8 @@ from .section_cuts import cut_sections, needs_sections, section_sound, video_dur
 from .section_review import Reviewer
 from .sections import describe_in_sections
 from .session_store import REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
-from .tools import ToolResult, ToolRunner, provider_tools
+from .tool_calls import ToolResult
+from .tools import ToolRunner, provider_tools
 from .transcript import model_hears, sound_parts, wants_transcript, with_sound
 
 # Called when the chat's transcript is still to be decided, with the chat, whether the model answering now needs

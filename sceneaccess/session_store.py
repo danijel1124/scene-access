@@ -12,6 +12,7 @@ from typing import Any
 from .prompts import (LANGUAGE_HINT, SECTIONS_INSTEAD_OF_VIDEO, TITLE_HINT, TRANSCRIPT_HEARD_INTRO, TRANSCRIPT_INTRO,
                       TRANSCRIPT_LATER_INTRO, sound_blocks)
 from .providers import OPENROUTER
+from .timecodes import format_time
 
 
 class SessionNotFound(KeyError):
@@ -64,7 +65,6 @@ SECTION_FILE_PREFIX = "section-"
 
 def joined_sections(described: list[dict[str, Any]]) -> str:
     """The descriptions of a video's sections as one text, each headed with its part and time."""
-    from .tools import format_time
     return "\n\n".join(f"Part {entry['index'] + 1} ({format_time(round(entry['start']))} to "
                        f"{format_time(round(entry['end']))}):\n"
                        f"{entry['text']}" for entry in described)

@@ -7,7 +7,8 @@ import pytest
 
 from sceneaccess.openrouter import OpenRouterClient, OpenRouterError
 from sceneaccess.session_store import VideoSessionStore
-from sceneaccess.tools import ToolResult, tool_definitions
+from sceneaccess.tool_calls import ToolResult
+from sceneaccess.tools import tool_definitions
 
 
 class FakeResponse:

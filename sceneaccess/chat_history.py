@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from .session_store import EXCLUDED, REMOVED, TRANSCRIPT_DONE, TRANSCRIPT_ENTRY, TRANSCRIPT_FAILED, TRANSCRIPT_NONE
-from .tools import describe_call, format_time
+from .timecodes import format_time
+from .tool_calls import describe_call
 
 # Said first for every item of a round hidden from the model, so the screen reader reads it.
 HIDDEN_FROM_MODEL = "[hidden from model] "

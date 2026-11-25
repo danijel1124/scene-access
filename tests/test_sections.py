@@ -13,7 +13,7 @@ from sceneaccess.section_cuts import (Section, cut_sections, needs_sections, sec
                                       video_duration)
 from sceneaccess.sections import describe_in_sections
 from sceneaccess.session_store import SECTION_FILE_PREFIX, VideoSessionStore
-from sceneaccess.tools import video_size_and_duration
+from sceneaccess.video import video_size_and_duration
 
 
 def _video(path: Path, seconds: int = 7) -> Path:
@@ -491,7 +491,7 @@ def test_the_merge_is_the_last_check_and_can_have_a_part_described_anew(tmp_path
     assert any(row.startswith("Section 2 (00:30 to 01:00, described again at the merge)") for row in rows)
     assert any(row.startswith("Removed from the answer") for row in rows)
     # The tool call reads as a sentence in the Chat history, not as JSON.
-    from sceneaccess.tools import describe_call
+    from sceneaccess.tool_calls import describe_call
     assert describe_call("describe_section_again", json.dumps({"part": 2, "problems": "a vacuum cleaner"})) == (
         "Have section 2 described again: a vacuum cleaner")
 

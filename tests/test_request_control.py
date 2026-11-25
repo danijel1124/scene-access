@@ -7,7 +7,7 @@ def test_cancelling_ffmpeg_terminates_the_process(monkeypatch):
     import subprocess
     import sys
     import threading
-    from sceneaccess import tools
+    from sceneaccess import video
     from sceneaccess.request_control import RequestControl, RequestCancelled
     real_popen = subprocess.Popen
     started, done = threading.Event(), threading.Event()
@@ -17,12 +17,12 @@ def test_cancelling_ffmpeg_terminates_the_process(monkeypatch):
         processes.append(process)
         started.set()
         return process
-    monkeypatch.setattr(tools, '_ffmpeg', lambda: sys.executable)
-    monkeypatch.setattr(tools.subprocess, 'Popen', start)
+    monkeypatch.setattr(video, '_ffmpeg', lambda: sys.executable)
+    monkeypatch.setattr(video.subprocess, 'Popen', start)
     control = RequestControl()
     def work():
         try:
-            tools.run_ffmpeg([], control=control)
+            video.run_ffmpeg([], control=control)
         except Exception as error:
             errors.append(error)
         finally:

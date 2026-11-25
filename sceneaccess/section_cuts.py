@@ -11,7 +11,7 @@ from typing import Any
 
 from .request_control import RequestControl
 from .session_store import SECTION_FILE_PREFIX, VideoSession
-from .tools import local_video, run_ffmpeg, video_size_and_duration
+from .video import local_video, run_ffmpeg, video_size_and_duration
 from .transcript import sound_parts
 
 # Sections end a little before the limit, as encoding can make a cut a few hundredths of a second longer.

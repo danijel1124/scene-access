@@ -43,7 +43,8 @@ def test_hd_single_video_still_produces_a_decodable_clip(tmp_path, video_server)
 
 def test_hd_tool_rejects_a_previously_stored_collection(tmp_path, video_server):
     from sceneaccess.session_store import VideoSessionStore
-    from sceneaccess.tools import HD_FRAME, ToolRunner, tool_definitions
+    from sceneaccess.tool_calls import HD_FRAME
+    from sceneaccess.tools import ToolRunner, tool_definitions
     from sceneaccess.request_control import RequestControl
     url, requests, payload = video_server
     source = tmp_path / 'fixture.mp4'

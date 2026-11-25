@@ -14,7 +14,8 @@ from typing import Any
 from .models import AUTO_ROUTER, ModelCatalog
 from .providers import LLAMA_CPP
 from .session_store import NO_SOUND_FILE, SOUND_FILE_PREFIX, TRANSCRIBE_AUTO, TRANSCRIBE_ON, VideoSession
-from .tools import format_time, local_video, run_ffmpeg
+from .timecodes import format_time
+from .video import local_video, run_ffmpeg
 from .request_control import RequestControl
 
 # Audio is sent in pieces of this length, so long videos stay within request size limits.

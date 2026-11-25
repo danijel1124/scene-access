@@ -5,8 +5,9 @@ import imageio_ffmpeg
 import pytest
 
 from sceneaccess.session_store import VideoSessionStore
-from sceneaccess.tools import (HD_FRAME, VIDEO_INFO, ZOOM_FRAME, ToolRunner, describe_call, format_time,
-                               function_tool_names, parse_time, tool_definitions)
+from sceneaccess.timecodes import format_time, parse_time
+from sceneaccess.tool_calls import HD_FRAME, VIDEO_INFO, ZOOM_FRAME, describe_call
+from sceneaccess.tools import ToolRunner, function_tool_names, tool_definitions
 
 
 def test_time_parsing_and_formatting():

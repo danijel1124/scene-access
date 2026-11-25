@@ -75,7 +75,8 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
     import subprocess
     import types
     import imageio_ffmpeg
-    from sceneaccess.tools import ZOOM_FRAME, tool_definitions
+    from sceneaccess.tool_calls import ZOOM_FRAME
+    from sceneaccess.tools import tool_definitions
     # Only gui's own thread runs inline: the real tool starts subprocesses, whose reader threads
     # need the real threading.Thread.
     monkeypatch.setattr(gui, 'threading', types.SimpleNamespace(Thread=InlineThread))

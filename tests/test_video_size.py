@@ -8,7 +8,7 @@ import sceneaccess.video_size as video_size
 import imageio_ffmpeg
 import pytest
 
-from sceneaccess.tools import video_size_and_duration
+from sceneaccess.video import video_size_and_duration
 from sceneaccess.video_size import (ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_plan,
                                     shrink_video)
 from sceneaccess.youtube import MAX_HEIGHT_CHOICES
@@ -82,11 +82,10 @@ def test_shrink_video_rounds_both_dimensions_down_without_enlarging(tmp_path, wi
 @pytest.mark.parametrize("sizes,attempts", [((2_000_000, 600_000), 2), ((2_000_000, 1_500_000, 1_200_000), 3)])
 def test_shrink_video_aims_lower_after_an_overshoot_and_gives_up_after_three_attempts(tmp_path, monkeypatch,
                                                                                        sizes, attempts):
-    from sceneaccess import tools
     goals, written = [], list(sizes)
     real_plan = video_size.shrink_plan
     monkeypatch.setattr(video_size, "shrink_plan", lambda goal, duration: goals.append(goal) or real_plan(goal, duration))
-    monkeypatch.setattr(tools, "video_size_and_duration", lambda path: ((640, 360), 60.0))
+    monkeypatch.setattr(video_size, "video_size_and_duration", lambda path: ((640, 360), 60.0))
     # The encoder overshoots: each attempt writes a file of the next given size.
     monkeypatch.setattr(video_size, "_run", lambda _ffmpeg, arguments, *_: video_size.Path(arguments[-1]).write_bytes(
         b"x" * written.pop(0)))

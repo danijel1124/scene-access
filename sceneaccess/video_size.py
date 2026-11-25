@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .video import _ffmpeg, video_size_and_duration
+
 # Google AI Studio rejects requests over 20,000,000 bytes (measured October 2026); the rest is left for
 # the prompt, the transcript and the chat history, which every request sends along with the video.
 SIZE_LIMIT = 19_000_000
@@ -41,8 +43,6 @@ def next_lower_height(requested: int, actual: int, choices: tuple[int, ...]) -> 
 
 def video_height(path: Path) -> int:
     """The picture height of a video file, 0 if unknown."""
-    from .tools import video_size_and_duration
-
     try:
         return int(video_size_and_duration(path)[0][1])
     except Exception:
@@ -91,8 +91,6 @@ def shrink_video(source: Path, target: Path, target_base64: int,
                  cancelled: Callable[[], bool] = lambda: False) -> None:
     """Writes a copy of source to target that is at most target_base64 bytes once Base64-encoded.
     progress gets the done fraction of each attempt; raises ShrinkCancelled if cancelled() turns true."""
-    from .tools import _ffmpeg, video_size_and_duration
-
     _size, duration = video_size_and_duration(source)
     goal = target_base64
     for _attempt in range(3):
