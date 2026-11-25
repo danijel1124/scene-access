@@ -1,17 +1,17 @@
-import pytest
-import wx
-
-from sceneaccess.pipeline import answering
-from sceneaccess.media import transcript
-from sceneaccess.ui import app_window, chat_request, chat_window, speech
-from sceneaccess.ui.chat_history import chat_history_entries
-from sceneaccess.llm.client import Completion, Turn
 import threading
 from dataclasses import replace
 from pathlib import Path
-from sceneaccess.llm.client import ChatClient
+
+import pytest
+import wx
+
+from sceneaccess.llm.client import ChatClient, Completion, Turn
+from sceneaccess.media import transcript
+from sceneaccess.pipeline import answering
 from sceneaccess.request_control import RequestCancelled
 from sceneaccess.storage.session_store import OWNER_ID
+from sceneaccess.ui import app_window, chat_request, chat_window, speech
+from sceneaccess.ui.chat_history import chat_history_entries
 
 
 @pytest.fixture
@@ -132,6 +132,32 @@ def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
     assert 'excluded' in saved.transcript.lower() and 'elevenlabs' in saved.transcript.lower()
     entries = chat_history_entries(saved.initial_question,saved.history,saved.transcript_state,saved.transcript)
     assert any('excluded' in text.lower() for text, _ in entries)
+
+
+@pytest.mark.parametrize('cancelled_in', ['moments', 'answer'])
+def test_a_cancel_while_splitting_into_moments_keeps_the_answer_but_not_during_it(frame, monkeypatch, cancelled_in):
+    from sceneaccess.storage.session_store import MOMENTS
+    monkeypatch.setattr(chat_request.threading, 'Thread', InlineThread)
+    monkeypatch.setattr(answering, 'wants_transcript', lambda *a: False)
+    # A real length, so the step that splits the answer into moments runs.
+    monkeypatch.setattr(answering, 'video_duration', lambda session: 84.0)
+
+    def answer(client, session, messages, run_tool, on_event=None, routing=None, max_tool_rounds=6, **kwargs):
+        if (max_tool_rounds == 0) == (cancelled_in == 'moments'):
+            frame._request.cancel()
+            raise RequestCancelled()
+        return Turn(entries=[{'role': 'assistant', 'content': '00:00 She smiles.'}],
+                    completion=Completion('00:00 She smiles.', 'fixture', 1, None, None))
+
+    monkeypatch.setattr(ChatClient, 'run_turn', answer)
+    frame._send('Original question', initial=True)
+    stored = frame.store.get_session(frame.current.id, OWNER_ID)
+    if cancelled_in == 'moments':
+        assert [entry['content'] for entry in stored.history] == ['00:00 She smiles.']
+        assert MOMENTS not in stored.history[-1]
+    else:
+        assert stored.history == []
+    assert frame._request is None and frame.send_button.GetLabel() == 'Send question'
 
 
 def test_missing_api_key_preserves_question(frame):
