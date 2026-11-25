@@ -585,6 +585,21 @@ def test_the_cleaning_of_a_whole_video_keeps_the_overview_and_cuts_only_the_sent
     assert len(notes) == 3
 
 
+def test_a_whole_answer_loses_a_line_announcing_it_but_keeps_its_overview():
+    from sceneaccess.pipeline.cleaning import clean_description
+    # As Qwen3.5-9B began, so an audio track of its moments would have read it out first.
+    cleaned, notes = clean_description('Here is an audio description of the video "Mein Einarmiger Alltag":\n\n'
+                                       "The scene opens on a woman with a prosthetic hand.\n"
+                                       "00:26 She shows a vacuum cleaner.", "", whole=True)
+    assert cleaned == "The scene opens on a woman with a prosthetic hand.\n00:26 She shows a vacuum cleaner."
+    assert notes == ['- Removed the lead-in: Here is an audio description of the video "Mein Einarmiger Alltag":']
+    # An overview is no lead-in, also one ending with a colon before a list, nor is a heading with a time.
+    for text in ("A woman with one arm shows everyday things.\n00:00 She smiles.",
+                 "Die Frau mit der Prothese am linken Arm zeigt Alltagsgegenstände, die ihr helfen:\n00:00 Sie lächelt.",
+                 "**00:00 – 00:26: Zahnpflege:**\nSie hält eine Tube."):
+        assert clean_description(text, "", whole=True)[0] == text
+
+
 def test_a_whole_answer_is_stored_cleaned_with_what_was_removed(tmp_path: Path):
     from sceneaccess.pipeline.answering import cleaned_whole_answer
     from sceneaccess.storage.session_store import REMOVED

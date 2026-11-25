@@ -117,6 +117,16 @@ def without_preamble(text: str) -> str:
     return "\n".join(lines[first:]).strip() if first else text.strip()
 
 
+def _lead_in(line: str) -> bool:
+    """Whether the first line of a description of the whole video only announces it, as "Here is an audio
+    description of the video "Mein Einarmiger Alltag":" (Qwen3.5-9B, 25.11.2026): no time, no sentence, a colon at
+    its end, and it speaks of the description itself. An overview also ends with a colon before a list, as "Die
+    Frau mit der Prothese am linken Arm zeigt Alltagsgegenstände, die ihr das Leben erleichtern:", and stays."""
+    line = line.strip()
+    return (line.endswith(":") and not TIME_AT_START.match(line) and not re.search(r"[.!?](\s|$)", line)
+            and bool(re.search(r"(?i)description|beschreibung|audiodeskription", line)))
+
+
 def _without_speech(sentence: str, spoken: list[str]) -> str:
     """A sentence of a description with what is said cut off, or "" if nothing seen is left: "Sie dreht den
     Deckel auf, während sie über das Drehen spricht." keeps what comes before the clause, as does "…, noting
@@ -138,14 +148,19 @@ def _without_speech(sentence: str, spoken: list[str]) -> str:
 def clean_description(text: str, heard: str, whole: bool = False) -> tuple[str, list[str]]:
     """A description with what needs no model removed: text before the first time, tenths of seconds, and in the
     timed lines each sentence that only repeats what is said or says what someone talks about, and such a clause
-    after what is seen. A description of the whole video (whole) keeps its overview before the first time and its
-    paragraphs, and judges its lines after the first time also when they carry none: models put the time in a
+    after what is seen. A description of the whole video (whole) keeps its overview before the first time, but not a
+    first line only announcing it (_lead_in), and its paragraphs, and judges its lines after the first time also when they carry none: models put the time in a
     heading such as "**00:00 – 00:26: Zahnpflege**" and the description below it. Returns the cleaned text and a
     note for each change."""
     spoken = _spoken(heard)
     notes, kept = [], []
     timed_before = False
-    for line in (text.strip() if whole else without_preamble(text)).splitlines():
+    lines = (text.strip() if whole else without_preamble(text)).splitlines()
+    if whole and lines and _lead_in(lines[0]):
+        # The overview stays, but not a line announcing it, which an audio track would read out first.
+        notes.append(f"- Removed the lead-in: {lines[0].strip()}")
+        lines = lines[1:]
+    for line in lines:
         if not line.strip():
             # Each paragraph break once, also where a removed line stood between two.
             if whole and kept and kept[-1]:
