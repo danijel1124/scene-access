@@ -31,10 +31,13 @@ deshalb die Fenster aller Nachfahren-Prozesse prüfen.
 unsichtbaren Desktop. Tests ersetzen `wx.TheClipboard` deshalb immer durch eine Attrappe, nie die echte
 benutzen – sonst überschreibt jeder Testlauf, was der Nutzer gerade kopiert hat.
 
-## Nach jeder Runde SceneAccess wieder starten (Nutzer-Vorgabe 30.10.2026)
+## Nach einer Runde mit GUI-Änderungen SceneAccess wieder starten (Nutzer-Vorgabe 30.10.2026, eingeschränkt 25.11.2026)
 
-Der Nutzer beendet SceneAccess, bevor eine Änderungsrunde beginnt. Am Ende jeder Runde, sobald alle
-Tests grün sind (und committet ist, wenn committet werden soll), SceneAccess ungefragt wieder starten:
+Der Nutzer beendet SceneAccess, bevor eine Änderungsrunde beginnt. **Nur wenn die Runde etwas an der GUI
+geändert hat** (`sceneaccess/ui/`, oder was die Fenster sichtbar anders macht): am Ende, sobald alle
+Tests grün sind (und committet ist, wenn committet werden soll), SceneAccess ungefragt wieder starten.
+Hat die Runde an der GUI nichts geändert (z. B. nur Pipeline, Kommandozeile, Doku), die App **nicht**
+öffnen; Nutzer am 25.11.2026: „öffne die app nicht mehr, wenn wir an der gui nix gemacht haben“. Starten:
 als Hintergrundauftrag des Harness (`run_in_background`), damit Ausgaben und Tracebacks lesbar
 bleiben, und danach prüfen, dass das Fenster offen ist. Sind die Tests nicht grün, erst beheben, dann
 starten. Während Tests laufen, SceneAccess nicht parallel starten (Speicher dieses Rechners).

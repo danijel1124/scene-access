@@ -119,7 +119,9 @@ def test_reopened_setup_waits_for_final_transcript_write(tmp_path, monkeypatch):
         assert sid not in windows.requests
         assert reopened.setup_button.IsEnabled()
         assert reopened.current.transcript == '[00:00] Old transcript'
-        assert reopened.current.history == []  # Cancellation still prevents saving the answer.
+        # Cancelled before the answer was whole: it is not saved; only a cancel while it is split into moments
+        # keeps it.
+        assert reopened.current.history == []
         reopened.apply_setup('General description')
         persisted = reopened.store.get_session(sid, OWNER_ID)
         assert persisted.system_prompt

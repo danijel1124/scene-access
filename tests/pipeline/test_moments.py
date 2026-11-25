@@ -191,6 +191,12 @@ def test_a_first_answer_gets_its_moments_on_its_entry_and_the_step_in_its_usage(
     assert call["session"].model == "vendor/answered" and "plugins" not in call["routing"]
 
 
+def test_a_cancel_while_splitting_costs_only_the_moments(session):
+    _store, chat = session
+    turn = answering.with_moments(request(chat, Client(RequestCancelled())), answered(), None, None)
+    assert turn.entries[-1]["content"] == TEXT and MOMENTS not in turn.entries[-1]
+
+
 def test_moments_not_in_the_form_leave_the_answer_as_it_is(session):
     _store, chat = session
     turn = answering.with_moments(request(chat, Client("not the form")), answered(), None, None)

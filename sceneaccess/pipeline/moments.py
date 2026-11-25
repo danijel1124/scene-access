@@ -41,7 +41,7 @@ def split_into_moments(client: Any, session: VideoSession, text: str, duration: 
                        on_delta: DeltaHandler | None = None) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
     """Asks session's model to split text, the finished answer about a video of duration seconds, into moments.
     Returns them, or None when the answer did not keep to the form, and the request's usage, None if it failed.
-    Only cancelling stops the answer; any other failure means no moments."""
+    A cancel is raised; any other failure means no moments."""
     if on_event:
         on_event("moments", "Splitting the answer into moments")
     options = {**routing, **FORMAT}

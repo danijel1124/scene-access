@@ -139,7 +139,8 @@ class ChatRequestMixin:
                 turn, runner = answering.answer(
                     request, on_event=on_event, on_delta=on_delta,
                     save_sections=lambda progress: self.store.save_sections(session_id, OWNER_ID, progress))
-                control.check_cancelled()
+                # A cancel before the answer was whole raised in answering.answer; one while it was split into
+                # moments cost only those, so the answer is stored (user's wish, 25.11.2026).
                 question_entry = [] if initial else [{"role": "user", "content": question}]
                 self.store.record_turn(session_id, OWNER_ID, question_entry + turn.entries)
                 if runner is not None:

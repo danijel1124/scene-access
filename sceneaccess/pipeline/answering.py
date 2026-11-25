@@ -173,12 +173,17 @@ def answer(request: Request, *, on_event: EventHandler | None = None, on_delta: 
             request.new_runner, save_sections, duration=request.duration, sound=sound, on_event=on_event,
             on_delta=on_delta, routing=request.options, max_tool_rounds=config.max_tool_rounds,
             model_name=request.served_model, reviewer=request.reviewer)
+        if control:
+            control.check_cancelled()
         return with_moments(request, turn, on_event, on_moments_delta), None
     runner = request.new_runner()
     try:
         turn = request.client.run_turn(request.tooled, request.messages, runner.run, on_event, request.options,
                                        max_tool_rounds=config.max_tool_rounds, on_delta=on_delta)
         check_whole(turn.completion)
+        # A cancel until the answer is whole discards it; one while it is split into moments costs only those.
+        if control:
+            control.check_cancelled()
         if request.initial:
             turn = with_moments(request, cleaned_whole_answer(turn, session), on_event, on_moments_delta)
     except BaseException:
@@ -197,12 +202,12 @@ def with_moments(request: Request, turn: Turn, on_event: EventHandler | None,
     routing = {"provider": request.options["provider"]} if "provider" in request.options else {}
     try:
         duration = request.duration or video_duration(session)
-    except RequestCancelled:
-        raise
+        moments, usage = split_into_moments(request.client, replace(session, model=model), completion.answer,
+                                            duration, routing, llama_cpp=request.llama_cpp, on_event=on_event,
+                                            on_delta=on_delta)
     except Exception:
+        # The answer is whole: a cancel or failure now costs only its moments (user's wish, 25.11.2026).
         return turn
-    moments, usage = split_into_moments(request.client, replace(session, model=model), completion.answer, duration,
-                                        routing, llama_cpp=request.llama_cpp, on_event=on_event, on_delta=on_delta)
     if usage is None or not turn.entries:
         return turn
     last = {**turn.entries[-1], "usage": added_usage(turn.entries[-1].get("usage"), usage),
