@@ -26,7 +26,7 @@ from ..storage.session_store import OWNER_ID, VideoSession
 from ..timecodes import format_time
 from . import speech
 from .chat_dialogs import SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK, ChatSettingsDialog, StoredSizeDialog
-from .dialogs import NO_PROFILE
+from .dialogs import NO_PROFILE, VIDEO_FILES
 from .new_chat import url_from_clipboard
 
 # yt-dlp's default file name ends with the video ID in brackets: "Title [jNQXAC9IVRw].mp4".
@@ -50,7 +50,7 @@ class ChatSetupMixin:
         if not self.current or self._chat_busy():
             return
         with wx.FileDialog(self, "Choose the original video at its new location",
-                           wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov",
+                           wildcard=VIDEO_FILES,
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return

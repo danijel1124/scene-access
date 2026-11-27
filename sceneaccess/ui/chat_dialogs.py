@@ -19,7 +19,7 @@ from ..storage.session_store import (
     TRANSCRIBE_MODES,
     TRANSCRIBE_OFF,
 )
-from .dialogs import NO_PROFILE, AddModelDialog, youtube_quality_labels
+from .dialogs import DONT_ASK, NO_PROFILE, AddModelDialog, youtube_quality_labels
 
 
 class AdvancedDialog(wx.Dialog):
@@ -63,8 +63,7 @@ def size_message(file_size: int, model: str, online: bool) -> str:
     sent = base64_size(file_size)
     lower = (", or YouTube can be asked for a lower resolution, one step at a time until the video fits"
              if online else "")
-    skip = ("If you send it and it works, check \"Don't show this dialog again\" to skip this question for "
-            f"{model}.\n\n" if model != AUTO_ROUTER else "")
+    skip = _skip_hint(model)
     choices = ("Shrink the video, request a lower resolution, or send it as it is?" if online
                else "Shrink the video or send it as it is?")
     return (f"Some models accept videos only up to about {megabytes(SIZE_LIMIT)}. This video is "
@@ -88,7 +87,7 @@ class SizeDialog(wx.Dialog):
         self.message = wx.TextCtrl(self, value=size_message(file_size, model, online),
                                    style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 260))
         # A setting per model: with openrouter/auto, the next answer may come from another model.
-        self.dont_ask = wx.CheckBox(self, label="Don't show this dialog again")
+        self.dont_ask = wx.CheckBox(self, label=DONT_ASK)
         self.dont_ask.Show(model != AUTO_ROUTER)
         row = wx.BoxSizer(wx.HORIZONTAL)
         actions = [(SIZE_SHRINK, "Shrink the video"), (SIZE_LOWER, "Request a lower resolution"),
@@ -113,9 +112,15 @@ class SizeDialog(wx.Dialog):
 SIZE_CHAT_SETTINGS = wx.ID_HIGHEST + 105
 
 
+def _skip_hint(model: str) -> str:
+    """How to stop being asked for this model; nothing for the router, whose model changes from one video to the
+    next."""
+    return (f"If you send it and it works, check \"{DONT_ASK}\" to skip this question for {model}.\n\n"
+            if model != AUTO_ROUTER else "")
+
+
 def stored_size_message(sent_size: int, model: str) -> str:
-    skip = ("If you send it and it works, check \"Don't show this dialog again\" to skip this question for "
-            f"{model}.\n\n" if model != AUTO_ROUTER else "")
+    skip = _skip_hint(model)
     return (f"This chat's stored video is {megabytes(sent_size)} once sent, but some models accept videos only up "
             f"to about {megabytes(SIZE_LIMIT)}, so this question may fail with \"Invalid content\".\n\n"
             "Shrink the stored video: SceneAccess makes a smaller copy for this chat with ffmpeg. The next question "
@@ -135,7 +140,7 @@ class StoredSizeDialog(wx.Dialog):
         label = wx.StaticText(self, label="Message")
         self.message = wx.TextCtrl(self, value=stored_size_message(sent_size, model),
                                    style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 260))
-        self.dont_ask = wx.CheckBox(self, label="Don't show this dialog again")
+        self.dont_ask = wx.CheckBox(self, label=DONT_ASK)
         self.dont_ask.Show(model != AUTO_ROUTER)
         row = wx.BoxSizer(wx.HORIZONTAL)
         for action, text in ((SIZE_SHRINK, "Shrink the stored video"), (SIZE_CHAT_SETTINGS, "Chat settings…"),

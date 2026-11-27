@@ -24,6 +24,10 @@ from ..settings.config import AppConfig
 from ..storage.session_store import TRANSCRIBE_LABELS, TRANSCRIBE_MODES
 
 NO_PROFILE = "None (base prompt only)"
+# What the video size dialogs' checkbox says; the texts that explain it quote it.
+DONT_ASK = "Don't show this dialog again"
+# The videos a chat is started from or pointed at, for a file dialog.
+VIDEO_FILES = "Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov"
 
 
 def default_download_dir() -> Path:
@@ -475,7 +479,7 @@ class SettingsDialog(wx.Dialog):
     def _show_skipped(self) -> None:
         count = len(self.skipped_models)
         self.reset_skipped.SetLabel(f"Ask again for the {count} model{'' if count == 1 else 's'} marked "
-                                    "\"Don't show this dialog again\"" if count else "No model skips the size question")
+                                    f"\"{DONT_ASK}\"" if count else "No model skips the size question")
         self.reset_skipped.Enable(bool(count))
         self.Layout()
 

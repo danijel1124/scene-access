@@ -38,7 +38,7 @@ from ..storage.session_store import TRANSCRIPT_PENDING
 from ..worker_process import run_isolated_task
 from . import speech
 from .chat_dialogs import SIZE_BACK, SIZE_LOWER, SIZE_SEND, SIZE_SHRINK, SizeDialog, StartChatDialog
-from .dialogs import NO_PROFILE, ask_youtube_sign_in, cookies_description, default_download_dir
+from .dialogs import NO_PROFILE, VIDEO_FILES, ask_youtube_sign_in, cookies_description, default_download_dir
 
 
 class DownloadCancelled(Exception):
@@ -81,7 +81,7 @@ class NewChatMixin:
             self.new_from_youtube()
 
     def new_from_local_file(self) -> None:
-        with wx.FileDialog(self, "Choose a local video", wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov",
+        with wx.FileDialog(self, "Choose a local video", wildcard=VIDEO_FILES,
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
