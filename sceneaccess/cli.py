@@ -22,14 +22,16 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TextIO
 
+from .llm.client import record_streams
 from .llm.models import ModelCatalog
 from .pipeline import answering
 from .pipeline.hearing import wants_transcript
+from .pipeline.language import other_language_note
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .settings.config import AppConfig, load_config, resolve_openrouter_key
-from .storage.session_store import (LEGACY_OWNER_ID, MOMENTS, OWNER_ID, REMOVED, TRANSCRIBE_MODES, VideoSession,
-                                    VideoSessionStore, open_store)
+from .storage.session_store import (LEGACY_OWNER_ID, MOMENTS, OTHER_LANGUAGE, OWNER_ID, REMOVED, TRANSCRIBE_MODES,
+                                    VideoSession, VideoSessionStore, open_store)
 from .timecodes import format_time
 from .ui.chat_history import chat_history_rows
 
@@ -161,6 +163,8 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
             print(f"\n{completion.answer}", file=out)
         if turn.entries and turn.entries[-1].get(REMOVED):
             print(f"\n\nRemoved from the answer:\n{turn.entries[-1][REMOVED]}", file=out, flush=True)
+        if turn.entries and turn.entries[-1].get(OTHER_LANGUAGE):
+            print(f"\n\nNote: {other_language_note(turn.entries[-1][OTHER_LANGUAGE])}", file=out, flush=True)
         moments = turn.entries[-1].get(MOMENTS) if turn.entries else None
         print("\n\nMoments:" if moments else "\n\nNo moments: the answer was not split into them.", file=out)
         for moment in moments or []:
@@ -215,6 +219,8 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
                                 help="answer N times with each model, each time as a new chat")
     compare_parser.add_argument("--follow-up", default="", metavar="QUESTION",
                                 help="ask this after each answer, with the answer as the chat so far")
+    compare_parser.add_argument("--record-streams", type=Path, metavar="FILE",
+                                help="append every streamed answer, of any model, raw as the server sends it, to FILE")
     args = parser.parse_args(argv)
     data_dir = args.data_dir or default_data_dir()
     store = open_store(data_dir / "config.json", OWNER_ID, LEGACY_OWNER_ID)
@@ -223,8 +229,14 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
     elif args.command == "show":
         show_chat(find_chat(store, args.chat), out)
     else:
-        compare(data_dir, find_chat(store, args.chat), args.models, out, args.transcribe or "", args.sections,
-                args.reviewer, max(1, args.runs), args.follow_up)
+        if args.record_streams:
+            record_streams(args.record_streams)
+            print(f"Recording every streamed answer to {args.record_streams}", file=out)
+        try:
+            compare(data_dir, find_chat(store, args.chat), args.models, out, args.transcribe or "", args.sections,
+                    args.reviewer, max(1, args.runs), args.follow_up)
+        finally:
+            record_streams(None)
     return 0
 
 

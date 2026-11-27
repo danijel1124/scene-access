@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Iterator
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
@@ -110,21 +112,52 @@ def _request_json(url: str, body: bytes, headers: dict[str, str]) -> tuple[int |
         return error.code, _error_message(error)
 
 
+# Where every streamed answer is written as it arrives, raw, for finding out what a model or provider really
+# sent; None records nothing. Set with record_streams, e.g. by the command line's --record-streams.
+_stream_record: Path | None = None
+
+
+def record_streams(path: Path | None) -> None:
+    """From now on appends each streamed answer, of any model, to path as the server sends it, under a line naming
+    the model and time; None stops it. The file is for checking a run and is deleted once read."""
+    global _stream_record
+    _stream_record = path
+
+
 def _request_stream(url: str, body: bytes, headers: dict[str, str], read_timeout: float = READ_TIMEOUT,
-                    _progress_pipe: Any = None) -> tuple[int | None, Any]:
-    """Runs in a worker process: streams the request and sends each piece back through the progress pipe."""
+                    record: str = "", _progress_pipe: Any = None) -> tuple[int | None, Any]:
+    """Runs in a worker process: streams the request and sends each piece back through the progress pipe. record
+    is the file the raw stream is appended to, given here, as a worker process does not share this module's state."""
     request = Request(url, data=body, headers=headers, method="POST")
     report = (lambda kind, text: _progress_pipe.send(("progress", (kind, text)))) if _progress_pipe else (lambda *_: None)
     try:
         with build_opener(_NoRedirect).open(request, timeout=read_timeout) as response:
-            return None, _read_stream(response, report)
+            return None, _read_stream(response, report, Path(record) if record else None, body)
     except HTTPError as error:
         return error.code, _error_message(error)
 
 
-def _read_stream(response: Any, on_delta: DeltaHandler) -> dict[str, Any]:
+def _recorded(response: Any, record: Path | None, request_body: bytes) -> Iterator[bytes]:
+    """The raw lines of response, also appended to record, if given, after a line naming the model and the time."""
+    if record is None:
+        yield from response
+        return
+    try:
+        model = json.loads(request_body.decode("utf-8")).get("model", "")
+    except ValueError:
+        model = ""
+    with record.open("a", encoding="utf-8") as log:
+        log.write(f"\n=== {time.strftime('%H:%M:%S')} {model}\n")
+        for raw in response:
+            log.write(raw.decode("utf-8", "replace").rstrip("\r\n") + "\n")
+            yield raw
+
+
+def _read_stream(response: Any, on_delta: DeltaHandler, record: Path | None = None,
+                 request_body: bytes = b"") -> dict[str, Any]:
     """Puts a streamed answer together into the response a request that is not streamed gets, reporting its
-    reasoning and text to on_delta as they arrive. An error sent in the stream is returned as {"error": ...}."""
+    reasoning and text to on_delta as they arrive. An error sent in the stream is returned as {"error": ...}.
+    record, if given, gets every raw line, after one naming the request's model and the time."""
     message: dict[str, Any] = {"role": "assistant", "content": "", "reasoning": ""}
     calls: dict[int, dict[str, Any]] = {}
     details: dict[tuple[Any, Any], dict[str, Any]] = {}
@@ -132,7 +165,8 @@ def _read_stream(response: Any, on_delta: DeltaHandler) -> dict[str, Any]:
     data: dict[str, Any] = {}
     finish_reason = None
     unstreamed, streamed = [], False
-    for raw in response:
+    # The recording, if any, is closed once the loop is left, also at [DONE] or an error in the stream.
+    for raw in _recorded(response, record, request_body):
         line = raw.decode("utf-8").strip()
         if not line.startswith("data:"):
             unstreamed.append(raw)
@@ -239,7 +273,7 @@ class ChatClient:
         if self.control and self.opener is urlopen:
             # An answer may take long while it keeps coming; a stalled one fails on its own after read_timeout.
             status, data = run_isolated_task(_request_stream, (request.full_url, request.data, dict(request.header_items()),
-                                                               self.read_timeout),
+                                                               self.read_timeout, str(_stream_record or "")),
                                              control=self.control, timeout=3600,
                                              progress_callback=lambda piece: on_delta(*piece))
             if status is not None:
@@ -247,7 +281,7 @@ class ChatClient:
         else:
             try:
                 with self.opener(request, timeout=self.read_timeout) as response:
-                    data = _read_stream(response, on_delta)
+                    data = _read_stream(response, on_delta, _stream_record, request.data)
             except HTTPError as error:
                 raise ChatError(f"HTTP {error.code}: {_error_message(error)}", error.code) from None
         if self.control:

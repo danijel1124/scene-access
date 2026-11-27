@@ -11,10 +11,11 @@ import wx
 from ..llm.client import ChatClient
 from ..media import transcript
 from ..pipeline import answering
+from ..pipeline.language import other_language_note
 from ..providers import LLAMA_CPP, OPENROUTER, PROVIDER_LABELS
 from ..request_control import RequestCancelled, RequestControl
 from ..settings.config import resolve_openrouter_key, save_config
-from ..storage.session_store import (OWNER_ID, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE,
+from ..storage.session_store import (OTHER_LANGUAGE, OWNER_ID, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE,
                                      TRANSCRIPT_PENDING, VideoSession)
 from . import speech
 from .chat_history import NOTE, thinking_item, transcript_entry
@@ -312,6 +313,9 @@ class ChatRequestMixin:
         self.current = self.store.get_session(session_id, OWNER_ID)
         self.render_current()
         note = " This model does not support tools, so it answered without them." if tools_unavailable else ""
+        answer = self.current.history[-1] if self.current.history else {}
+        if answer.get(OTHER_LANGUAGE):
+            note += " " + other_language_note(answer[OTHER_LANGUAGE])
         if cancelled:
             note += " Request cancelled while splitting the answer into moments: the answer is kept, without them."
             if self.IsActive():

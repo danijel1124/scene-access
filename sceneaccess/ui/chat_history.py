@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..storage.session_store import (EXCLUDED, REMOVED, TRANSCRIPT_DONE, TRANSCRIPT_ENTRY, TRANSCRIPT_FAILED,
-                                     TRANSCRIPT_NONE)
-from ..timecodes import format_time
 from ..llm.tool_calls import describe_call
+from ..pipeline.language import other_language_note
+from ..storage.session_store import (EXCLUDED, OTHER_LANGUAGE, REMOVED, TRANSCRIPT_DONE, TRANSCRIPT_ENTRY,
+                                     TRANSCRIPT_FAILED, TRANSCRIPT_NONE)
+from ..timecodes import format_time
 
 # Said first for every item of a round hidden from the model, so the screen reader reads it.
 HIDDEN_FROM_MODEL = "[hidden from model] "
@@ -110,8 +111,10 @@ def _message_items(message: dict[str, Any]) -> list[tuple[str, str, str]]:
         return items
     sources = "".join(f"\n- {source['title']}: {source['url']}" for source in message.get("sources") or [])
     removed = [(*_folded("Removed from the answer", message[REMOVED]), NOTE)] if message.get(REMOVED) else []
+    language = ([_same(f"Note: {other_language_note(message[OTHER_LANGUAGE])}", NOTE)]
+                if message.get(OTHER_LANGUAGE) else [])
     return [*thinking, _same(f"Model: {content}" + (f"\n\nSources:{sources}" if sources else ""), ANSWER),
-            *removed, _same(usage_text(message.get("usage")), USAGE)]
+            *language, *removed, _same(usage_text(message.get("usage")), USAGE)]
 
 
 def section_items(sections: dict[str, Any] | None, answered: bool = True) -> list[tuple[str, str]]:

@@ -61,6 +61,9 @@ REMOVED = "removed"
 # A first answer split into its moments, each {"start": seconds, "end": seconds, "text": words of the answer},
 # for an audio track later (pipeline/moments.py); kept with the answer, never sent.
 MOMENTS = "moments"
+# The language an answer came in when clearly another than its question's (pipeline/language.py), kept with the
+# answer to say so in the Chat history; never sent.
+OTHER_LANGUAGE = "other_language"
 # Marks the history entry of a transcript added later; it is sent as a user message.
 TRANSCRIPT_ENTRY = "transcript"
 # The video's sound kept beside it for a llama.cpp server, in pieces <prefix>000.mp3, ...; the other file marks

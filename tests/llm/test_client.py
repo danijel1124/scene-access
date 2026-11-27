@@ -487,6 +487,33 @@ def test_a_request_that_can_be_cancelled_streams_through_its_worker_process(tmp_
     assert turn.completion.cut_off
 
 
+def test_every_streamed_answer_can_be_recorded_raw_also_through_the_worker_process(tmp_path: Path, stream_server):
+    from sceneaccess.llm.client import record_streams
+    from sceneaccess.request_control import RequestControl
+    _store, session = _tool_session(tmp_path)
+    url, hold = stream_server
+    hold.set()
+    record = tmp_path / "streams.txt"
+    record_streams(record)
+    try:
+        ChatClient("k", opener=lambda request, timeout: StreamResponse([_delta(content="Direct.")])).run_turn(
+            session, session.messages, lambda *_: None, on_delta=lambda *_: None)
+        ChatClient("", base_url=url, control=RequestControl()).run_turn(
+            session, session.messages, lambda *_: None, on_delta=lambda *_: None)
+    finally:
+        record_streams(None)
+    lines = record.read_text(encoding="utf-8").splitlines()
+    # Each request under a line with its model, then the lines as the server sent them.
+    assert [line for line in lines if line.startswith("=== ")] and lines.count("data: [DONE]") == 2
+    assert 'data: {"choices": [{"delta": {"content": "Direct."}}]}' in lines
+    assert any('"Half "' in line for line in lines)
+    # Off again, nothing more is written.
+    size = record.stat().st_size
+    ChatClient("k", opener=lambda request, timeout: StreamResponse([_delta(content="Later.")])).run_turn(
+        session, session.messages, lambda *_: None, on_delta=lambda *_: None)
+    assert record.stat().st_size == size
+
+
 def test_cancelling_a_streamed_request_stops_it_at_once(tmp_path: Path, stream_server):
     from sceneaccess.request_control import RequestCancelled, RequestControl
     _store, session = _tool_session(tmp_path)

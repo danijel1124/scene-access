@@ -70,6 +70,8 @@ Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpa
 Chats des Nutzers lesen und Modelle vergleichen geht über die Kommandozeile der App (siehe README, „Start
 aus dem Quellcode“): `python -m sceneaccess.cli chats`, `show "<Titel>"` und `compare "<Titel>" <Modelle…>`.
 `compare` arbeitet auf einer Kopie des Chats und über dieselbe Pipeline wie die App (`sceneaccess/pipeline/answering.py`).
+Mit `--record-streams DATEI` schneidet `compare` jede gestreamte Antwort jedes Modells roh mit. Den Mitschnitt nach dem
+Lesen löschen, und wenn er nicht gebraucht wurde, nach dem Auswerten des Laufs (Nutzer-Vorgabe 27.11.2026).
 Geld kosten dabei OpenRouter-Modelle (samt dem Schritt, der ihre erste Antwort in Momente aufteilt, eine kleine
 Textanfrage), ein Prüfer-Modell aus den Settings und, seit 25.11.2026, auch die Websuche
 über OpenRouter, wenn ein Modell auf dem eigenen Server sie aufruft (nur mit eingetragenem OpenRouter-Key).

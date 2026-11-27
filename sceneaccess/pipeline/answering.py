@@ -19,11 +19,13 @@ from ..request_control import RequestCancelled, RequestControl
 from .section_cuts import cut_sections, needs_sections, section_sound, video_duration
 from .section_review import Reviewer
 from .sections import describe_in_sections
-from ..storage.session_store import MOMENTS, REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
+from ..storage.session_store import (MOMENTS, OTHER_LANGUAGE, REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING,
+                                     VideoSession)
 from .moments import split_into_moments
 from ..llm.tool_calls import ToolResult
 from .tools import ToolRunner, provider_tools
 from .hearing import model_hears, wants_transcript, with_sound
+from .language import other_language
 from ..media.transcript import sound_parts
 
 # Called when the chat's transcript is still to be decided, with the chat, whether the model answering now needs
@@ -173,6 +175,7 @@ def answer(request: Request, *, on_event: EventHandler | None = None, on_delta: 
             request.new_runner, save_sections, duration=request.duration, sound=sound, on_event=on_event,
             on_delta=on_delta, routing=request.options, max_tool_rounds=config.max_tool_rounds,
             model_name=request.served_model, reviewer=request.reviewer)
+        turn = with_language(request, turn)
         if control:
             control.check_cancelled()
         return with_moments(request, turn, on_event, on_moments_delta), None
@@ -181,6 +184,7 @@ def answer(request: Request, *, on_event: EventHandler | None = None, on_delta: 
         turn = request.client.run_turn(request.tooled, request.messages, runner.run, on_event, request.options,
                                        max_tool_rounds=config.max_tool_rounds, on_delta=on_delta)
         check_whole(turn.completion)
+        turn = with_language(request, turn)
         # A cancel until the answer is whole discards it; one while it is split into moments costs only those.
         if control:
             control.check_cancelled()
@@ -190,6 +194,15 @@ def answer(request: Request, *, on_event: EventHandler | None = None, on_delta: 
         runner.cleanup_files()
         raise
     return turn, runner
+
+
+def with_language(request: Request, turn: Turn) -> Turn:
+    """The answer marked with the language it came in when that is clearly another than its question's
+    (language.py). It is kept all the same: it is paid for, and it may be the more exact one."""
+    found = other_language(request.question, turn.completion.answer)
+    if not found or not turn.entries:
+        return turn
+    return Turn(entries=[*turn.entries[:-1], {**turn.entries[-1], OTHER_LANGUAGE: found}], completion=turn.completion)
 
 
 def with_moments(request: Request, turn: Turn, on_event: EventHandler | None,
