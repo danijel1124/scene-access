@@ -146,7 +146,8 @@ class ChatRequestMixin:
                 if runner is not None:
                     runner.commit_files()
                 completion = turn.completion
-                wx.CallAfter(self._request_callback, control, self._completed, session_id, completion.model, completion.tools_unavailable)
+                wx.CallAfter(self._request_callback, control, self._completed, session_id, completion.model,
+                             completion.tools_unavailable, control.cancelled)
             except RequestCancelled:
                 wx.CallAfter(self._request_callback, control, self._cancelled, unfinished())
             except Exception as error:
@@ -289,7 +290,10 @@ class ChatRequestMixin:
             return
         self.reader_texts[position] = f"{LIVE_LABELS.get(kind, kind)} (so far):\n\n{text}"
 
-    def _completed(self, session_id: str, answered_by: str, tools_unavailable: bool = False) -> None:
+    def _completed(self, session_id: str, answered_by: str, tools_unavailable: bool = False,
+                   cancelled: bool = False) -> None:
+        """The answer is stored. cancelled: the request was cancelled while the answer was split into moments, which
+        costs only those; the user is told so, as they asked for the cancel."""
         self._finish_request()
         if not self.current or self.current.id != session_id:
             self.refresh_sessions()
@@ -308,6 +312,10 @@ class ChatRequestMixin:
         self.current = self.store.get_session(session_id, OWNER_ID)
         self.render_current()
         note = " This model does not support tools, so it answered without them." if tools_unavailable else ""
+        if cancelled:
+            note += " Request cancelled while splitting the answer into moments: the answer is kept, without them."
+            if self.IsActive():
+                speech.announce("Request cancelled. The answer is kept.")
         self.status.SetLabel(self.status.GetLabel() + f"\nAnswer received from {answered_by}.{note}")
         self.refresh_sessions()
         self.send_button.Enable()

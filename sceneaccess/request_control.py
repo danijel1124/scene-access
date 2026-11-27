@@ -21,6 +21,12 @@ class RequestControl:
         with self._condition:
             return self._pause
 
+    @property
+    def cancelled(self) -> bool:
+        """Whether the request was cancelled, e.g. to say so when its answer is kept all the same."""
+        with self._condition:
+            return self._cancelled
+
     def check_cancelled(self) -> None:
         with self._condition:
             if self._cancelled:

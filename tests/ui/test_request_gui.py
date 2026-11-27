@@ -155,6 +155,8 @@ def test_a_cancel_while_splitting_into_moments_keeps_the_answer_but_not_during_i
     if cancelled_in == 'moments':
         assert [entry['content'] for entry in stored.history] == ['00:00 She smiles.']
         assert MOMENTS not in stored.history[-1]
+        # The cancel the user asked for is shown, though the answer is kept.
+        assert 'Request cancelled while splitting the answer into moments' in frame.status.GetLabel()
     else:
         assert stored.history == []
     assert frame._request is None and frame.send_button.GetLabel() == 'Send question'
