@@ -253,7 +253,7 @@ python -m sceneaccess.cli compare "<Chat-Titel oder ID>" google/gemini-3.8-flash
 
 ## Windows-Paket durch GitHub Actions
 
-Der Workflow `.github/workflows/windows-release.yml` läuft auf einem echten Windows-Runner. Er testet den Code, baut `SceneAccess.exe` mit PyInstaller im `--onedir`-Modus und lädt ein Artifact `SceneAccess-windows-x64.zip` hoch. Ein gepushter `v*`-Tag veröffentlicht es als GitHub-Release, ein `nightly-JJJJ-MM-TT`-Tag als Vorabversion.
+Der Workflow `.github/workflows/windows-release.yml` läuft auf einem echten Windows-Runner. Er prüft den Code mit Ruff und testet ihn, baut `SceneAccess.exe` mit PyInstaller im `--onedir`-Modus und lädt ein Artifact `SceneAccess-windows-x64.zip` hoch. Ein gepushter `v*`-Tag veröffentlicht es als GitHub-Release, ein `nightly-JJJJ-MM-TT`-Tag als Vorabversion.
 
 Nach dem Entpacken enthält die ZIP direkt:
 

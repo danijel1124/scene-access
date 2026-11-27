@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip -r requirements-dev.txt
 
+      - name: Check the code with Ruff
+        run: python -m ruff check .
+
       - name: Run tests
         run: python -m pytest -p no:cacheprovider tests/ -q
 
