@@ -6,18 +6,19 @@ from __future__ import annotations
 import base64
 import json
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
-from .models import api_url
 from ..providers import OPENROUTER_URL
 from ..request_control import RequestControl
 from ..storage.session_store import WIRE_KEYS, VideoSession
-from .tool_calls import describe_call, image_message
 from ..worker_process import run_isolated_task
+from .models import api_url
+from .tool_calls import describe_call, image_message
 
 # A question may trigger several rounds of tool calls; after this many the model must answer.
 MAX_TOOL_ROUNDS = 6

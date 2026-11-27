@@ -5,28 +5,27 @@ cleaned. The app puts its window and the chat store around it, the command line 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
-from .cleaning import clean_description
-from ..settings.config import AppConfig
+from ..llm.client import LLAMA_CPP_READ_TIMEOUT, ChatClient, DeltaHandler, EventHandler, Turn, added_usage, check_whole
 from ..llm.models import ModelCatalog, llama_cpp_catalog, routing
-from ..llm.client import (LLAMA_CPP_READ_TIMEOUT, DeltaHandler, EventHandler, ChatClient, Turn, added_usage,
-                          check_whole)
+from ..llm.tool_calls import ToolResult
+from ..media.transcript import sound_parts
 from ..providers import LLAMA_CPP
 from ..request_control import RequestCancelled, RequestControl
+from ..settings.config import AppConfig
+from ..storage.session_store import MOMENTS, OTHER_LANGUAGE, REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSession
+from .cleaning import clean_description
+from .hearing import model_hears, wants_transcript, with_sound
+from .language import other_language
+from .moments import split_into_moments
 from .section_cuts import cut_sections, needs_sections, section_sound, video_duration
 from .section_review import Reviewer
 from .sections import describe_in_sections
-from ..storage.session_store import (MOMENTS, OTHER_LANGUAGE, REMOVED, TRANSCRIPT_NONE, TRANSCRIPT_PENDING,
-                                     VideoSession)
-from .moments import split_into_moments
-from ..llm.tool_calls import ToolResult
 from .tools import ToolRunner, provider_tools
-from .hearing import model_hears, wants_transcript, with_sound
-from .language import other_language
-from ..media.transcript import sound_parts
 
 # Called when the chat's transcript is still to be decided, with the chat, whether the model answering now needs
 # one, and OpenRouter (None without a key); returns the chat as it is afterwards.

@@ -232,9 +232,12 @@ Bekannte Lücken der Tests:
 
 ```bash
 python -m pip install -r requirements-dev.txt
+python -m ruff check .
 python -m pytest -p no:cacheprovider tests/ -q
 python SceneAccess.py
 ```
+
+`ruff check` prüft den Code nach den Regeln in `ruff.toml`; dort steht zu jeder ausgelassenen Regel, warum.
 
 Aus dem Quellcode hat SceneAccess auch eine Kommandozeile, die die Settings und Chats der App nutzt; `SceneAccess.exe` hat keine, weil ein Fensterprogramm keine Konsole hat:
 

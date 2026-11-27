@@ -1,9 +1,9 @@
 """A legacy chat must never persist a collection as its single video source."""
-import wx
 import pytest
+import wx
 
-from sceneaccess.ui import app_window, chat_setup, chat_window
 from sceneaccess.storage.session_store import OWNER_ID
+from sceneaccess.ui import app_window, chat_setup, chat_window
 
 
 @pytest.mark.parametrize('path', ['/index.html', '/one.mp4', '/single.html'])

@@ -8,8 +8,8 @@ from typing import Any
 
 import wx
 
-from ..settings.config import AppConfig, config_path_from_standard_paths, resolve_openrouter_key
 from ..llm.models import ModelCatalog
+from ..settings.config import AppConfig, config_path_from_standard_paths, resolve_openrouter_key
 
 
 def config_path() -> Path:

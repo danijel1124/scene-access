@@ -1,20 +1,19 @@
 import json
+import threading
+from dataclasses import replace
 
 import pytest
 import wx
 
-from sceneaccess.pipeline import answering
-from sceneaccess.media import transcript
-from sceneaccess.ui import app_window, chat_setup, chat_window
-from sceneaccess.llm.client import Completion, Turn
 from sceneaccess import prompts
+from sceneaccess.llm.client import ChatClient, Completion, Turn
+from sceneaccess.media import transcript
+from sceneaccess.pipeline import answering
 from sceneaccess.prompts import BASE_SYSTEM_PROMPT
-import threading
-from dataclasses import replace
-from sceneaccess.llm.client import ChatClient
 from sceneaccess.request_control import RequestControl
 from sceneaccess.settings.config import load_config
 from sceneaccess.storage.session_store import OWNER_ID
+from sceneaccess.ui import app_window, chat_setup, chat_window
 from sceneaccess.ui.chat_dialogs import SIZE_CHAT_SETTINGS, SIZE_SEND, SIZE_SHRINK
 
 

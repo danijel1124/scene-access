@@ -7,13 +7,13 @@ from typing import Any
 
 import wx
 
-from .app_window import AppWindow
-from ..settings.config import save_config
-from .dialogs import SettingsDialog
 from ..llm.models import api_url
-from .new_chat import NewChatMixin
 from ..providers import LLAMA_CPP
+from ..settings.config import save_config
 from ..storage.session_store import SessionNotFound
+from .app_window import AppWindow
+from .dialogs import SettingsDialog
+from .new_chat import NewChatMixin
 
 
 class ChatListFrame(AppWindow, NewChatMixin, wx.Frame):

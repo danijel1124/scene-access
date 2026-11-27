@@ -1,12 +1,11 @@
 from dataclasses import replace
 
+import pytest
 import wx
 
-import pytest
-
-from sceneaccess.ui import app, app_window, chat_list
-from sceneaccess.settings.config import AppConfig
 from sceneaccess.providers import LLAMA_CPP
+from sceneaccess.settings.config import AppConfig
+from sceneaccess.ui import app, app_window, chat_list
 
 
 @pytest.mark.parametrize('settings, expected', [

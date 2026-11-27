@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from typing import Any
 
@@ -60,8 +61,6 @@ def announce(text: str, *, interrupt: bool = True) -> bool:
         output.speak(text, interrupt=interrupt)
     except Exception:
         return False
-    try:
+    with contextlib.suppress(Exception):
         output.braille(text)
-    except Exception:
-        pass
     return True

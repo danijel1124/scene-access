@@ -1,10 +1,12 @@
-import wx
-import pytest
+from dataclasses import replace
 
-from sceneaccess.ui import app, app_window, chat_window, new_chat
+import pytest
+import wx
+
 from sceneaccess.llm.tool_calls import ZOOM_FRAME
 from sceneaccess.pipeline.tools import tool_key
-from dataclasses import replace
+from sceneaccess.ui import app, app_window, chat_window, new_chat
+
 
 @pytest.mark.parametrize("online", [False, True])
 @pytest.mark.parametrize("chosen", [None, (), (ZOOM_FRAME,)])

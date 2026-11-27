@@ -7,8 +7,9 @@ def test_cancelling_ffmpeg_terminates_the_process(monkeypatch):
     import subprocess
     import sys
     import threading
+
     from sceneaccess.media import video
-    from sceneaccess.request_control import RequestControl, RequestCancelled
+    from sceneaccess.request_control import RequestCancelled, RequestControl
     real_popen = subprocess.Popen
     started, done = threading.Event(), threading.Event()
     processes, errors = [], []
@@ -42,9 +43,9 @@ def test_cancelling_ffmpeg_terminates_the_process(monkeypatch):
 
 
 def test_cancelled_transcription_does_not_extract_or_send_audio():
-    from sceneaccess.media.transcript import make_transcript
     from sceneaccess.llm.client import ChatClient
-    from sceneaccess.request_control import RequestControl, RequestCancelled
+    from sceneaccess.media.transcript import make_transcript
+    from sceneaccess.request_control import RequestCancelled, RequestControl
     control = RequestControl()
     control.cancel()
     with pytest.raises(RequestCancelled):
@@ -52,7 +53,7 @@ def test_cancelled_transcription_does_not_extract_or_send_audio():
 
 
 def test_cancel_interrupts_registered_io_and_rejects_more_work():
-    from sceneaccess.request_control import RequestControl, RequestCancelled
+    from sceneaccess.request_control import RequestCancelled, RequestControl
     control = RequestControl()
     interrupted = []
     control.register_interrupt(lambda: interrupted.append(True))
@@ -67,7 +68,7 @@ def test_pause_waits_at_boundary_and_resume_continues():
     control = RequestControl()
     paused, finished = threading.Event(), threading.Event()
     control.pause()
-    thread = threading.Thread(target=lambda: (control.checkpoint(lambda: paused.set()), finished.set()))
+    thread = threading.Thread(target=lambda: (control.checkpoint(paused.set), finished.set()))
     thread.start()
     try:
         assert paused.wait(2)
@@ -80,13 +81,13 @@ def test_pause_waits_at_boundary_and_resume_continues():
 
 
 def test_cancel_wakes_a_paused_request():
-    from sceneaccess.request_control import RequestControl, RequestCancelled
+    from sceneaccess.request_control import RequestCancelled, RequestControl
     control = RequestControl()
     paused, cancelled = threading.Event(), threading.Event()
     control.pause()
     def worker():
         try:
-            control.checkpoint(lambda: paused.set())
+            control.checkpoint(paused.set)
         except RequestCancelled:
             cancelled.set()
     thread = threading.Thread(target=worker)

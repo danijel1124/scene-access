@@ -1,13 +1,14 @@
 import threading
 import time
 
-import wx
 import pytest
-from sceneaccess.ui import app_window, chat_setup, chat_window, dialogs
-from sceneaccess.settings.config import AppConfig
+import wx
+
 from sceneaccess.llm.models import api_url
 from sceneaccess.providers import OPENROUTER_URL
+from sceneaccess.settings.config import AppConfig
 from sceneaccess.storage.session_store import OWNER_ID
+from sceneaccess.ui import app_window, chat_setup, chat_window, dialogs
 
 
 @pytest.mark.parametrize('which', ['chat', 'exclusions'])
@@ -47,7 +48,8 @@ def test_settings_catalog_lookup_does_not_block_gui(tmp_path, monkeypatch, which
         else:
             settings = dialogs.SettingsDialog(frame, AppConfig(), catalog)
             monkeypatch.setattr(dialogs, 'ExclusionsDialog', ResultDialog)
-            action = lambda: settings._on_exclusions(None)
+            def action():
+                return settings._on_exclusions(None)
         started = time.monotonic()
         action()
         assert time.monotonic()-started < .2

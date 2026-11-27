@@ -4,9 +4,9 @@ import time
 import types
 
 import pytest
-from sceneaccess.media import youtube
-from sceneaccess.request_control import RequestControl, RequestCancelled
 
+from sceneaccess.media import youtube
+from sceneaccess.request_control import RequestCancelled, RequestControl
 
 _real_worker = youtube._download_video_isolated_worker
 
@@ -31,8 +31,9 @@ def _merge_worker(url,target_dir,max_height,filename_fields,cookies,_progress_pi
 
 def test_real_ffmpeg_merge_accepts_preclaimed_private_output(tmp_path, monkeypatch):
     import subprocess
-    import yt_dlp
+
     import imageio_ffmpeg
+    import yt_dlp
     from yt_dlp.postprocessor.ffmpeg import FFmpegMergerPP
     executable = imageio_ffmpeg.get_ffmpeg_exe()
     video, audio = tmp_path/'video.mp4', tmp_path/'audio.m4a'

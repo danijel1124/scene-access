@@ -1,4 +1,5 @@
 """Download ownership tests: no directory-difference or prefix based cleanup."""
+import contextlib
 import sys
 import types
 
@@ -190,6 +191,7 @@ def test_ownership_rejects_unsafe_paths(tmp_path, kind):
 def test_real_yt_dlp_download_stays_in_target_and_cleans_on_cancel(tmp_path, cancel):
     import http.server
     import threading
+
     from sceneaccess.ui.new_chat import DownloadCancelled
 
     payload = b'video data' * 2000
@@ -200,10 +202,8 @@ def test_real_yt_dlp_download_stays_in_target_and_cleans_on_cancel(tmp_path, can
             self.send_header('Content-Type', 'video/mp4')
             self.send_header('Content-Length', str(len(payload)))
             self.end_headers()
-            try:
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                 self.wfile.write(payload)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
         def log_message(self, *args): pass
 
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
@@ -225,7 +225,7 @@ def test_real_yt_dlp_download_stays_in_target_and_cleans_on_cancel(tmp_path, can
                 youtube.download_video(url, tmp_path, progress=progress)
             assert list(tmp_path.iterdir()) == [foreign]
         else:
-            path, title, info = youtube.download_video(url, tmp_path, progress=progress)
+            path, _title, _info = youtube.download_video(url, tmp_path, progress=progress)
             assert path.parent == tmp_path
             assert path.read_bytes() == payload
         assert seen

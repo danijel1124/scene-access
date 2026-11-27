@@ -81,7 +81,9 @@ def test_audio_only_routing_failure_does_not_transcribe(frame, monkeypatch):
 def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypatch, outcome):
     import subprocess
     import types
+
     import imageio_ffmpeg
+
     from sceneaccess.llm.tool_calls import ZOOM_FRAME
     from sceneaccess.pipeline.tools import tool_definitions
     # Only the request's own thread runs inline: the real tool starts subprocesses, whose reader threads
@@ -112,7 +114,7 @@ def test_turn_frames_are_committed_only_with_successful_history(frame, monkeypat
 
 
 def test_excluded_transcription_provider_is_never_called(frame, monkeypatch):
-    from sceneaccess.storage.session_store import TRANSCRIPT_PENDING, TRANSCRIPT_FAILED
+    from sceneaccess.storage.session_store import TRANSCRIPT_FAILED, TRANSCRIPT_PENDING
     monkeypatch.setattr(threading, 'Thread', InlineThread)
     monkeypatch.setattr(answering, 'wants_transcript', lambda *a: True)
     frame.config = replace(frame.config, ignored_providers=('elevenlabs',))

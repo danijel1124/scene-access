@@ -10,14 +10,15 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import replace
+from itertools import pairwise
 from typing import Any
 
-from .cleaning import TIME_AT_START, time_at_start
 from ..llm.client import DeltaHandler, EventHandler
 from ..prompts import MOMENTS_SYSTEM_PROMPT, MOMENTS_TASK
 from ..request_control import RequestCancelled
 from ..storage.session_store import VideoSession
 from ..timecodes import format_time, parse_time
+from .cleaning import TIME_AT_START, time_at_start
 
 _MOMENT = {"type": "object", "properties": {"start": {"type": "string"}, "end": {"type": "string"},
                                             "text": {"type": "string"}},
@@ -86,7 +87,7 @@ def parsed_moments(answer: str, text: str, duration: float) -> list[dict[str, An
     sentences = _answer_sentences(text)
     owner: dict[int, int] = {}
     position, last = 0, 0.0
-    for number, ((start, end), parts) in enumerate(zip(times, asked)):
+    for number, ((start, end), parts) in enumerate(zip(times, asked, strict=True)):
         if not parts or start > end or start < last or end > duration + 1:
             return None
         first = None
@@ -129,10 +130,10 @@ def parsed_moments(answer: str, text: str, duration: float) -> list[dict[str, An
                 built.append(target)
         target["text"].append(sentence)
     # An added moment ends where the next one starts, the last one with the video.
-    for moment, after in zip(built, [*built[1:], None]):
+    for moment, after in zip(built, [*built[1:], None], strict=True):
         if moment["end"] is None:
             moment["end"] = after["start"] if after else max(duration, moment["start"])
-    if any(after["start"] < moment["start"] for moment, after in zip(built, built[1:])):
+    if any(after["start"] < moment["start"] for moment, after in pairwise(built)):
         return None
     return [{**moment, "text": " ".join(moment["text"])} for moment in built]
 

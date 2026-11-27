@@ -1,17 +1,16 @@
 import threading
 import time
+from dataclasses import replace
 
 import pytest
 import wx
 
-from sceneaccess.pipeline import answering
+from sceneaccess.llm.client import ChatClient, Completion, Turn
 from sceneaccess.media import transcript
-from sceneaccess.ui import app, app_window, chat_setup
-from sceneaccess.llm.client import Completion, Turn
-from dataclasses import replace
-from sceneaccess.llm.client import ChatClient
+from sceneaccess.pipeline import answering
 from sceneaccess.request_control import RequestControl
 from sceneaccess.storage.session_store import OWNER_ID, TRANSCRIPT_DONE, TRANSCRIPT_PENDING
+from sceneaccess.ui import app, app_window, chat_setup
 
 
 def test_reopened_chat_waits_for_old_worker_and_refreshes_after_save(tmp_path, monkeypatch):

@@ -4,32 +4,41 @@ dialogs start a chat, and into the chat windows (chat_window.ChatFrame), in whic
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import tempfile
 import threading
-from functools import partial
+from collections.abc import Callable, Collection
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Collection
+from typing import Any
 
 import wx
 
-from ..settings.config import save_config
-from .chat_dialogs import SIZE_BACK, SIZE_LOWER, SIZE_SEND, SIZE_SHRINK, SizeDialog, StartChatDialog
-from .dialogs import NO_PROFILE, ask_youtube_sign_in, cookies_description, default_download_dir
 from ..llm.models import AUTO_ROUTER
+from ..media import youtube as youtube_sources
+from ..media.playlist_files import playlist_options
+from ..media.video_size import (
+    SIZE_LIMIT,
+    ShrinkCancelled,
+    base64_size,
+    megabytes,
+    next_lower_height,
+    shrink_video,
+    video_height,
+)
+from ..media.youtube import MAX_HEIGHT_CHOICES, download_video_isolated, needs_sign_in
+from ..pipeline.tools import tool_definitions
 from ..prompts import system_prompt
 from ..providers import LLAMA_CPP, OPENROUTER
+from ..request_control import RequestCancelled, RequestControl
+from ..settings.config import save_config
 from ..storage.session_store import TRANSCRIPT_PENDING
-from . import speech
-from ..pipeline.tools import tool_definitions
-from ..request_control import RequestControl, RequestCancelled
-from ..media.playlist_files import playlist_options
-from ..media import youtube as youtube_sources
 from ..worker_process import run_isolated_task
-from ..media.video_size import (SIZE_LIMIT, ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_video,
-                                video_height)
-from ..media.youtube import MAX_HEIGHT_CHOICES, download_video_isolated, needs_sign_in
+from . import speech
+from .chat_dialogs import SIZE_BACK, SIZE_LOWER, SIZE_SEND, SIZE_SHRINK, SizeDialog, StartChatDialog
+from .dialogs import NO_PROFILE, ask_youtube_sign_in, cookies_description, default_download_dir
 
 
 class DownloadCancelled(Exception):
@@ -50,10 +59,8 @@ def url_from_clipboard() -> str:
 
 
 def _remove_file(path: Path) -> None:
-    try:
+    with contextlib.suppress(OSError):
         path.unlink()
-    except OSError:
-        pass
 
 
 class NewChatMixin:

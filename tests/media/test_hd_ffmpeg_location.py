@@ -1,7 +1,7 @@
 """HD downloads must find the bundled ffmpeg without a system installation."""
+import subprocess
 from contextvars import ContextVar
 from pathlib import Path
-import subprocess
 
 import imageio_ffmpeg
 import pytest

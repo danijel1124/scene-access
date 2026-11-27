@@ -13,19 +13,29 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, Callable
+from typing import Any
 
-from .cleaning import clean_description, joined_without_repeats, mechanical_findings, without_lines_at
 from ..llm.client import AnswerCutOff, DeltaHandler, EventHandler, Turn, added_usage
-from ..prompts import (MERGE_CHECK, MERGE_FIX, MERGE_TASK, MERGE_TITLE_HINT, MERGE_TRANSCRIPT, SECTION_TASK,
-                       SECTION_TRANSCRIPT_INTRO, SECTIONS_BEFORE, TITLE_HINT)
+from ..llm.tool_calls import HD_FRAME, ZOOM_FRAME, ToolResult
+from ..prompts import (
+    MERGE_CHECK,
+    MERGE_FIX,
+    MERGE_TASK,
+    MERGE_TITLE_HINT,
+    MERGE_TRANSCRIPT,
+    SECTION_TASK,
+    SECTION_TRANSCRIPT_INTRO,
+    SECTIONS_BEFORE,
+    TITLE_HINT,
+)
 from ..providers import LLAMA_CPP
-from .section_cuts import Section, transcript_between
-from .section_review import REVIEW_FORMAT, Reviewer, fix_request, review_messages, reviewer_findings
 from ..storage.session_store import VideoSession, joined_sections
 from ..timecodes import format_time
-from ..llm.tool_calls import HD_FRAME, ZOOM_FRAME, ToolResult
+from .cleaning import clean_description, joined_without_repeats, mechanical_findings, without_lines_at
+from .section_cuts import Section, transcript_between
+from .section_review import REVIEW_FORMAT, Reviewer, fix_request, review_messages, reviewer_findings
 
 
 def progress_key(session: VideoSession, question: str, model_name: str = "") -> dict[str, Any]:

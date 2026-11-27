@@ -2,7 +2,7 @@ import pytest
 
 from sceneaccess.media import youtube
 from sceneaccess.pipeline import tools
-from sceneaccess.request_control import RequestControl, RequestCancelled
+from sceneaccess.request_control import RequestCancelled, RequestControl
 from sceneaccess.storage.session_store import VideoSessionStore
 
 
@@ -29,6 +29,7 @@ def test_cancelled_hd_download_never_starts_metadata_probe(tmp_path, monkeypatch
 
 def test_controlled_zoom_extracts_real_media_in_worker(tmp_path):
     import subprocess
+
     import imageio_ffmpeg
     source = tmp_path/'fixture.mp4'
     subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-loglevel', 'error', '-f', 'lavfi', '-i',

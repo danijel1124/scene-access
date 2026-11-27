@@ -9,9 +9,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from .cleaning import TIME_AT_START
 from ..prompts import FIX_TASK, REVIEW_TASK, REVIEWER_SYSTEM_PROMPT
 from ..timecodes import format_time
+from .cleaning import TIME_AT_START
 
 
 @dataclass(frozen=True)
@@ -52,13 +52,11 @@ def reviewer_findings(answer: str) -> list[dict[str, str]]:
         problems = json.loads(answer)["problems"]
     except (ValueError, KeyError, TypeError) as error:
         raise ValueError(f"The reviewer's answer is not the JSON asked for: {answer[:200]}") from error
-    found = []
-    for problem in problems if isinstance(problems, list) else []:
-        if isinstance(problem, dict) and problem.get("question") in ("e", "f") and TIME_AT_START.match(
-                str(problem.get("time", ""))):
-            found.append({"time": str(problem["time"]).strip(), "question": problem["question"],
-                          "why": str(problem.get("why", "")).strip()})
-    return found
+    return [{"time": str(problem["time"]).strip(), "question": problem["question"],
+             "why": str(problem.get("why", "")).strip()}
+            for problem in (problems if isinstance(problems, list) else [])
+            if isinstance(problem, dict) and problem.get("question") in ("e", "f")
+            and TIME_AT_START.match(str(problem.get("time", "")))]
 
 
 def fix_request(text: str, contradictions: list[dict[str, str]]) -> str:

@@ -6,12 +6,14 @@ The worker waits for the parent to attach cancellation before doing any work.
 """
 from __future__ import annotations
 
+import contextlib
 import multiprocessing
 import os
 import signal
-import time
 import threading
-from typing import Any, Callable
+import time
+from collections.abc import Callable
+from typing import Any
 
 from .request_control import RequestControl
 
@@ -96,10 +98,8 @@ def run_isolated_task(function: Callable[..., Any], args: tuple, *, control: Req
             if job is not None:
                 job.terminate()
             elif group_ready:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
             elif process.is_alive():
                 process.terminate()
 

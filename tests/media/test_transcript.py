@@ -4,12 +4,11 @@ from pathlib import Path
 import imageio_ffmpeg
 import pytest
 
-from sceneaccess.media import transcript
 from sceneaccess.llm.models import ModelCatalog
-from sceneaccess.storage.session_store import VideoSessionStore
-from sceneaccess.storage.session_store import NO_SOUND_FILE, SOUND_FILE_PREFIX
-from sceneaccess.pipeline.hearing import model_hears, wants_transcript, with_sound
+from sceneaccess.media import transcript
 from sceneaccess.media.transcript import extract_audio_chunks, make_transcript, sound_parts, transcript_lines
+from sceneaccess.pipeline.hearing import model_hears, wants_transcript, with_sound
+from sceneaccess.storage.session_store import NO_SOUND_FILE, SOUND_FILE_PREFIX, VideoSessionStore
 
 
 def _video(path: Path, *, sound: bool, seconds: int = 3) -> Path:

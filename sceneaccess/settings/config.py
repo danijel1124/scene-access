@@ -8,11 +8,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..media.video_size import DEFAULT_SHRINK_TARGET_MB
+from ..media.youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
 from ..prompts import DEFAULT_PROFILE, DEFAULT_PROFILES, UPGRADED_PROFILE_TEXTS
 from ..providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, PROVIDERS
 from ..storage.session_store import TRANSCRIBE_AUTO, TRANSCRIBE_MODES
-from ..media.video_size import DEFAULT_SHRINK_TARGET_MB
-from ..media.youtube import DEFAULT_FILENAME_FIELDS, FILENAME_FIELD_NAMES
 
 
 class InvalidConfigError(ValueError):
@@ -196,7 +196,7 @@ def save_config(path: Path, config: AppConfig) -> None:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
-    os.chmod(path, 0o600)
+    path.chmod(0o600)
 
 
 def resolve_openrouter_key(config: AppConfig) -> str | None:

@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from sceneaccess.media import transcript
 from sceneaccess.settings.config import AppConfig, save_config
 
@@ -21,7 +22,7 @@ def test_partial_extraction_failure_is_not_accepted(tmp_path, monkeypatch):
 def test_config_is_private_before_first_secret_byte(tmp_path, monkeypatch):
     root = tmp_path/'legacy'
     root.mkdir(mode=0o755)
-    os.chmod(root,0o755)
+    root.chmod(0o755)
     observed = []
     write_text, fdopen = Path.write_text, os.fdopen
     def observe_path(path, text, *args, **kwargs):

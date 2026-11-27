@@ -90,7 +90,7 @@ def test_isolated_download_never_reuses_existing_quality(tmp_path, monkeypatch, 
 
 
 def test_isolated_cancel_cleans_registered_files_but_keeps_foreign_files(tmp_path):
-    from sceneaccess.request_control import RequestControl, RequestCancelled
+    from sceneaccess.request_control import RequestCancelled, RequestControl
     control = RequestControl()
     foreign = tmp_path/'foreign.part'
     existing = tmp_path/'existing.mp4'

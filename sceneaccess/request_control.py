@@ -1,8 +1,9 @@
 """Cooperative request boundaries and interruption of active network/process I/O."""
 from __future__ import annotations
 
+import contextlib
 import threading
-from typing import Callable
+from collections.abc import Callable
 
 
 class RequestCancelled(Exception):
@@ -46,10 +47,9 @@ class RequestControl:
             interrupt = self._interrupt
             self._condition.notify_all()
         if interrupt:
-            try:
+            # Closing an already closed socket/process is harmless.
+            with contextlib.suppress(OSError):
                 interrupt()
-            except OSError:
-                pass  # Closing an already closed socket/process is harmless.
 
     def pause(self) -> None:
         with self._condition:

@@ -6,14 +6,20 @@ from pathlib import Path
 import imageio_ffmpeg
 import pytest
 
-from sceneaccess.pipeline import section_cuts
-from sceneaccess.ui.chat_history import SECTION, chat_history_rows
 from sceneaccess.llm.client import Completion, Turn
-from sceneaccess.pipeline.section_cuts import (Section, cut_sections, needs_sections, section_bounds,
-                                               transcript_between, video_duration)
+from sceneaccess.media.video import video_size_and_duration
+from sceneaccess.pipeline import section_cuts
+from sceneaccess.pipeline.section_cuts import (
+    Section,
+    cut_sections,
+    needs_sections,
+    section_bounds,
+    transcript_between,
+    video_duration,
+)
 from sceneaccess.pipeline.sections import describe_in_sections
 from sceneaccess.storage.session_store import SECTION_FILE_PREFIX, VideoSessionStore
-from sceneaccess.media.video import video_size_and_duration
+from sceneaccess.ui.chat_history import SECTION, chat_history_rows
 
 
 def _video(path: Path, seconds: int = 7) -> Path:
@@ -94,7 +100,7 @@ def test_a_whole_video_comes_before_its_text_and_its_sound_after_it(tmp_path: Pa
 
 
 def test_the_reviewer_on_the_users_own_server_checks_without_thinking(tmp_path: Path):
-    store, session = _session(tmp_path, seconds=30, provider="llama.cpp")
+    _store, session = _session(tmp_path, seconds=30, provider="llama.cpp")
     cut = _fixture_sections(session, count=1)
     routings = []
 
@@ -115,8 +121,8 @@ def test_the_reviewer_on_the_users_own_server_checks_without_thinking(tmp_path: 
 
 
 def test_the_reviewer_gets_the_title_and_may_report_a_contradiction_to_it():
-    from sceneaccess.prompts import REVIEWER_SYSTEM_PROMPT
     from sceneaccess.pipeline.section_review import review_messages
+    from sceneaccess.prompts import REVIEWER_SYSTEM_PROMPT
     part = review_messages("00:09 Sie hält die Tube mit beiden Händen.", "", 1, 0, 30,
                            "Mein Einarmiger Alltag")[1]["content"]
     assert "The video's title: Mein Einarmiger Alltag" in part

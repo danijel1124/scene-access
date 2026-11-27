@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from sceneaccess.llm.client import ChatClient, ChatError
-from sceneaccess.request_control import RequestControl, RequestCancelled
+from sceneaccess.request_control import RequestCancelled, RequestControl
 
 
 @pytest.mark.parametrize("phase", ["headers", "body"])

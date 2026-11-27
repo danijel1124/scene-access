@@ -2,7 +2,7 @@
 
 ## Gefundene Fehler immer beheben, auch außerhalb der aktuellen Änderung (Nutzer-Vorgabe 30.10.2026)
 
-Fällt bei der Arbeit ein Fehler auf – ein Bug, ein fehlschlagender Test, eine pyflakes-Warnung, toter
+Fällt bei der Arbeit ein Fehler auf – ein Bug, ein fehlschlagender Test, eine Ruff-Warnung, toter
 Code, eine veraltete Doku-Stelle –, wird er behoben, **auch wenn er nichts mit der gerade laufenden
 Änderung zu tun hat**. Nicht nur melden und liegen lassen. Im Abschlussbericht getrennt nennen, was zur
 eigentlichen Aufgabe gehört und was nebenbei mitbehoben wurde, jeweils mit Grund.
@@ -44,7 +44,7 @@ starten. Während Tests laufen, SceneAccess nicht parallel starten (Speicher die
 
 ## Python-Umgebung liegt im Repo unter `.venv` (Nutzer-Vorgabe 17.11.2026)
 
-SceneAccess, Tests und pyflakes laufen mit `.venv\Scripts\python.exe` im Repo-Ordner (per `.gitignore`
+SceneAccess, Tests und Ruff laufen mit `.venv\Scripts\python.exe` im Repo-Ordner (per `.gitignore`
 ausgeschlossen), angelegt mit `py -3.12 -m venv .venv` und `pip install -r requirements-dev.txt`. Nie
 ins Scratchpad von Claude Code legen: Das liegt im Temp-Ordner und wird aufgeräumt. Real passiert
 (17.11.2026): Dem venv dort fehlten plötzlich `pyvenv.cfg` und Teile von wx und pip, SceneAccess startete
@@ -60,7 +60,8 @@ Dauerhaft gebrauchte Hilfsskripte liegen deshalb in `tools/`, nicht im Scratchpa
 - `tools\check_patches.py`: prüft, dass jeder `monkeypatch.setattr` eines Tests auf ein Modul des Pakets wirkt, auch in
   Kindprozess-Skripten. Den Datenordner setzt ein Test immer über `app_window.config_path_from_standard_paths`, die
   eine Stelle, die jedes Fenster fragt; ein Patch anderswo ginge ins Leere, und der Test läse die echten Chats.
-  Beide nach jedem Umbau laufen lassen, zusammen mit pyflakes.
+  Beide nach jedem Umbau laufen lassen, zusammen mit Ruff (`python -m ruff check .`, Regeln in `ruff.toml`, statt
+  pyflakes seit 27.11.2026). `--fix` nur für Korrekturen, die das Verhalten nicht ändern, und den Diff danach lesen.
 - `tools\live_window.ps1 <Logdatei> <cli-Argumente>`: führt einen Aufruf der Kommandozeile in einem eigenen
   Konsolenfenster aus, in dem der Nutzer live mitliest und mit Strg+C abbricht; dieselbe Ausgabe landet in der
   Logdatei, an deren Ende `=== Ende` steht, und das Fenster schließt sich dann selbst (Nutzer-Vorgabe 17.11.2026).

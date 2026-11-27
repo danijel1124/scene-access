@@ -29,7 +29,8 @@ print(instance.activate_existing(timeout=2))
 instance.close()
 app.Destroy()
 '''
-        result = subprocess.run([sys.executable, '-c', script, str(tmp_path)], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([sys.executable, '-c', script, str(tmp_path)], capture_output=True, text=True,
+                                timeout=10, check=False)
         assert result.returncode == 0, result.stderr
         assert result.stdout.splitlines() == ['False', 'True']
         assert activated.wait(2)
@@ -89,9 +90,10 @@ raise SystemExit(app.main())
         while not ready.exists() and primary.poll() is None and time.monotonic() < deadline:
             time.sleep(0.05)
         assert ready.exists(), 'Primary GUI did not start'
-        secondary = subprocess.run([sys.executable, '-c', HIDDEN + secondary_script, str(tmp_path)], capture_output=True, text=True, timeout=10)
+        secondary = subprocess.run([sys.executable, '-c', HIDDEN + secondary_script, str(tmp_path)],
+                                   capture_output=True, text=True, timeout=10, check=False)
         assert secondary.returncode == 0, secondary.stderr
-        output, errors = primary.communicate(timeout=10)
+        _output, errors = primary.communicate(timeout=10)
         assert primary.returncode == 0, errors
         assert activated.read_text() == 'activated'
         assert not (tmp_path/'instance.port').exists()

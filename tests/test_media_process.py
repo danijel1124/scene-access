@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from sceneaccess.request_control import RequestControl, RequestCancelled
+from sceneaccess.request_control import RequestCancelled, RequestControl
 
 
 def _addition(a, b):

@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
 import pytest
-
 from accessible_output2.outputs.e_speak import ESpeak
 from accessible_output2.outputs.speech_dispatcher import SpeechDispatcher
+
 from sceneaccess.ui import speech
 
 

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import os
 import stat
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from ..request_control import RequestControl
 from ..worker_process import run_isolated_task
@@ -444,13 +445,9 @@ def search_videos(query: str, count: int = 8, cookies: str = "") -> list[dict[st
 
     with yt_dlp.YoutubeDL({**_info_options(cookies), "extract_flat": "in_playlist"}) as downloader:
         info = downloader.extract_info(f"ytsearch{count}:{query}", download=False)
-    results = []
-    for entry in info.get("entries") or []:
-        if entry and entry.get("id"):
-            results.append({"url": f"https://www.youtube.com/watch?v={entry['id']}", "title": entry.get("title") or "",
-                            "channel": entry.get("channel") or entry.get("uploader") or "",
-                            "duration": entry.get("duration")})
-    return results
+    return [{"url": f"https://www.youtube.com/watch?v={entry['id']}", "title": entry.get("title") or "",
+             "channel": entry.get("channel") or entry.get("uploader") or "", "duration": entry.get("duration")}
+            for entry in info.get("entries") or [] if entry and entry.get("id")]
 
 
 def list_video_choices(url: str, cookies: str = "",
@@ -468,9 +465,10 @@ def list_video_choices(url: str, cookies: str = "",
     Run-dependent templates return no filename candidates: only an existing
     saved source identity can associate those files, never a downloader-local counter.
     """
+    from urllib.parse import urlsplit
+
     import yt_dlp
     from yt_dlp.utils import DownloadError
-    from urllib.parse import urlsplit
 
     class ChoiceDownloader(yt_dlp.YoutubeDL):
         def process_ie_result(self, ie_result, download=True, extra_info=None):
@@ -484,7 +482,7 @@ def list_video_choices(url: str, cookies: str = "",
                     return None
             return super().process_ie_result(ie_result, download=download, extra_info=extra_info)
 
-    options = {**download_options(Path('.'), max_height, filename_fields=filename_fields, cookies=cookies),
+    options = {**download_options(Path(), max_height, filename_fields=filename_fields, cookies=cookies),
                **_info_options(cookies), "extract_flat": "in_playlist"}
     prefix = '[' + '0' * 32 + '] '
     naming_options = {'outtmpl': prefix + output_template(filename_fields),
@@ -514,7 +512,7 @@ def list_video_choices(url: str, cookies: str = "",
             # with downloads disabled so prediction uses the same context.
             standalone = entry
             fields = filename_fields or DEFAULT_FILENAME_FIELDS
-            needs_standalone = (webpage == info.get('webpage_url') and webpage != entry_url
+            needs_standalone = ((webpage == info.get('webpage_url') and webpage != entry_url)
                                 or any(field not in entry or field.startswith('playlist') for field in fields))
             if is_playlist and needs_standalone:
                 try:

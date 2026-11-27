@@ -4,6 +4,7 @@ of question, tool steps and answer, and what a request sends from it."""
 from __future__ import annotations
 
 import base64
+import contextlib
 import getpass
 import json
 import os
@@ -13,8 +14,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..prompts import (LANGUAGE_HINT, SECTIONS_INSTEAD_OF_VIDEO, TITLE_HINT, TRANSCRIPT_HEARD_INTRO, TRANSCRIPT_INTRO,
-                       TRANSCRIPT_LATER_INTRO, sound_blocks)
+from ..prompts import (
+    LANGUAGE_HINT,
+    SECTIONS_INSTEAD_OF_VIDEO,
+    TITLE_HINT,
+    TRANSCRIPT_HEARD_INTRO,
+    TRANSCRIPT_INTRO,
+    TRANSCRIPT_LATER_INTRO,
+    sound_blocks,
+)
 from ..providers import OPENROUTER
 from ..timecodes import format_time
 
@@ -250,8 +258,8 @@ class VideoSessionStore:
         self.root = Path(root)
         self.sessions_dir = self.root / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.root, 0o700)
-        os.chmod(self.sessions_dir, 0o700)
+        self.root.chmod(0o700)
+        self.sessions_dir.chmod(0o700)
         self.db_path = self.root / "sceneaccess.db"
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""CREATE TABLE IF NOT EXISTS sessions (
@@ -261,7 +269,7 @@ class VideoSessionStore:
             for column, default in ADDED_COLUMNS:
                 if column not in existing:
                     conn.execute(f"ALTER TABLE sessions ADD COLUMN {column} TEXT NOT NULL DEFAULT {default}")
-        os.chmod(self.db_path, 0o600)
+        self.db_path.chmod(0o600)
 
     def data_url_path(self, session_id: str) -> Path:
         return self.sessions_dir / session_id / "context.data-url"
@@ -293,7 +301,7 @@ class VideoSessionStore:
             with data_url_path.open("x", encoding="ascii") as context:
                 created_file = True
                 context.write(data_url)
-            os.chmod(data_url_path, 0o600)
+            data_url_path.chmod(0o600)
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(f"INSERT INTO sessions ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})", values)
         except BaseException:
@@ -310,7 +318,7 @@ class VideoSessionStore:
                                (session_id, owner_id)).fetchone()
         if not row:
             raise SessionNotFound(session_id)
-        values = dict(zip(COLUMNS, row))
+        values = dict(zip(COLUMNS, row, strict=True))
         return VideoSession(
             values["id"], values["owner_id"], values["title"], values["source_path"], values["model"],
             values["initial_question"], json.loads(values["history_json"]),
@@ -429,7 +437,7 @@ class VideoSessionStore:
         data_url = f"data:{mime};base64," + base64.b64encode(Path(video).read_bytes()).decode("ascii")
         temporary = session.data_url_path.with_suffix(".tmp")
         temporary.write_text(data_url, encoding="ascii")
-        os.chmod(temporary, 0o600)
+        temporary.chmod(0o600)
         temporary.replace(session.data_url_path)
         for derived in [*session.directory.glob(f"{SOUND_FILE_PREFIX}*"), session.directory / NO_SOUND_FILE,
                         *session.directory.glob(f"{SECTION_FILE_PREFIX}*")]:
@@ -490,10 +498,8 @@ class VideoSessionStore:
                     raise IsADirectoryError(child)
             for child in children:
                 child.unlink(missing_ok=True)
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 directory.rmdir()
-            except FileNotFoundError:
-                pass
 
     def set_rounds_in_context(self, session_id: str, owner_id: str, indices: list[int], in_context: bool) -> None:
         """Takes the rounds of the history entries at indices out of what is sent to the model, or puts them

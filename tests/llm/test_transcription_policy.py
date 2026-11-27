@@ -1,4 +1,5 @@
 import pytest
+
 from sceneaccess.llm.client import ChatClient
 
 

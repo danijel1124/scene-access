@@ -30,8 +30,17 @@ from .pipeline.language import other_language_note
 from .prompts import current_system_prompt
 from .providers import LLAMA_CPP, LLAMA_CPP_DEFAULT_MODEL, OPENROUTER, OPENROUTER_URL, PROVIDER_LABELS
 from .settings.config import AppConfig, load_config, resolve_openrouter_key
-from .storage.session_store import (LEGACY_OWNER_ID, MOMENTS, OTHER_LANGUAGE, OWNER_ID, REMOVED, TRANSCRIBE_MODES,
-                                    VideoSession, VideoSessionStore, open_store)
+from .storage.session_store import (
+    LEGACY_OWNER_ID,
+    MOMENTS,
+    OTHER_LANGUAGE,
+    OWNER_ID,
+    REMOVED,
+    TRANSCRIBE_MODES,
+    VideoSession,
+    VideoSessionStore,
+    open_store,
+)
 from .timecodes import format_time
 from .ui.chat_history import chat_history_rows
 
@@ -116,7 +125,7 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
                 follow_up: str = "") -> None:
     """Answers the chat's first question with one model, through the app's own pipeline, and writes it all as it
     happens, so a run can be followed while it goes on, and what came before a failure stays."""
-    provider = LLAMA_CPP if name.split(":")[0] == LLAMA_CPP else OPENROUTER
+    provider = LLAMA_CPP if name.split(":", maxsplit=1)[0] == LLAMA_CPP else OPENROUTER
     model = ((name.partition(":")[2] or config.llama_cpp_model or LLAMA_CPP_DEFAULT_MODEL)
              if provider == LLAMA_CPP else name)
     session = replace(session, provider=provider, model=model)

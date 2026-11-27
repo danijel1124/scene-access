@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 import wx
-from sceneaccess.ui import app_window, chat_setup, chat_window
+
 from sceneaccess.storage.session_store import OWNER_ID
+from sceneaccess.ui import app_window, chat_setup, chat_window
 
 
 def _slow_search(*args, **kwargs):

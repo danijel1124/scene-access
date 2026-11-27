@@ -36,9 +36,8 @@ def with_sound(messages: list[dict[str, Any]], parts: list[dict[str, Any]]) -> l
     result, placed = [], not parts
     for message in messages:
         content = message.get("content")
-        if not placed and isinstance(content, list):
-            if any(part.get("type") == "video_url" for part in content):
-                message = {**message, "content": [*content, *parts]}
-                placed = True
+        if not placed and isinstance(content, list) and any(part.get("type") == "video_url" for part in content):
+            message = {**message, "content": [*content, *parts]}
+            placed = True
         result.append(message)
     return result

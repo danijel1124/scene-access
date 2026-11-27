@@ -3,9 +3,9 @@ from dataclasses import replace
 import pytest
 import wx
 
-from sceneaccess.ui import app, app_window, chat_list, chat_window
 from sceneaccess.request_control import RequestControl
 from sceneaccess.storage.session_store import OWNER_ID, SessionNotFound
+from sceneaccess.ui import app, app_window, chat_list, chat_window
 
 
 @pytest.fixture

@@ -89,7 +89,7 @@ def descendants(root: int, known: dict[int, int | None] | None = None) -> set[in
 
 
 log_path, args = sys.argv[1], sys.argv[2:]
-with open(log_path, "w", encoding="utf-8") as log:
+with Path(log_path).open("w", encoding="utf-8") as log:
     tests = subprocess.Popen([sys.executable, "-m", "pytest", *args], stdout=log, stderr=subprocess.STDOUT,
                              cwd=Path(__file__).resolve().parent.parent)
     seen: list[str] = []
@@ -98,7 +98,7 @@ with open(log_path, "w", encoding="utf-8") as log:
     while tests.poll() is None:
         watched = descendants(tests.pid, known)
 
-        def check(hwnd, _):
+        def check(hwnd, _, watched=watched):
             if win32gui.IsWindowVisible(hwnd) and win32process.GetWindowThreadProcessId(hwnd)[1] in watched:
                 seen.append(f"{win32gui.GetWindowText(hwnd) or '(ohne Titel)'} "
                             f"(PID {win32process.GetWindowThreadProcessId(hwnd)[1]})")
@@ -109,7 +109,7 @@ with open(log_path, "w", encoding="utf-8") as log:
             # end a program of the user's.
             # Asked again: a process may have started since the windows were checked.
             for pid in sorted(descendants(tests.pid, known), key=lambda pid: pid != tests.pid):
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
             break
         time.sleep(0.2)
     tests.wait()

@@ -1,0 +1,45 @@
+# Ruff checks the code, in place of pyflakes: python -m ruff check .  Fixes that change nothing in behaviour, such
+# as sorted imports, with --fix; look at the diff before committing.
+line-length = 120
+target-version = "py312"
+extend-exclude = [".venv", "build", "dist"]
+
+[lint]
+select = [
+    "E", "W",   # pycodestyle: layout, also lines over 120 characters
+    "F",        # pyflakes: unused or undefined names
+    "I",        # sorted imports, in one block per origin
+    "B",        # bugbear: likely bugs, e.g. a loop variable a function does not bind
+    "UP",       # pyupgrade: the spelling of the Python version in use
+    "C4",       # comprehensions
+    "SIM",      # simpler forms of the same code
+    "PIE",      # unnecessary code
+    "RUF",      # Ruff's own checks, e.g. a noqa that no longer suppresses anything
+    "PERF",     # needless slowness, e.g. a loop that only appends
+    "PGH",      # blanket type: ignore
+    "RET",      # returns
+    "A",        # shadowed builtins
+    "N",        # naming
+    "ISC",      # implicit string concatenation, e.g. a missing comma in a list of strings
+    "PTH",      # pathlib rather than os.path, as the rest of the code
+    "PLE",      # pylint errors
+    "PLW",      # pylint warnings, e.g. subprocess.run without check
+    "PLC0207",  # split without maxsplit where only the first part is used
+    "PLR0402",  # import a.b as b rather than from a import b
+    "PLR1714",  # x == a or x == b rather than x in (a, b)
+]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # „…“ and – are German typography on purpose, not look-alike characters
+    "N818",     # exceptions are named for what happened (RequestCancelled, AnswerCutOff), not with Error
+    "PLW0603",  # a module setting changed on purpose, e.g. client.record_streams
+    "PLW2901",  # a loop variable cleaned in place, as in line = line.strip()
+    "ISC004",   # long texts wrapped over lines inside a tuple, as the prompts are; ISC001 still finds a lost comma
+]
+
+[lint.per-file-ignores]
+# Fakes take the names of what they stand in for: wx's methods (ShowModal), yt-dlp's arguments (format); and a fake
+# that only returns a value is written on one line, def ShowModal(self): return wx.ID_OK.
+"tests/**" = ["N802", "A002", "E701"]
+
+[lint.isort]
+known-first-party = ["sceneaccess", "tools"]

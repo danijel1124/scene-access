@@ -12,6 +12,7 @@ Usage: python tools\\check_patches.py; prints every patch that cannot take effec
 from __future__ import annotations
 
 import ast
+import contextlib
 import sys
 from pathlib import Path
 
@@ -92,10 +93,9 @@ def patches(tree: ast.AST, modules: dict[str, str]) -> list[tuple[int, str, str]
                 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)):
             found.append((node.lineno, modules[node.args[0].id], node.args[1].value))
         elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if (isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name)
-                        and target.value.id in modules):
-                    found.append((node.lineno, modules[target.value.id], target.attr))
+            found.extend((node.lineno, modules[target.value.id], target.attr) for target in node.targets
+                         if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name)
+                         and target.value.id in modules)
     return found
 
 
@@ -107,10 +107,8 @@ def check() -> list[str]:
         # Code run in a child process from a string, such as test_single_instance.py's scripts.
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and "sceneaccess" in node.value:
-                try:
+                with contextlib.suppress(SyntaxError):
                     trees.append((ast.parse(node.value), node.lineno - 1))
-                except SyntaxError:
-                    pass
         for part, offset in trees:
             modules = modules_imported(part) or modules_imported(tree)
             for line, dotted, name in patches(part, modules):

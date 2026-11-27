@@ -15,8 +15,15 @@ from ..pipeline.language import other_language_note
 from ..providers import LLAMA_CPP, OPENROUTER, PROVIDER_LABELS
 from ..request_control import RequestCancelled, RequestControl
 from ..settings.config import resolve_openrouter_key, save_config
-from ..storage.session_store import (OTHER_LANGUAGE, OWNER_ID, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_NONE,
-                                     TRANSCRIPT_PENDING, VideoSession)
+from ..storage.session_store import (
+    OTHER_LANGUAGE,
+    OWNER_ID,
+    TRANSCRIPT_DONE,
+    TRANSCRIPT_FAILED,
+    TRANSCRIPT_NONE,
+    TRANSCRIPT_PENDING,
+    VideoSession,
+)
 from . import speech
 from .chat_history import NOTE, thinking_item, transcript_entry
 

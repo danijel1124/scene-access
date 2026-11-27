@@ -4,7 +4,6 @@ model on a llama.cpp server, which ignores a video's sound. Whether a model hear
 from __future__ import annotations
 
 import base64
-import os
 import shutil
 import tempfile
 from contextlib import nullcontext
@@ -40,7 +39,7 @@ def sound_parts(session: VideoSession, control: RequestControl | None = None, *,
                 # Copied under another name first, so a failed copy never looks like a stored piece.
                 partial = target.with_suffix(".tmp")
                 shutil.copyfile(chunk, partial)
-                os.chmod(partial, 0o600)
+                partial.chmod(0o600)
                 partial.replace(target)
         if not chunks:
             no_sound.touch()

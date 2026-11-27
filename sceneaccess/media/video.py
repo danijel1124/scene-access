@@ -8,9 +8,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from ..request_control import RequestControl
 from ..storage.session_store import VideoSession
@@ -27,7 +27,9 @@ def run_ffmpeg(arguments: list[str], timeout: float = 120,
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     command = [_ffmpeg(), "-hide_banner", "-loglevel", "error", *arguments]
     if control is None:
-        return subprocess.run(command, capture_output=True, text=True, creationflags=flags, timeout=timeout)
+        # The caller reads the return code and ffmpeg's error itself.
+        return subprocess.run(command, capture_output=True, text=True, creationflags=flags, timeout=timeout,
+                              check=False)
     control.check_cancelled()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=flags)
     def interrupt() -> None:

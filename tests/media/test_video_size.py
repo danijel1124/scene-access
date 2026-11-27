@@ -2,15 +2,21 @@ import subprocess
 import sys
 import threading
 import time
-
-import sceneaccess.media.video_size as video_size
+from itertools import pairwise
 
 import imageio_ffmpeg
 import pytest
 
+from sceneaccess.media import video_size
 from sceneaccess.media.video import video_size_and_duration
-from sceneaccess.media.video_size import (ShrinkCancelled, base64_size, megabytes, next_lower_height, shrink_plan,
-                                          shrink_video)
+from sceneaccess.media.video_size import (
+    ShrinkCancelled,
+    base64_size,
+    megabytes,
+    next_lower_height,
+    shrink_plan,
+    shrink_video,
+)
 from sceneaccess.media.youtube import MAX_HEIGHT_CHOICES
 
 
@@ -58,7 +64,7 @@ def test_shrink_video_fits_the_target_and_keeps_stereo_sound(tmp_path):
     (_width, height), duration = video_size_and_duration(target)
     assert height <= 480 and duration == pytest.approx(6, abs=0.5)
     probe = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-i", str(target)],
-                           capture_output=True, text=True).stderr
+                           capture_output=True, text=True, check=False).stderr
     assert "stereo" in probe
 
 
@@ -98,7 +104,7 @@ def test_shrink_video_aims_lower_after_an_overshoot_and_gives_up_after_three_att
         video_size.shrink_video(tmp_path / "big.mp4", target, goal)
         assert base64_size(target.stat().st_size) <= goal
     assert len(goals) == attempts and goals[0] == goal
-    assert all(later < earlier for earlier, later in zip(goals, goals[1:]))
+    assert all(later < earlier for earlier, later in pairwise(goals))
 
 
 def test_run_rejects_initial_cancellation_without_starting_child(tmp_path, monkeypatch):

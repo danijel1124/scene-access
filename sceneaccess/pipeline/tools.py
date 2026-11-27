@@ -6,15 +6,16 @@ from __future__ import annotations
 import json
 import tempfile
 import uuid
+from collections.abc import Callable, Collection
 from pathlib import Path
-from typing import Any, Callable, Collection
+from typing import Any
 
+from ..llm.tool_calls import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME, ToolResult, frame_region
+from ..media.video import extract_frame, local_video, video_size_and_duration
 from ..providers import OPENROUTER
 from ..request_control import RequestCancelled, RequestControl
 from ..storage.session_store import VideoSession
 from ..timecodes import format_time, parse_time
-from ..llm.tool_calls import HD_FRAME, VIDEO_INFO, WEB_SEARCH, ZOOM_FRAME, ToolResult, frame_region
-from ..media.video import extract_frame, local_video, video_size_and_duration
 from ..worker_process import run_isolated_task
 
 _REGION_PROPERTIES = {
@@ -166,8 +167,7 @@ class ToolRunner:
             else:
                 clip = download_section(self.session.source_url, seconds, seconds + 1, Path(folder),
                                         cookies=self.youtube_cookies)
-            result = self._frame_from(clip, 0.0, region, "the online source", reported_seconds=seconds)
-        return result
+            return self._frame_from(clip, 0.0, region, "the online source", reported_seconds=seconds)
 
     def _frame_from(self, source: Path, seconds: float, region: tuple[float, float, float, float], origin: str,
                     reported_seconds: float | None = None) -> ToolResult:

@@ -5,10 +5,10 @@ from __future__ import annotations
 import subprocess
 import sys
 from collections import deque
-from threading import Thread
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from threading import Thread
 
 from .video import _ffmpeg, video_size_and_duration
 

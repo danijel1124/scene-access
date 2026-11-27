@@ -1,8 +1,8 @@
-from pathlib import Path
 import base64
 import json
 import os
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -497,6 +497,7 @@ def test_a_transcript_added_later_goes_at_the_end_and_its_speech_block_with_it(t
 
 def test_the_speech_blocks_go_only_to_a_model_that_takes_in_the_speech(tmp_path: Path):
     from dataclasses import replace
+
     from sceneaccess.prompts import SOUND_PROMPT, SPEECH_PROMPT, system_prompt
     video = tmp_path / "v.mp4"
     video.write_bytes(b"fake-mp4-payload")

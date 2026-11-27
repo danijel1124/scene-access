@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from pathlib import Path
-import threading
 
 import wx
 
-from ..settings.config import AppConfig
 from ..llm.models import ModelCatalog
+from ..media.video_size import SIZE_LIMIT, megabytes
+from ..media.youtube import (
+    DEFAULT_FILENAME_FIELDS,
+    DEFAULT_MAX_HEIGHT,
+    FILENAME_FIELD_NAMES,
+    FILENAME_FIELDS,
+    MAX_HEIGHT_CHOICES,
+    output_template,
+)
 from ..prompts import BASE_SYSTEM_PROMPT, DEFAULT_PROFILES
 from ..providers import OPENROUTER_URL, PROVIDER_LABELS, PROVIDERS
+from ..settings.config import AppConfig
 from ..storage.session_store import TRANSCRIBE_LABELS, TRANSCRIBE_MODES
-from ..media.video_size import SIZE_LIMIT, megabytes
-from ..media.youtube import (DEFAULT_FILENAME_FIELDS, DEFAULT_MAX_HEIGHT, FILENAME_FIELD_NAMES, FILENAME_FIELDS,
-                             MAX_HEIGHT_CHOICES, output_template)
 
 NO_PROFILE = "None (base prompt only)"
 

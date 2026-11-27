@@ -6,8 +6,15 @@ from typing import Any
 
 from ..llm.tool_calls import describe_call
 from ..pipeline.language import other_language_note
-from ..storage.session_store import (EXCLUDED, OTHER_LANGUAGE, REMOVED, TRANSCRIPT_DONE, TRANSCRIPT_ENTRY,
-                                     TRANSCRIPT_FAILED, TRANSCRIPT_NONE)
+from ..storage.session_store import (
+    EXCLUDED,
+    OTHER_LANGUAGE,
+    REMOVED,
+    TRANSCRIPT_DONE,
+    TRANSCRIPT_ENTRY,
+    TRANSCRIPT_FAILED,
+    TRANSCRIPT_NONE,
+)
 from ..timecodes import format_time
 
 # Said first for every item of a round hidden from the model, so the screen reader reads it.

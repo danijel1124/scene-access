@@ -1,9 +1,9 @@
 import wx
 
-from sceneaccess.ui import dialogs
-from sceneaccess.settings.config import AppConfig
-from sceneaccess.ui.dialogs import SettingsDialog
 from sceneaccess.media.youtube import FILENAME_FIELD_NAMES
+from sceneaccess.settings.config import AppConfig
+from sceneaccess.ui import dialogs
+from sceneaccess.ui.dialogs import SettingsDialog
 
 
 def test_profiles_dialog_adds_renames_and_deletes_profiles():

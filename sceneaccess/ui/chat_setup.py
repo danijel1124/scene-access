@@ -3,6 +3,7 @@ shrinking the stored video, finding the online source of a local file and adding
 
 from __future__ import annotations
 
+import contextlib
 import re
 import shutil
 import threading
@@ -126,10 +127,8 @@ class ChatSetupMixin:
         # Both providers' models, as the chat may move to the other one.
         catalogs = {OPENROUTER: self.catalog, LLAMA_CPP: None}
         if self.config.llama_cpp_url:
-            try:
+            with contextlib.suppress(ValueError):
                 catalogs[LLAMA_CPP] = llama_cpp_catalog(self.config.llama_cpp_url)
-            except ValueError:
-                pass
         self._loading_chat_settings = True
         self.chat_settings_button.Disable()
         self.status.SetLabel("Loading the model lists. Other chat windows remain available.")

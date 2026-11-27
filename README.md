@@ -232,9 +232,12 @@ Known gaps in the tests:
 
 ```bash
 python -m pip install -r requirements-dev.txt
+python -m ruff check .
 python -m pytest -p no:cacheprovider tests/ -q
 python SceneAccess.py
 ```
+
+`ruff check` checks the code by the rules in `ruff.toml`, which say why each rule left out is left out.
 
 From source, SceneAccess also has a command line, which uses the app's settings and chats; `SceneAccess.exe` has none, as a windowed program has no console:
 

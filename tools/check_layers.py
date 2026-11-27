@@ -20,7 +20,7 @@ TOP = {"cli"}
 
 def place(module: str, folders: dict[str, str]) -> str:
     """The layer of a dotted module below sceneaccess, e.g. "llm.client" or "timecodes"."""
-    return folders.get(module, module.split(".")[0] if "." in module else ("top" if module in TOP else "bricks"))
+    return folders.get(module, module.split(".", maxsplit=1)[0] if "." in module else ("top" if module in TOP else "bricks"))
 
 
 def imports(path: Path) -> list[tuple[int, str]]:
@@ -56,7 +56,7 @@ def check(folders: dict[str, str] | None = None) -> list[str]:
         source = place(module, folders)
         for line, target in imports(path):
             target_place = place(target, folders)
-            if source == "top" or target_place == source:
+            if source in ("top", target_place):
                 continue
             if source == "bricks":
                 allowed = target_place == "bricks"

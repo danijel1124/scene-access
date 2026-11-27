@@ -6,9 +6,9 @@ from urllib.error import HTTPError
 import pytest
 
 from sceneaccess.llm.client import ChatClient, ChatError
-from sceneaccess.storage.session_store import VideoSessionStore
 from sceneaccess.llm.tool_calls import ToolResult
 from sceneaccess.pipeline.tools import tool_definitions
+from sceneaccess.storage.session_store import VideoSessionStore
 
 
 class FakeResponse:
@@ -86,7 +86,7 @@ def _tool_session(tmp_path: Path):
 
 
 def test_run_turn_runs_tool_calls_and_shows_images_until_the_model_answers(tmp_path: Path):
-    store, session = _tool_session(tmp_path)
+    _store, session = _tool_session(tmp_path)
     (session.directory / "frame_1.jpg").write_bytes(b"jpeg-bytes")
     bodies = []
     replies = [
@@ -201,6 +201,7 @@ def test_an_error_in_a_successful_response_is_reported(tmp_path: Path):
 
 def test_a_pause_during_the_final_answer_still_completes(tmp_path: Path):
     import threading
+
     from sceneaccess.request_control import RequestControl
     _store, session = _tool_session(tmp_path)
     control = RequestControl()
@@ -253,7 +254,7 @@ def test_configured_round_limit_controls_tool_execution(tmp_path, limit):
 
 
 def test_cancel_during_response_prevents_tool_execution(tmp_path):
-    from sceneaccess.request_control import RequestControl, RequestCancelled
+    from sceneaccess.request_control import RequestCancelled, RequestControl
     _store, session = _tool_session(tmp_path)
     control = RequestControl()
     def opener(request, timeout):
@@ -269,6 +270,7 @@ def test_cancel_during_response_prevents_tool_execution(tmp_path):
 
 def test_pause_finishes_tools_then_resumes_without_repeating_them(tmp_path):
     import threading
+
     from sceneaccess.request_control import RequestControl
     _store, session = _tool_session(tmp_path)
     control = RequestControl()
@@ -303,7 +305,7 @@ def test_pause_finishes_tools_then_resumes_without_repeating_them(tmp_path):
 class StreamResponse:
     """A streamed answer: one server-sent event per chunk, as llama.cpp and OpenRouter send them."""
     def __init__(self, chunks, done=True):
-        self.lines = [f"data: {json.dumps(chunk)}\n\n".encode("utf-8") for chunk in chunks]
+        self.lines = [f"data: {json.dumps(chunk)}\n\n".encode() for chunk in chunks]
         self.lines += [b"data: [DONE]\n\n"] if done else []
 
     def __iter__(self):
@@ -431,7 +433,8 @@ def test_a_server_that_does_not_stream_still_gives_the_whole_answer(tmp_path: Pa
 
 def test_an_error_in_the_stream_fails_the_request(tmp_path: Path):
     _store, session = _tool_session(tmp_path)
-    opener = lambda request, timeout: StreamResponse([_delta(content="Half"), {"error": {"message": "overloaded"}}])
+    def opener(request, timeout):
+        return StreamResponse([_delta(content="Half"), {"error": {"message": "overloaded"}}])
     with pytest.raises(ChatError, match="overloaded"):
         ChatClient("k", opener=opener).run_turn(session, session.messages, lambda *_: None,
                                                       on_delta=lambda *_: None)
@@ -455,12 +458,12 @@ def stream_server():
             for chunk in (_delta(reasoning_content="Thinking."), _delta(content="Half "), _delta(content="done.")):
                 if chunk["choices"][0]["delta"].get("content") == "done.":
                     hold.wait(10)
-                self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode("utf-8"))
+                self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
                 self.wfile.flush()
                 time.sleep(0.05)
             # As llama.cpp ends an answer stopped at the token limit.
             self.wfile.write(f"data: {json.dumps({'choices': [{'delta': {}, 'finish_reason': 'length'}]})}\n\n"
-                             .encode("utf-8"))
+                             .encode())
             self.wfile.write(b"data: [DONE]\n\n")
 
         def log_message(self, *args):

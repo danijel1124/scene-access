@@ -5,6 +5,7 @@ import pytest
 
 from sceneaccess.settings.config import AppConfig, config_path_from_standard_paths, load_config, save_config
 
+
 @pytest.mark.parametrize("content", ["[]", "null", "42", "true", '"text"', "{broken", '{"model":'])
 def test_invalid_config_raises_with_path_and_preserves_original_file(tmp_path, content):
     path = tmp_path / "config.json"

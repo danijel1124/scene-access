@@ -11,16 +11,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import imageio_ffmpeg  # noqa: E402
-import subprocess  # noqa: E402
+import subprocess
 
-from sceneaccess.pipeline import answering  # noqa: E402
-from sceneaccess.settings.config import AppConfig  # noqa: E402
-from sceneaccess.llm.models import ModelCatalog  # noqa: E402
-from sceneaccess.prompts import system_prompt  # noqa: E402
-from sceneaccess.providers import LLAMA_CPP, OPENROUTER_URL  # noqa: E402
-from sceneaccess.storage.session_store import VideoSessionStore  # noqa: E402
-from sceneaccess.pipeline.tools import tool_definitions  # noqa: E402
+import imageio_ffmpeg
+
+from sceneaccess.llm.models import ModelCatalog
+from sceneaccess.pipeline import answering
+from sceneaccess.pipeline.tools import tool_definitions
+from sceneaccess.prompts import system_prompt
+from sceneaccess.providers import LLAMA_CPP, OPENROUTER_URL
+from sceneaccess.settings.config import AppConfig
+from sceneaccess.storage.session_store import VideoSessionStore
 
 if len(sys.argv) > 1:
     URL = sys.argv[1]

@@ -10,8 +10,8 @@ import hashlib
 import socket
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import wx
 
@@ -50,7 +50,7 @@ class SingleInstance:
             while not self._stop.is_set():
                 try:
                     connection, _ = listener.accept()
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 except OSError:
                     break

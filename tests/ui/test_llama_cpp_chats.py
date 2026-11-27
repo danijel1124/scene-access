@@ -1,22 +1,29 @@
 import json
 import sqlite3
+import threading
+from dataclasses import replace
 
 import pytest
 import wx
 
 from sceneaccess.llm import models
-from sceneaccess.pipeline import answering
-from sceneaccess.media import transcript
-from sceneaccess.ui import app_window, chat_setup, chat_window
-from sceneaccess.llm.client import Completion, ChatClient, Turn
-from sceneaccess.providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL
-from sceneaccess.storage.session_store import (TRANSCRIBE_AUTO, TRANSCRIBE_OFF, TRANSCRIBE_ON, TRANSCRIPT_DONE,
-                                               TRANSCRIPT_NONE, TRANSCRIPT_PENDING, VideoSessionStore)
+from sceneaccess.llm.client import ChatClient, Completion, Turn
 from sceneaccess.llm.tool_calls import WEB_SEARCH, ToolResult
+from sceneaccess.media import transcript
+from sceneaccess.pipeline import answering
 from sceneaccess.pipeline.tools import ToolRunner, function_tool_names, provider_tools, tool_definitions
-import threading
-from dataclasses import replace
-from sceneaccess.storage.session_store import OWNER_ID
+from sceneaccess.providers import LLAMA_CPP, OPENROUTER, OPENROUTER_URL
+from sceneaccess.storage.session_store import (
+    OWNER_ID,
+    TRANSCRIBE_AUTO,
+    TRANSCRIBE_OFF,
+    TRANSCRIBE_ON,
+    TRANSCRIPT_DONE,
+    TRANSCRIPT_NONE,
+    TRANSCRIPT_PENDING,
+    VideoSessionStore,
+)
+from sceneaccess.ui import app_window, chat_setup, chat_window
 
 LLAMA_URL = 'http://192.0.2.1:8080/v1/chat/completions'
 
@@ -449,8 +456,8 @@ def test_an_error_names_the_chats_provider_and_explains_a_too_small_context(fram
 
 @pytest.mark.parametrize('openrouter_key', [False, True])
 def test_a_llama_cpp_chat_offers_the_web_search_only_with_an_openrouter_key(frame, openrouter_key):
-    from sceneaccess.ui.chat_dialogs import StartChatDialog
     from sceneaccess.llm.tool_calls import ZOOM_FRAME
+    from sceneaccess.ui.chat_dialogs import StartChatDialog
     dialog = StartChatDialog(frame, (), '', llama_cpp=True, openrouter_key=openrouter_key, transcribe=TRANSCRIBE_OFF)
     try:
         assert dialog.chosen_tools() == ((ZOOM_FRAME, WEB_SEARCH) if openrouter_key else (ZOOM_FRAME,))
