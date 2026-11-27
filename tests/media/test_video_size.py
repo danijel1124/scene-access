@@ -90,7 +90,8 @@ def test_shrink_video_aims_lower_after_an_overshoot_and_gives_up_after_three_att
                                                                                        sizes, attempts):
     goals, written = [], list(sizes)
     real_plan = video_size.shrink_plan
-    monkeypatch.setattr(video_size, "shrink_plan", lambda goal, duration: goals.append(goal) or real_plan(goal, duration))
+    monkeypatch.setattr(video_size, "shrink_plan",
+                        lambda goal, duration: goals.append(goal) or real_plan(goal, duration))
     monkeypatch.setattr(video_size, "video_size_and_duration", lambda path: ((640, 360), 60.0))
     # The encoder overshoots: each attempt writes a file of the next given size.
     monkeypatch.setattr(video_size, "_run", lambda _ffmpeg, arguments, *_: video_size.Path(arguments[-1]).write_bytes(

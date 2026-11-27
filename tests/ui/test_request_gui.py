@@ -44,7 +44,8 @@ def test_revised_question_after_initial_failure_is_sent_and_persisted(frame, mon
         sent.append(next(part['text'] for part in messages[0]['content'] if part['type'] == 'text'))
         if len(sent) == 1:
             raise RuntimeError('Fixture provider failure')
-        return Turn(entries=[{'role':'assistant','content':'Answer'}], completion=Completion('Answer','fixture',1,None,None))
+        return Turn(entries=[{'role':'assistant','content':'Answer'}],
+                    completion=Completion('Answer','fixture',1,None,None))
     monkeypatch.setattr(ChatClient, 'run_turn', answer)
     frame.question.SetValue('Original question')
     frame.on_send(None)

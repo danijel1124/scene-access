@@ -130,7 +130,8 @@ def _request_stream(url: str, body: bytes, headers: dict[str, str], read_timeout
     """Runs in a worker process: streams the request and sends each piece back through the progress pipe. record
     is the file the raw stream is appended to, given here, as a worker process does not share this module's state."""
     request = Request(url, data=body, headers=headers, method="POST")
-    report = (lambda kind, text: _progress_pipe.send(("progress", (kind, text)))) if _progress_pipe else (lambda *_: None)
+    report = ((lambda kind, text: _progress_pipe.send(("progress", (kind, text)))) if _progress_pipe
+              else (lambda *_: None))
     try:
         with build_opener(_NoRedirect).open(request, timeout=read_timeout) as response:
             return None, _read_stream(response, report, Path(record) if record else None, body)
@@ -273,8 +274,9 @@ class ChatClient:
         request = self._request({**payload, "stream": True, "stream_options": {"include_usage": True}})
         if self.control and self.opener is urlopen:
             # An answer may take long while it keeps coming; a stalled one fails on its own after read_timeout.
-            status, data = run_isolated_task(_request_stream, (request.full_url, request.data, dict(request.header_items()),
-                                                               self.read_timeout, str(_stream_record or "")),
+            status, data = run_isolated_task(_request_stream,
+                                             (request.full_url, request.data, dict(request.header_items()),
+                                              self.read_timeout, str(_stream_record or "")),
                                              control=self.control, timeout=3600,
                                              progress_callback=lambda piece: on_delta(*piece))
             if status is not None:
@@ -301,15 +303,18 @@ class ChatClient:
             raise ChatError(f"HTTP {status}: {data}", status)
         return data
 
-    def transcribe(self, audio: bytes, audio_format: str = "mp3", model: str = "elevenlabs/scribe-v2") -> dict[str, Any]:
+    def transcribe(self, audio: bytes, audio_format: str = "mp3",
+                   model: str = "elevenlabs/scribe-v2") -> dict[str, Any]:
         """Speech to text with word timestamps through OpenRouter's transcription endpoint."""
         if not self.transcription_allowed(model):
             raise ValueError('Speech recognition skipped because the transcription provider is excluded.')
-        payload = {"model": model, "input_audio": {"data": base64.b64encode(audio).decode("ascii"), "format": audio_format},
+        payload = {"model": model,
+                   "input_audio": {"data": base64.b64encode(audio).decode("ascii"), "format": audio_format},
                    "response_format": "verbose_json", "timestamp_granularities": ["word", "segment"]}
         return self._post(payload, api_url(self.endpoint, "audio/transcriptions"))
 
-    def web_search(self, query: str, model: str, routing: dict[str, Any] | None = None) -> tuple[str, list[dict[str, str]]]:
+    def web_search(self, query: str, model: str,
+                   routing: dict[str, Any] | None = None) -> tuple[str, list[dict[str, str]]]:
         """Searches the web with OpenRouter's search for a model elsewhere: only the query is sent.
         routing holds the exclusions, see models.routing. Returns the findings and their sources."""
         payload = {"model": model, "messages": [{"role": "user", "content": (
@@ -354,7 +359,8 @@ class ChatClient:
             responses.append(data)
             message = data["choices"][0]["message"]
             calls = message.get("tool_calls") or []
-            assistant = {key: message[key] for key in ("role", "content", "tool_calls", "reasoning_details") if key in message}
+            assistant = {key: message[key] for key in ("role", "content", "tool_calls", "reasoning_details")
+                         if key in message}
             assistant["role"] = "assistant"
             assistant.setdefault("content", None)
             # Kept for the Chat history and, on a llama.cpp server, sent back within this answer (below); OpenRouter

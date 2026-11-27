@@ -94,7 +94,8 @@ def test_youtube_quality_round_trips_and_defaults_for_older_configs(tmp_path: Pa
     save_config(path, AppConfig(youtube_max_height=720))
     assert load_config(path).youtube_max_height == 720
 
-    path.write_text('{"model": "openrouter/auto", "base_url": "https://openrouter.ai/api/v1/chat/completions", "api_key": ""}', encoding="utf-8")
+    path.write_text('{"model": "openrouter/auto", "base_url": "https://openrouter.ai/api/v1/chat/completions", '
+                    '"api_key": ""}', encoding="utf-8")
     assert load_config(path).youtube_max_height == 480
 
     path.write_text('{"youtube_max_height": "nonsense"}', encoding="utf-8")
@@ -125,7 +126,8 @@ def test_prompt_profiles_round_trip_and_older_configs_get_the_defaults(tmp_path:
     assert load_config(path).profiles == DEFAULT_PROFILES
 
     # Deleting every profile is kept; duplicate and nameless entries are dropped.
-    path.write_text('{"profiles": [{"name": "A", "text": "1"}, {"name": "A", "text": "2"}, {"name": " "}]}', encoding="utf-8")
+    path.write_text('{"profiles": [{"name": "A", "text": "1"}, {"name": "A", "text": "2"}, {"name": " "}]}',
+                    encoding="utf-8")
     assert load_config(path).profiles == (("A", "1"),)
     path.write_text('{"profiles": []}', encoding="utf-8")
     assert load_config(path).profiles == ()
@@ -143,12 +145,14 @@ def test_sound_and_youtube_sign_in_settings_round_trip(tmp_path: Path):
 
 def test_excluded_providers_and_models_round_trip_without_blanks_or_duplicates(tmp_path: Path):
     path = tmp_path / "config.json"
-    save_config(path, AppConfig(ignored_providers=("google-ai-studio",), excluded_models=("google/*", "z-ai/glm-flash")))
+    save_config(path, AppConfig(ignored_providers=("google-ai-studio",),
+                                excluded_models=("google/*", "z-ai/glm-flash")))
     loaded = load_config(path)
     assert loaded.ignored_providers == ("google-ai-studio",)
     assert loaded.excluded_models == ("google/*", "z-ai/glm-flash")
 
-    path.write_text('{"ignored_providers": [" novita ", "", "novita"], "excluded_models": "google/*"}', encoding="utf-8")
+    path.write_text('{"ignored_providers": [" novita ", "", "novita"], "excluded_models": "google/*"}',
+                    encoding="utf-8")
     assert load_config(path).ignored_providers == ("novita",) and load_config(path).excluded_models == ()
 
 

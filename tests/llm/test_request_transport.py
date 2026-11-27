@@ -121,13 +121,15 @@ def test_controlled_transport_reads_json_and_provider_error(status):
         def do_POST(self):
             self.send_response(status)
             self.end_headers()
-            self.wfile.write(json.dumps({'ok': True} if status == 200 else {'error': {'message': 'Fixture error'}}).encode())
+            self.wfile.write(json.dumps({'ok': True} if status == 200
+                                        else {'error': {'message': 'Fixture error'}}).encode())
         def log_message(self, *args): pass
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     serving = threading.Thread(target=server.serve_forever, daemon=True)
     serving.start()
     try:
-        client = ChatClient('test-only', base_url=f'http://127.0.0.1:{server.server_port}/chat', control=RequestControl())
+        client = ChatClient('test-only', base_url=f'http://127.0.0.1:{server.server_port}/chat',
+                            control=RequestControl())
         if status == 200:
             assert client._post({}) == {'ok': True}
         else:

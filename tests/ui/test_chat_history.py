@@ -44,7 +44,8 @@ def test_usage_text_does_not_claim_zero_hits_when_provider_reported_nothing():
 
 def test_chat_history_lists_each_message_with_usage_below_every_answer():
     history = [
-        {"role": "assistant", "content": "A jacket.", "usage": {"model": "m", "prompt_tokens": 10, "cached_tokens": 0, "cache_write_tokens": 10}},
+        {"role": "assistant", "content": "A jacket.",
+         "usage": {"model": "m", "prompt_tokens": 10, "cached_tokens": 0, "cache_write_tokens": 10}},
         {"role": "user", "content": "Is it glossy?"},
         {"role": "assistant", "content": "No."},
     ]
@@ -66,7 +67,8 @@ def test_chat_history_shows_tool_steps_readably_and_ends_with_the_answer():
         {"role": "tool", "tool_call_id": "c", "content": "long text", "caption": "Image of 02:51, the whole frame"},
         {"role": "user", "content": [{"type": "text", "text": "Image of 02:51."},
                                      {"type": "image_url", "image_url": {"url": "session-file:f.jpg"}}]},
-        {"role": "assistant", "content": "It is a Moncler.", "sources": [{"title": "Moncler", "url": "https://m.example"}],
+        {"role": "assistant", "content": "It is a Moncler.",
+         "sources": [{"title": "Moncler", "url": "https://m.example"}],
          "usage": {"model": "m", "prompt_tokens": 10, "cached_tokens": 8, "cache_write_tokens": 0, "requests": 2}},
     ])
     assert items[:5] == ["You: Brand?", "Model note: Let me look closer.", "Tool call: Zoom into 02:51",

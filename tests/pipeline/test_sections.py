@@ -35,8 +35,9 @@ def _session(tmp_path: Path, seconds: int = 3, video: Path | None = None, **fiel
     if video is None:
         video = tmp_path / "v.mp4"
         video.write_bytes(b"fixture, no media decoding")
-    session = store.create_session(owner_id="o", source_path=video, title="T", model="m", initial_question="Describe it.",
-                                   system_prompt="Base.", section_seconds=seconds, **fields)
+    session = store.create_session(owner_id="o", source_path=video, title="T", model="m",
+                                   initial_question="Describe it.", system_prompt="Base.", section_seconds=seconds,
+                                   **fields)
     return store, session
 
 
@@ -78,7 +79,8 @@ def test_each_section_gets_the_transcript_lines_of_its_own_time():
 
 def test_a_copied_part_heading_is_cut_from_a_sections_description():
     from sceneaccess.pipeline.sections import without_part_heading
-    assert without_part_heading("Part 2 (00:28.1 bis 00:56.1):\n\n00:28 Sie hält ein Tuch.") == "00:28 Sie hält ein Tuch."
+    assert (without_part_heading("Part 2 (00:28.1 bis 00:56.1):\n\n00:28 Sie hält ein Tuch.")
+            == "00:28 Sie hält ein Tuch.")
     assert without_part_heading("**Teil 3 von 3**\n00:56 Sieb.") == "00:56 Sieb."
     assert without_part_heading("00:00 Part 1 of her day.") == "00:00 Part 1 of her day."
 
@@ -601,7 +603,8 @@ def test_a_whole_answer_loses_a_line_announcing_it_but_keeps_its_overview():
     assert notes == ['- Removed the lead-in: Here is an audio description of the video "Mein Einarmiger Alltag":']
     # An overview is no lead-in, also one ending with a colon before a list, nor is a heading with a time.
     for text in ("A woman with one arm shows everyday things.\n00:00 She smiles.",
-                 "Die Frau mit der Prothese am linken Arm zeigt Alltagsgegenstände, die ihr helfen:\n00:00 Sie lächelt.",
+                 "Die Frau mit der Prothese am linken Arm zeigt Alltagsgegenstände, die ihr helfen:\n"
+                 "00:00 Sie lächelt.",
                  # An answer without times, which no moments read out.
                  "Die Produktbeschreibung auf der Verpackung lautet:\nZahnpasta mit Fluorid",
                  "**00:00 – 00:26: Zahnpflege:**\nSie hält eine Tube."):
@@ -706,7 +709,8 @@ def test_the_sections_are_joined_without_what_repeats_where_two_meet():
         {"text": "00:56 Sie deutet auf ihre Prothese an der linken Hand.\n01:00 Töpfe.\n"
                  "01:20 Sie hält ein Sieb hoch."}])
     # Lines that differ in one word of a few are different lines.
-    assert joined_without_repeats([{"text": "00:10 Part 1."}, {"text": "00:30 Part 2."}]) == "00:10 Part 1.\n00:30 Part 2."
+    assert (joined_without_repeats([{"text": "00:10 Part 1."}, {"text": "00:30 Part 2."}])
+            == "00:10 Part 1.\n00:30 Part 2.")
     # Something that happens again later in a section stays.
     assert joined.splitlines() ==["00:44 Sie hält ein Sieb hoch.", "00:51 Sie deutet auf ihre Prothese an der linken "
                                    "Hand.", "01:00 Töpfe.", "01:20 Sie hält ein Sieb hoch."]

@@ -58,7 +58,8 @@ def test_zoom_frame_saves_an_image_and_still_works_without_the_original(tmp_path
 def test_tool_errors_are_returned_to_the_model_as_text(tmp_path: Path):
     source = _video(tmp_path / "test.mp4")
     session = VideoSessionStore(tmp_path / "data").create_session(
-        owner_id="o", source_path=source, title="T", model="m", initial_question="?", tools=tool_definitions(online_video=False))
+        owner_id="o", source_path=source, title="T", model="m", initial_question="?",
+        tools=tool_definitions(online_video=False))
     runner = ToolRunner(session)
 
     assert runner.run(ZOOM_FRAME, '{"time": "00:30"}').text.startswith("Error: 00:30 is after the end")

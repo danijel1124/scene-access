@@ -38,8 +38,8 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 def split_into_moments(client: Any, session: VideoSession, text: str, duration: float, routing: dict[str, Any], *,
-                       llama_cpp: bool, on_event: EventHandler | None = None,
-                       on_delta: DeltaHandler | None = None) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
+                       llama_cpp: bool, on_event: EventHandler | None = None, on_delta: DeltaHandler | None = None
+                       ) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
     """Asks session's model to split text, the finished answer about a video of duration seconds, into moments.
     Returns them, or None when the answer did not keep to the form, and the request's usage, None if it failed.
     A cancel is raised; any other failure means no moments."""
@@ -74,8 +74,8 @@ def parsed_moments(answer: str, text: str, duration: float) -> list[dict[str, An
 
     Every sentence of text then belongs to a moment, in its order there: one the model left out goes with the
     moment before it, or into a moment of its own if a later time of its own stands before it, and one before the
-    first moment into a moment from 00:00, so an audio track leaves nothing out and no word is changed. A moment's text is its sentences without the times and marks before them,
-    which would otherwise be read out."""
+    first moment into a moment from 00:00, so an audio track leaves nothing out and no word is changed. A moment's
+    text is its sentences without the times and marks before them, which would otherwise be read out."""
     try:
         moments = json.loads(answer)["moments"]
         times = [(parse_time(moment["start"]), parse_time(moment["end"])) for moment in moments]

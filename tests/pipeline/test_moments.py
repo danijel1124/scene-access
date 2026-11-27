@@ -183,7 +183,8 @@ def test_a_first_answer_gets_its_moments_on_its_entry_and_the_step_in_its_usage(
     # The stretch the model left out is added from its own time.
     assert turn.entries[-1][MOMENTS] == [
         {"start": 0.0, "end": 26.0, "text": "She holds a pink toothbrush."},
-        {"start": 26.0, "end": 84.0, "text": "In a living room, she stands next to a vacuum cleaner. Its bin is clear."}]
+        {"start": 26.0, "end": 84.0,
+         "text": "In a living room, she stands next to a vacuum cleaner. Its bin is clear."}]
     assert turn.entries[-1]["usage"]["requests"] == 2 and turn.entries[-1]["usage"]["prompt_tokens"] == 107
     assert turn.completion.requests == 2 and turn.completion.answer == TEXT
     # The model that answered, not the router again, with only the excluded providers.

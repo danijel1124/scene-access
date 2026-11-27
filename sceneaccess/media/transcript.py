@@ -58,7 +58,8 @@ def extract_audio_chunks(video: Path, folder: Path, chunk_seconds: int | None = 
                             **({"control": control} if control else {}))
     chunks = sorted(path for path in folder.glob("audio_*.mp3") if path.stat().st_size > 0)
     if completed.returncode != 0:
-        if not chunks and ("does not contain any stream" in completed.stderr or "matches no streams" in completed.stderr):
+        if not chunks and ("does not contain any stream" in completed.stderr
+                           or "matches no streams" in completed.stderr):
             return []
         raise RuntimeError(completed.stderr.strip() or "ffmpeg could not read the sound of the video.")
     return [(float(index * chunk_seconds), path) for index, path in enumerate(chunks)]
@@ -96,8 +97,9 @@ def _timed_words(result: dict[str, Any], offset: float) -> list[dict[str, Any]]:
     words = result.get("words") or []
     if not words:
         # Without word times, fall back to segments, and to the plain text at the start of the piece.
-        words = [{"word": segment.get("text", ""), "start": segment.get("start", 0), "end": segment.get("end", 0)}
-                 for segment in result.get("segments") or []] or [{"word": result.get("text", ""), "start": 0, "end": 0}]
+        words = ([{"word": segment.get("text", ""), "start": segment.get("start", 0), "end": segment.get("end", 0)}
+                  for segment in result.get("segments") or []]
+                 or [{"word": result.get("text", ""), "start": 0, "end": 0}])
     return [{**word, "start": float(word.get("start") or 0) + offset, "end": float(word.get("end") or 0) + offset}
             for word in words]
 

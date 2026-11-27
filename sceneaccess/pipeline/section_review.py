@@ -29,7 +29,8 @@ REVIEW_SCHEMA = {"type": "object", "properties": {"problems": {"type": "array", 
     "type": "object", "properties": {"time": {"type": "string"}, "question": {"type": "string", "enum": ["e", "f"]},
                                      "why": {"type": "string"}},
     "required": ["time", "question", "why"]}}}, "required": ["problems"]}
-REVIEW_FORMAT = {"response_format": {"type": "json_schema", "json_schema": {"name": "findings", "schema": REVIEW_SCHEMA}}}
+REVIEW_FORMAT = {"response_format": {"type": "json_schema",
+                                     "json_schema": {"name": "findings", "schema": REVIEW_SCHEMA}}}
 
 
 def review_messages(text: str, heard: str | None, number: int, start: float, end: float,

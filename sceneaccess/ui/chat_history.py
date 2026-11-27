@@ -36,15 +36,16 @@ def usage_text(usage: dict[str, Any] | None) -> str:
         cache = "cache details were not reported by the provider"
     else:
         write = "not reported" if cache_write_tokens is None else f"{cache_write_tokens:,}"
-        cache = (f"cache read (hit): {cached_tokens:,} | not from cache (miss): {max(prompt_tokens - cached_tokens, 0):,}"
-                 f" | cache write: {write}")
+        cache = (f"cache read (hit): {cached_tokens:,} | "
+                 f"not from cache (miss): {max(prompt_tokens - cached_tokens, 0):,} | cache write: {write}")
     extras = ""
     if int(usage.get("requests") or 1) > 1:
         extras += f" | requests: {usage['requests']} (with tool calls, cached tokens are counted in each request)"
     if usage.get("web_searches"):
         extras += f" | web searches: {usage['web_searches']}"
     provider = f" via {usage['provider']}" if usage.get("provider") else ""
-    return f"Usage: model {usage.get('model') or 'unknown'}{provider} | prompt tokens: {prompt_tokens:,} | {cache}{extras}"
+    return (f"Usage: model {usage.get('model') or 'unknown'}{provider} | prompt tokens: {prompt_tokens:,} | "
+            f"{cache}{extras}")
 
 
 def transcript_entry(state: str, transcript: str) -> tuple[str, str] | None:

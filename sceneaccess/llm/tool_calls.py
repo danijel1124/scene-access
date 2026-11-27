@@ -41,7 +41,8 @@ def describe_call(name: str, arguments_json: str) -> str:
         arguments = json.loads(arguments_json or "{}")
         if name in (ZOOM_FRAME, HD_FRAME):
             region = frame_region(arguments)
-            where = "" if region == (0.0, 0.0, 1.0, 1.0) else ", region x {:g}, y {:g}, width {:g}, height {:g}".format(*region)
+            where = ("" if region == (0.0, 0.0, 1.0, 1.0)
+                     else ", region x {:g}, y {:g}, width {:g}, height {:g}".format(*region))
             action = "Zoom into" if name == ZOOM_FRAME else "Load in high resolution"
             return f"{action} {format_time(parse_time(arguments.get('time', 0)))}{where}"
         if name == VIDEO_INFO:

@@ -16,7 +16,7 @@ BASE_SYSTEM_PROMPT = """You are SceneAccess, an assistant that describes videos 
 - The video you received may be downscaled. When a detail is too small to read or identify, use your tools to look closer instead of guessing: zoom into a frame, and for online videos load the moment in higher resolution or read the video information. Search the web when it helps to identify something you have found.
 - When a question asks about a detail, such as which side or hand, a color, a number, a text or what someone holds, look at that moment again with your tools before you answer. Do not answer from what you wrote earlier: it may be wrong.
 - Write for listening with a screen reader: short paragraphs and simple lists, no tables.
-- Answer in the language the person writes in."""
+- Answer in the language the person writes in."""  # noqa: E501  One line per rule; chats keep this text as sent.
 
 # Added when sending, only for a model that takes in what is said, by hearing it or from a transcript: a
 # model that cannot would only be confused by them, small local ones especially.
@@ -27,7 +27,8 @@ SPEECH_PROMPT = ("- You also get what is said in the video. Use it as context to
                  "describe what can be seen at that moment, or leave the moment out. Leave out, too, what they would "
                  "guess from what they hear, such as someone looking at, pointing to or holding what they are talking "
                  "about; describe only what tells them something of value.")
-SOUND_PROMPT = "- You also hear the video's sound. Mention sounds that matter and are not speech, such as music or noises."
+SOUND_PROMPT = ("- You also hear the video's sound. Mention sounds that matter and are not speech, such as music or "
+                "noises.")
 
 DEFAULT_PROFILE = "General description"
 
@@ -44,7 +45,8 @@ UPGRADED_PROFILE_TEXTS = {
 
 # (name, text) pairs. Each chat stores the text of the profile it was started with.
 DEFAULT_PROFILES: tuple[tuple[str, str], ...] = (
-    (DEFAULT_PROFILE, "Answer the person's questions about the video. Give an overview first, then the details they ask for."),
+    (DEFAULT_PROFILE, "Answer the person's questions about the video. Give an overview first, then the details they "
+     "ask for."),
     ("Audio description", AUDIO_DESCRIPTION),
     ("Identify brand and model", "The goal is to identify products shown in the video, especially brand and model. "
      "Look for logos, labels, tags, engravings, zipper pulls, buttons and characteristic design details. Zoom into "
@@ -171,7 +173,8 @@ REVIEWER_SYSTEM_PROMPT = (
     "at, points to or holds what they are talking about at that moment? Such a line adds nothing for them, even "
     "if it is true, and even the first time.\n\n"
     "A line that fits the title or the transcript is fine, e.g. a person in a wheelchair in a video titled "
-    "\"Life on wheels\": e is only for a line that says the opposite. What a line does not say is never a problem: the description need not mention what is said, nor anything "
+    "\"Life on wheels\": e is only for a line that says the opposite. What a line does not say is never a "
+    "problem: the description need not mention what is said, nor anything "
     "from the title or the transcript, so \"the transcript mentions X, the description does not\" is no "
     "finding. Decide each line once and never go back. If you are unsure, the line is fine. Apart from these "
     "two questions, do not judge whether what is described is true, as you cannot see it, and do not rewrite "

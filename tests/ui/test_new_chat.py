@@ -209,7 +209,8 @@ def run_youtube_chat(tmp_path, monkeypatch, sizes, choices):
         monkeypatch.setattr(frame, "_choose_youtube_video", lambda url, folder: (url, None))
         monkeypatch.setattr(new_chat, "video_height", lambda path: downloads[-1])
         monkeypatch.setattr(new_chat, "SizeDialog", fake_size_dialog(choices, calls))
-        monkeypatch.setattr(frame, "_start_chat", lambda path, title, *start, **options: started.append((path, options)))
+        monkeypatch.setattr(frame, "_start_chat",
+                            lambda path, title, *start, **options: started.append((path, options)))
         frame.config = replace(frame.config, youtube_max_height=480)
         frame.new_from_youtube()
         return downloads, calls, started, asked
@@ -230,7 +231,8 @@ def test_a_lower_resolution_is_requested_step_by_step_until_the_video_fits(tmp_p
 
 def test_going_back_keeps_a_video_already_stepped_down(tmp_path, monkeypatch):
     downloads, calls, started, asked = run_youtube_chat(
-        tmp_path, monkeypatch, {480: 300, 360: 200, 240: 150}, [new_chat.SIZE_LOWER, new_chat.SIZE_BACK, new_chat.SIZE_SEND])
+        tmp_path, monkeypatch, {480: 300, 360: 200, 240: 150},
+        [new_chat.SIZE_LOWER, new_chat.SIZE_BACK, new_chat.SIZE_SEND])
     # 240p is the lowest step and still too large: asked again with no lower step left, then back and send.
     assert downloads == [480, 360, 240] and len(asked) == 2
     assert [call[3] for call in calls] == [True, False, False]

@@ -115,7 +115,8 @@ class ChatListFrame(AppWindow, NewChatMixin, wx.Frame):
             wx.MessageBox("This chat is still answering or saving its last answer. Cancel the request or wait, "
                           "then delete the chat.", "Chat is busy", wx.OK | wx.ICON_INFORMATION)
             return
-        if wx.MessageBox("The conversation history and locally stored video data URL will be deleted.", "Delete this chat?", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
+        if wx.MessageBox("The conversation history and locally stored video data URL will be deleted.",
+                         "Delete this chat?", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
             return
         self.windows.close_session(session_id)
         try:

@@ -66,7 +66,8 @@ def find_chat(store: VideoSessionStore, chat: str) -> VideoSession:
 
 def list_chats(store: VideoSessionStore, out: TextIO) -> None:
     for session in store.list_sessions(OWNER_ID):
-        outdated = " | outdated system prompt" if current_system_prompt(session.system_prompt) != session.system_prompt else ""
+        outdated = (" | outdated system prompt" if current_system_prompt(session.system_prompt) != session.system_prompt
+                    else "")
         print(f"{session.title} | {session.id} | {PROVIDER_LABELS.get(session.provider, session.provider)} | "
               f"model {session.model or '(Settings)'} | transcript {session.transcribe}, {session.transcript_state}"
               f"{outdated}", file=out)
@@ -179,7 +180,9 @@ def compare_one(config: AppConfig, catalog: ModelCatalog, session: VideoSession,
         for moment in moments or []:
             print(f"{format_time(round(moment['start']))} to {format_time(round(moment['end']))}: {moment['text']}",
                   file=out, flush=True)
-        print(f"\n\nTime: {time.monotonic() - started:.0f} s | answered by {completion.model} | requests "
+        # The provider too: the same model through another one may send its answer differently.
+        via = f" via {completion.provider}" if completion.provider else ""
+        print(f"\n\nTime: {time.monotonic() - started:.0f} s | answered by {completion.model}{via} | requests "
               f"{completion.requests} | prompt tokens {completion.prompt_tokens}", file=out, flush=True)
         if follow_up and request.sectioned:
             print("\nThe follow-up is skipped: a chat described in sections would need its stored sections.",

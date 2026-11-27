@@ -42,7 +42,8 @@ def test_youtube_cookies_come_from_firefox_or_a_cookies_file(tmp_path: Path):
 
 
 def test_youtubes_bot_check_is_recognized():
-    error = RuntimeError("ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you're not a bot. Use --cookies-from-browser")
+    error = RuntimeError("ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you're not a bot. "
+                         "Use --cookies-from-browser")
     assert youtube.needs_sign_in(error) is True
     assert youtube.needs_sign_in(RuntimeError("HTTP Error 404: Not Found")) is False
 
@@ -72,8 +73,10 @@ def test_search_lists_videos_without_downloading(monkeypatch):
     assert seen["query"] == "ytsearch8:Me at the zoo" and seen["download"] is False
     assert seen["options"]["skip_download"] and seen["options"]["ignore_no_formats_error"]
     assert results == [
-        {"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw", "title": "Me at the zoo", "channel": "jawed", "duration": 19},
-        {"url": "https://www.youtube.com/watch?v=" + "x" * 11, "title": "Other", "channel": "someone", "duration": None},
+        {"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw", "title": "Me at the zoo", "channel": "jawed",
+         "duration": 19},
+        {"url": "https://www.youtube.com/watch?v=" + "x" * 11, "title": "Other", "channel": "someone",
+         "duration": None},
     ]
 
 
@@ -98,7 +101,8 @@ def test_download_video_returns_the_downloaded_file_and_title(tmp_path: Path, mo
 
     monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYoutubeDL))
 
-    path, title, info = youtube.download_video("https://www.youtube.com/watch?v=jNQXAC9IVRw", tmp_path / "downloads", 480)
+    path, title, info = youtube.download_video("https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                                               tmp_path / "downloads", 480)
 
     assert path == tmp_path / "downloads" / "jNQXAC9IVRw-240p.mp4"
     assert title == "Me at the zoo"

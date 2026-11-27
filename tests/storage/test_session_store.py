@@ -17,12 +17,14 @@ def test_chats_from_the_first_release_still_open_after_the_new_columns_are_added
         conn.execute("""CREATE TABLE sessions (id TEXT PRIMARY KEY, owner_id TEXT, title TEXT, source_path TEXT,
             model TEXT, initial_question TEXT, history_json TEXT)""")
         conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                     ("vid_old", "local", "Old", "C:/gone.mp4", "m", "Describe.", json.dumps([{"role": "assistant", "content": "Old answer."}])))
+                     ("vid_old", "local", "Old", "C:/gone.mp4", "m", "Describe.",
+                      json.dumps([{"role": "assistant", "content": "Old answer."}])))
 
     session = VideoSessionStore(root).get_session("vid_old", "local")
 
     assert session.history == [{"role": "assistant", "content": "Old answer."}]
-    assert session.system_prompt == "" and session.tools == [] and session.source_url == "" and session.video_info is None
+    assert (session.system_prompt == "" and session.tools == [] and session.source_url == ""
+            and session.video_info is None)
     # Without a system prompt the request starts with the video, exactly as before, so its cache still matches.
     assert session.messages[0]["role"] == "user"
 
@@ -108,7 +110,8 @@ def test_messages_keep_the_tool_protocol_and_drop_local_fields(tmp_path: Path):
         {"role": "tool", "tool_call_id": "c1", "content": "Image follows.", "caption": "Image of 00:00"},
         {"role": "user", "content": [{"type": "text", "text": "Image follows."},
                                      {"type": "image_url", "image_url": {"url": "session-file:frame_a.jpg"}}]},
-        {"role": "assistant", "content": "Done.", "usage": {"prompt_tokens": 1}, "sources": [{"title": "t", "url": "u"}]},
+        {"role": "assistant", "content": "Done.", "usage": {"prompt_tokens": 1},
+         "sources": [{"title": "t", "url": "u"}]},
     ])
 
     session = store.get_session(session.id, "o")
@@ -118,7 +121,8 @@ def test_messages_keep_the_tool_protocol_and_drop_local_fields(tmp_path: Path):
     assert messages[0] == {"role": "system", "content": "Base."}
     assert messages[2]["reasoning_details"] == [{"type": "x"}] and messages[2]["tool_calls"][0]["id"] == "c1"
     assert messages[3] == {"role": "tool", "tool_call_id": "c1", "content": "Image follows."}
-    assert messages[4]["content"][1]["image_url"]["url"] == "data:image/jpeg;base64," + base64.b64encode(b"img").decode()
+    assert (messages[4]["content"][1]["image_url"]["url"]
+            == "data:image/jpeg;base64," + base64.b64encode(b"img").decode())
     assert messages[5] == {"role": "assistant", "content": "Done."}
 
 
@@ -269,8 +273,10 @@ def test_list_sessions_returns_most_recent_first(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")
     store = VideoSessionStore(tmp_path / "app-data")
-    first = store.create_session(owner_id="matrix:room-a", source_path=source, title="First", model="google/gemini-2.5-flash", initial_question="First?")
-    second = store.create_session(owner_id="matrix:room-a", source_path=source, title="Second", model="google/gemini-2.5-flash", initial_question="Second?")
+    first = store.create_session(owner_id="matrix:room-a", source_path=source, title="First",
+                                 model="google/gemini-2.5-flash", initial_question="First?")
+    second = store.create_session(owner_id="matrix:room-a", source_path=source, title="Second",
+                                  model="google/gemini-2.5-flash", initial_question="Second?")
 
     assert [item.id for item in store.list_sessions("matrix:room-a")] == [second.id, first.id]
 
@@ -279,19 +285,23 @@ def test_record_turn_appends_every_entry_of_a_turn(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")
     store = VideoSessionStore(tmp_path / "app-data")
-    session = store.create_session(owner_id="matrix:room-a", source_path=source, title="Jacket", model="google/gemini-2.5-flash", initial_question="Describe it.")
+    session = store.create_session(owner_id="matrix:room-a", source_path=source, title="Jacket",
+                                   model="google/gemini-2.5-flash", initial_question="Describe it.")
 
     store.record_turn(session.id, "matrix:room-a", [{"role": "assistant", "content": "A jacket."}])
-    store.record_turn(session.id, "matrix:room-a", [{"role": "user", "content": "Is it glossy?"}, {"role": "assistant", "content": "No, it is matte."}])
+    store.record_turn(session.id, "matrix:room-a", [{"role": "user", "content": "Is it glossy?"},
+                                                    {"role": "assistant", "content": "No, it is matte."}])
 
-    assert [message["content"] for message in store.get_session(session.id, "matrix:room-a").history] == ["A jacket.", "Is it glossy?", "No, it is matte."]
+    assert [message["content"] for message in store.get_session(session.id, "matrix:room-a").history] == [
+        "A jacket.", "Is it glossy?", "No, it is matte."]
 
 
 def test_reassign_owner_moves_legacy_chats_to_the_new_owner(tmp_path: Path):
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")
     store = VideoSessionStore(tmp_path / "app-data")
-    session = store.create_session(owner_id="local:user", source_path=source, title="Jacket", model="openrouter/auto", initial_question="Describe it.")
+    session = store.create_session(owner_id="local:user", source_path=source, title="Jacket",
+                                   model="openrouter/auto", initial_question="Describe it.")
 
     store.reassign_owner("local:user", "local:danijel")
 
@@ -309,7 +319,8 @@ def test_failed_video_read_leaves_no_session_behind(tmp_path: Path, monkeypatch)
 
     monkeypatch.setattr(Path, "read_bytes", fail)
     with pytest.raises(MemoryError):
-        store.create_session(owner_id="local", source_path=source, title="Jacket", model="openrouter/auto", initial_question="Describe it.")
+        store.create_session(owner_id="local", source_path=source, title="Jacket", model="openrouter/auto",
+                             initial_question="Describe it.")
 
     assert list(store.sessions_dir.iterdir()) == []
     assert store.list_sessions("local") == []
@@ -337,7 +348,8 @@ def test_recorded_usage_is_kept_locally_but_not_sent_to_the_provider(tmp_path: P
     source = tmp_path / "jacket.mp4"
     source.write_bytes(b"fake-mp4-payload")
     store = VideoSessionStore(tmp_path / "app-data")
-    session = store.create_session(owner_id="matrix:room-a", source_path=source, title="Jacket", model="openrouter/auto", initial_question="Describe it.")
+    session = store.create_session(owner_id="matrix:room-a", source_path=source, title="Jacket",
+                                   model="openrouter/auto", initial_question="Describe it.")
     usage = {"model": "z-ai/glm-4.5v", "prompt_tokens": 42, "cached_tokens": 40, "cache_write_tokens": 0}
 
     store.record_turn(session.id, "matrix:room-a", [{"role": "assistant", "content": "A jacket.", "usage": usage}])
@@ -353,7 +365,8 @@ def test_update_source_path_keeps_the_existing_video_context(tmp_path: Path):
     original.write_bytes(b"fake-mp4-payload")
     replacement.write_bytes(b"another-file")
     store = VideoSessionStore(tmp_path / "app-data")
-    session = store.create_session(owner_id="matrix:room-a", source_path=original, title="Jacket", model="google/gemini-2.5-flash", initial_question="Describe it.")
+    session = store.create_session(owner_id="matrix:room-a", source_path=original, title="Jacket",
+                                   model="google/gemini-2.5-flash", initial_question="Describe it.")
 
     store.update_source_path(session.id, "matrix:room-a", replacement)
 
@@ -522,7 +535,8 @@ def test_moving_a_chat_to_another_provider_stores_it_and_retries_a_skipped_trans
     tools = [{"type": "function", "function": {"name": "zoom_frame"}}]
     store.update_chat_settings(session.id, "local", "", False, provider="openrouter", tools=tools)
     moved = store.get_session(session.id, "local")
-    assert (moved.provider, moved.tools, moved.transcript_state, moved.transcript) == ("openrouter", tools, "pending", "")
+    assert (moved.provider, moved.tools, moved.transcript_state, moved.transcript) == (
+        "openrouter", tools, "pending", "")
     store.update_transcript(session.id, "local", "done", "[00:01] Hello")
     store.update_chat_settings(session.id, "local", "", False, provider="llama.cpp", transcribe="on")
     back = store.get_session(session.id, "local")

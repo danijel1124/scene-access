@@ -81,7 +81,8 @@ class NewChatMixin:
             self.new_from_youtube()
 
     def new_from_local_file(self) -> None:
-        with wx.FileDialog(self, "Choose a local video", wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
+        with wx.FileDialog(self, "Choose a local video", wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov",
+                           style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
             source = Path(dialog.GetPath())
@@ -94,7 +95,8 @@ class NewChatMixin:
             if sent != SIZE_BACK:
                 break
         if isinstance(sent, Path):
-            self._start_chat(source, source.name, *start[:2], sent_video=sent, tools=start[2] if len(start) > 2 else None)
+            self._start_chat(source, source.name, *start[:2], sent_video=sent,
+                             tools=start[2] if len(start) > 2 else None)
 
     def new_from_youtube(self) -> None:
         with wx.TextEntryDialog(self, "YouTube link:", "Start chat from YouTube", url_from_clipboard()) as dialog:
@@ -201,8 +203,8 @@ class NewChatMixin:
             except RequestCancelled:
                 return None
             except Exception as error:
-                wx.MessageBox(f'The existing video can still be used, but its full information could not be loaded: {error}',
-                              'Video information unavailable', wx.OK | wx.ICON_WARNING)
+                wx.MessageBox('The existing video can still be used, but its full information could not be loaded: '
+                              f'{error}', 'Video information unavailable', wx.OK | wx.ICON_WARNING)
             existing = entry['local_path'], entry['title'], metadata
         return entry['url'], existing
 
@@ -281,7 +283,8 @@ class NewChatMixin:
                 return folder
             except OSError as error:
                 reason = f"The download folder {folder} could not be created: {error}"
-        with wx.DirDialog(self, f"{reason} Choose the default download folder:", style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST) as dialog:
+        with wx.DirDialog(self, f"{reason} Choose the default download folder:",
+                          style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return None
             folder = Path(dialog.GetPath())
@@ -289,7 +292,8 @@ class NewChatMixin:
         save_config(self.config_path, self.config)
         return folder
 
-    def _download_with_progress(self, url: str, target_dir: Path, max_height: int) -> tuple[Path, str, dict[str, Any]] | None:
+    def _download_with_progress(self, url: str, target_dir: Path,
+                                max_height: int) -> tuple[Path, str, dict[str, Any]] | None:
         filename_fields = self.config.filename_fields
         control = RequestControl()
         state: dict[str, Any] = {"percent": 0, "done": False, "cancel": False, "result": None, "error": None}
@@ -359,8 +363,8 @@ class NewChatMixin:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
         try:
-            with wx.GenericProgressDialog('YouTube lookup', 'Looking up video information…',
-                                          parent=self, style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_AUTO_HIDE) as dialog:
+            with wx.GenericProgressDialog('YouTube lookup', 'Looking up video information…', parent=self,
+                                          style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_AUTO_HIDE) as dialog:
                 while not state['done']:
                     keep_going, _skip = dialog.Pulse()
                     if not keep_going:
@@ -400,7 +404,8 @@ class NewChatMixin:
         save_config(self.config_path, self.config)
         return True
 
-    def _ask_first_question(self, online: bool, previous: tuple[str, str] | tuple[str, str, tuple[str, ...]] | None = None
+    def _ask_first_question(self, online: bool,
+                            previous: tuple[str, str] | tuple[str, str, tuple[str, ...]] | None = None
                             ) -> tuple[str, str, tuple[str, ...]] | None:
         """Returns the question, profile name and the keys of the chosen tools, or None if cancelled. previous
         refills the dialog when the user came back from the size question."""
@@ -410,7 +415,8 @@ class NewChatMixin:
         tools = previous[2] if previous and len(previous) > 2 else None
         config = self.config
         transcribe = getattr(self, "chat_transcribe", config.transcribe) if previous else config.transcribe
-        with StartChatDialog(self, config.profiles, profile or NO_PROFILE, online=online, max_height=config.youtube_max_height,
+        with StartChatDialog(self, config.profiles, profile or NO_PROFILE, online=online,
+                             max_height=config.youtube_max_height,
                              auto_shrink=config.auto_shrink, shrink_target_mb=config.shrink_target_mb,
                              question=question, tools=tools, llama_cpp=config.provider == LLAMA_CPP,
                              openrouter_key=bool(self.openrouter_key()), transcribe=transcribe) as dialog:
@@ -450,7 +456,8 @@ class NewChatMixin:
                     provider=provider, transcribe=transcribe,
                     section_seconds=self.config.llama_cpp_section_seconds if provider == LLAMA_CPP else 0)
         except (OSError, MemoryError) as error:
-            wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded", wx.OK | wx.ICON_ERROR)
+            wx.MessageBox(f"The video could not be loaded: {error or type(error).__name__}", "Video not loaded",
+                          wx.OK | wx.ICON_ERROR)
             return
         finally:
             if sent_video and sent_video != source:

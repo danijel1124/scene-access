@@ -76,7 +76,8 @@ class ModelCatalog:
         with self._lock:
             if self._providers is None:
                 try:
-                    found = [(str(item.get("name") or item["slug"]), str(item["slug"])) for item in self._fetch(self.providers_url)]
+                    found = [(str(item.get("name") or item["slug"]), str(item["slug"]))
+                             for item in self._fetch(self.providers_url)]
                 except Exception:
                     return []
                 self._providers = sorted(found, key=lambda provider: provider[0].lower())

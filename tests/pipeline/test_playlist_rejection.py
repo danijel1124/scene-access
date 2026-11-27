@@ -96,7 +96,8 @@ def test_collection_reopening_finds_completed_single_download(tmp_path, video_se
     url, _requests, _payload = video_server
     import yt_dlp
     with monkeypatch.context() as patch:
-        patch.setattr(yt_dlp.YoutubeDL, 'dl', lambda *a, **kw: pytest.fail('metadata lookup started a media downloader'))
+        patch.setattr(yt_dlp.YoutubeDL, 'dl',
+                      lambda *a, **kw: pytest.fail('metadata lookup started a media downloader'))
         listing = list_video_choices(url + '/index.html')
     entry = listing['entries'][0]
     path, _, _ = download_video(entry['url'], tmp_path/'downloads', _job_id='a'*32)

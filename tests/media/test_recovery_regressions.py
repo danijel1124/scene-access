@@ -7,7 +7,8 @@ from sceneaccess.media import video_size
 
 
 def test_shrink_drains_stderr_while_process_runs(monkeypatch):
-    command = [sys.executable, '-c', "import sys; sys.stderr.write('x'*2000000+'END-MARKER'); sys.stderr.flush(); sys.exit(1)"]
+    command = [sys.executable, '-c',
+               "import sys; sys.stderr.write('x'*2000000+'END-MARKER'); sys.stderr.flush(); sys.exit(1)"]
     monkeypatch.setattr(video_size, '_ffmpeg_command', lambda *_: command)
     cancel, done = threading.Event(), threading.Event()
     errors = []
@@ -32,7 +33,8 @@ def test_shrink_drains_stderr_while_process_runs(monkeypatch):
 
 def test_shrink_cancels_already_running_silent_process(tmp_path, monkeypatch):
     started = tmp_path/'started'
-    command = [sys.executable, '-c', f"from pathlib import Path; import time; Path({str(started)!r}).touch(); time.sleep(20)"]
+    command = [sys.executable, '-c',
+               f"from pathlib import Path; import time; Path({str(started)!r}).touch(); time.sleep(20)"]
     monkeypatch.setattr(video_size, '_ffmpeg_command', lambda *_: command)
     cancel, done = threading.Event(), threading.Event()
     errors = []

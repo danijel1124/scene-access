@@ -61,7 +61,8 @@ class FilenameDialog(wx.Dialog):
     """Chooses the yt-dlp fields a downloaded video's file name is built from."""
 
     def __init__(self, parent: wx.Window, fields: tuple[str, ...]):
-        super().__init__(parent, title="File name of downloaded videos", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        super().__init__(parent, title="File name of downloaded videos",
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         label = wx.StaticText(self, label="File name parts (Space toggles a part)")
         self.parts = wx.CheckListBox(self, choices=[f"{name}: {description}" for name, description in FILENAME_FIELDS])
         self.parts.SetCheckedItems([index for index, name in enumerate(FILENAME_FIELD_NAMES) if name in fields])
@@ -85,7 +86,8 @@ class FilenameDialog(wx.Dialog):
         return tuple(FILENAME_FIELD_NAMES[index] for index in self.parts.GetCheckedItems())
 
     def _show_template(self) -> None:
-        self.template.SetLabel("Template: " + output_template(self.value()) if self.value() else "Template: choose at least one part")
+        self.template.SetLabel("Template: " + output_template(self.value()) if self.value()
+                               else "Template: choose at least one part")
 
     def _on_reset(self, _event: wx.CommandEvent) -> None:
         self.parts.SetCheckedItems([FILENAME_FIELD_NAMES.index(name) for name in DEFAULT_FILENAME_FIELDS])
@@ -187,7 +189,8 @@ class ProfilesDialog(wx.Dialog):
         self.names.SetFocus()
 
     def _on_reset(self, _event: wx.CommandEvent) -> None:
-        if wx.MessageBox("Replace all profiles with the default profiles?", "Reset profiles", wx.YES_NO | wx.ICON_QUESTION, self) != wx.YES:
+        if wx.MessageBox("Replace all profiles with the default profiles?", "Reset profiles",
+                         wx.YES_NO | wx.ICON_QUESTION, self) != wx.YES:
             return
         self.profiles = [[name, text] for name, text in DEFAULT_PROFILES]
         self.names.Set([name for name, _text in self.profiles])
@@ -197,7 +200,8 @@ class ProfilesDialog(wx.Dialog):
     def _on_ok(self, event: wx.CommandEvent) -> None:
         names = [name.strip() for name, _text in self.profiles]
         if any(not name for name in names) or len(set(names)) != len(names):
-            wx.MessageBox("Every profile needs a name, and the names must be different.", "Profile names", wx.OK | wx.ICON_ERROR, self)
+            wx.MessageBox("Every profile needs a name, and the names must be different.", "Profile names",
+                          wx.OK | wx.ICON_ERROR, self)
             return
         event.Skip()
 
@@ -205,13 +209,15 @@ class ProfilesDialog(wx.Dialog):
 class AddModelDialog(wx.Dialog):
     """Finds a model by typing part of its ID; with allow_patterns, a pattern such as "google/*" too."""
 
-    def __init__(self, parent: wx.Window, models: list[str], title: str = "Exclude a model", allow_patterns: bool = True):
+    def __init__(self, parent: wx.Window, models: list[str], title: str = "Exclude a model",
+                 allow_patterns: bool = True):
         super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.models = models
         self.allow_patterns = allow_patterns
         self.entries: list[str] = []
-        filter_label = wx.StaticText(self, label="Part of the model ID, or a pattern such as google/* (Enter adds the selected model)"
-                                     if allow_patterns else "Part of the model ID (Enter chooses the selected model)")
+        filter_label = wx.StaticText(self, label=(
+            "Part of the model ID, or a pattern such as google/* (Enter adds the selected model)"
+            if allow_patterns else "Part of the model ID (Enter chooses the selected model)"))
         self.filter = wx.TextCtrl(self)
         self.list_label = wx.StaticText(self)
         self.matches = wx.ListBox(self)
@@ -242,7 +248,8 @@ class AddModelDialog(wx.Dialog):
 
     def _on_ok(self, event: wx.CommandEvent) -> None:
         if not self.value():
-            wx.MessageBox("Type part of a model ID and choose a model from the list.", "No model chosen", wx.OK | wx.ICON_ERROR, self)
+            wx.MessageBox("Type part of a model ID and choose a model from the list.", "No model chosen",
+                          wx.OK | wx.ICON_ERROR, self)
             return
         event.Skip()
 
@@ -252,7 +259,8 @@ class ExclusionsDialog(wx.Dialog):
 
     def __init__(self, parent: wx.Window, providers: list[tuple[str, str]], ignored: tuple[str, ...],
                  models: list[str], excluded: tuple[str, ...]):
-        super().__init__(parent, title="Excluded providers and models", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        super().__init__(parent, title="Excluded providers and models",
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         known = {slug for _name, slug in providers}
         # Excluded providers that OpenRouter no longer lists, or all of them if the list did not load.
         self.providers = [*providers, *((slug, slug) for slug in ignored if slug not in known)]
@@ -261,7 +269,8 @@ class ExclusionsDialog(wx.Dialog):
         provider_label = wx.StaticText(self, label="Excluded providers, for every model (Space toggles a provider)")
         self.provider_list = wx.CheckListBox(self, choices=[name if name == slug else f"{name} ({slug})"
                                                             for name, slug in self.providers])
-        self.provider_list.SetCheckedItems([index for index, (_name, slug) in enumerate(self.providers) if slug in ignored])
+        self.provider_list.SetCheckedItems([index for index, (_name, slug) in enumerate(self.providers)
+                                            if slug in ignored])
         model_label = wx.StaticText(self, label="Excluded models, used with openrouter/auto")
         self.model_list = wx.ListBox(self, choices=self.excluded)
         add = wx.Button(self, label="Add model…")
@@ -422,7 +431,8 @@ class SettingsDialog(wx.Dialog):
         section_seconds = self._section_seconds()
         download_dir = self.download_dir.GetPath().strip()
         # replace keeps settings this dialog does not show, such as the profile chosen last.
-        return replace(self.config, provider=PROVIDERS[self.provider.GetSelection()], model=self.model.GetValue().strip(),
+        return replace(self.config, provider=PROVIDERS[self.provider.GetSelection()],
+                       model=self.model.GetValue().strip(),
                        api_key=self.api_key.GetValue().strip(), llama_cpp_url=self.llama_cpp_url.GetValue().strip(),
                        llama_cpp_model=self.llama_cpp_model.GetValue().strip(),
                        llama_cpp_api_key=self.llama_cpp_api_key.GetValue().strip(),
@@ -433,7 +443,8 @@ class SettingsDialog(wx.Dialog):
                        download_dir="" if download_dir == str(default_download_dir()) else download_dir,
                        filename_fields=self.filename_fields, profiles=self.profiles,
                        audio_only_auto=self.audio_only.GetValue(),
-                       transcribe=TRANSCRIBE_MODES[self.transcribe.GetSelection()], youtube_cookies=self.youtube_cookies,
+                       transcribe=TRANSCRIBE_MODES[self.transcribe.GetSelection()],
+                       youtube_cookies=self.youtube_cookies,
                        ignored_providers=self.ignored_providers, excluded_models=self.excluded_models,
                        check_video_size=self.check_size.GetValue(), size_check_skipped_models=self.skipped_models,
                        max_tool_rounds=max_tool_rounds)
@@ -473,7 +484,8 @@ class SettingsDialog(wx.Dialog):
         self._show_skipped()
 
     def _show_exclusions(self) -> None:
-        self.exclusions_button.SetLabel(f"{exclusions_description(self.ignored_providers, self.excluded_models)} (change…)")
+        self.exclusions_button.SetLabel(
+            f"{exclusions_description(self.ignored_providers, self.excluded_models)} (change…)")
         self.Layout()
 
     def _on_exclusions(self, _event: wx.CommandEvent) -> None:

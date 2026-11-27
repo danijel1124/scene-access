@@ -68,7 +68,8 @@ def cut_sections(session: VideoSession, duration: float, control: RequestControl
     return sections
 
 
-def section_sound(session: VideoSession, section: Section, control: RequestControl | None = None) -> list[dict[str, Any]]:
+def section_sound(session: VideoSession, section: Section,
+                  control: RequestControl | None = None) -> list[dict[str, Any]]:
     """A section's own sound as input_audio parts, for a model on a llama.cpp server that hears."""
     return sound_parts(session, control, source=section.path, prefix=f"{section.path.stem}-sound-")
 

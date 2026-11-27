@@ -91,7 +91,8 @@ def test_run_turn_runs_tool_calls_and_shows_images_until_the_model_answers(tmp_p
     bodies = []
     replies = [
         {"model": "m", "choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
-            {"id": "call_1", "type": "function", "function": {"name": "zoom_frame", "arguments": "{\"time\": \"02:51\"}"}}]}}],
+            {"id": "call_1", "type": "function",
+             "function": {"name": "zoom_frame", "arguments": "{\"time\": \"02:51\"}"}}]}}],
          "usage": {"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 90, "cache_write_tokens": 0}}},
         {"model": "m", "choices": [{"message": {"role": "assistant", "content": "A Moncler logo.", "annotations": [
             {"type": "url_citation", "url_citation": {"url": "https://example.com/a", "title": "A"}}]}}],
@@ -138,8 +139,10 @@ def test_run_turn_stops_when_a_model_never_stops_calling_tools(tmp_path: Path):
 
     def opener(request, timeout):
         bodies.append(json.loads(request.data))
-        return FakeResponse({"model": "m", "usage": {}, "choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
-            {"id": f"c{len(bodies)}", "type": "function", "function": {"name": "video_information", "arguments": "{}"}}]}}]})
+        return FakeResponse({"model": "m", "usage": {}, "choices": [
+            {"message": {"role": "assistant", "content": None, "tool_calls": [
+                {"id": f"c{len(bodies)}", "type": "function",
+                 "function": {"name": "video_information", "arguments": "{}"}}]}}]})
 
     ran = []
     turn = ChatClient("k", opener=opener).run_turn(
@@ -227,7 +230,8 @@ def test_http_errors_show_the_providers_reason(tmp_path: Path):
     _store, session = _tool_session(tmp_path)
 
     def opener(request, timeout):
-        body = json.dumps({"error": {"message": "Provider returned error", "metadata": {"raw": "File too large"}}}).encode()
+        body = json.dumps({"error": {"message": "Provider returned error",
+                                     "metadata": {"raw": "File too large"}}}).encode()
         raise HTTPError(request.full_url, 500, "Internal Server Error", {}, io.BytesIO(body))
 
     with pytest.raises(ChatError, match=r"HTTP 500: Provider returned error \(File too large\)"):
@@ -375,7 +379,8 @@ def test_streamed_tool_calls_and_reasoning_go_back_as_without_streaming(tmp_path
     assert sent["tool_calls"] == [{"id": "call_1", "type": "function",
                                    "function": {"name": "zoom_frame", "arguments": "{\"time\": \"02:51\"}"}}]
     # The signature that came after a first piece without one goes back, as Gemini needs it.
-    assert sent["reasoning_details"] == [{"type": "reasoning.text", "index": 0, "text": "Zoom in.", "signature": "sig-1"}]
+    assert sent["reasoning_details"] == [{"type": "reasoning.text", "index": 0, "text": "Zoom in.",
+                                          "signature": "sig-1"}]
     # The readable copy of the thinking is for the Chat history only.
     assert "thinking" not in sent and "reasoning" not in sent and turn.entries[0]["thinking"] == "Zoom in."
     assert "reasoning_content" not in sent

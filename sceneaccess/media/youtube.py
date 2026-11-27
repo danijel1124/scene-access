@@ -331,8 +331,8 @@ def download_options(target_dir: Path, max_height: int, progress: Callable[[dict
     return options
 
 
-def _download_video_isolated_worker(url: str, target_dir: Path, max_height: int, filename_fields,
-                                   cookies: str, _progress_pipe=None, _job_id: str = "") -> tuple[Path, str, dict[str, Any]]:
+def _download_video_isolated_worker(url: str, target_dir: Path, max_height: int, filename_fields, cookies: str,
+                                   _progress_pipe=None, _job_id: str = "") -> tuple[Path, str, dict[str, Any]]:
     def state_changed(state: dict) -> None:
         if _progress_pipe is not None:
             _progress_pipe.send(('event', state))

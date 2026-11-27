@@ -215,7 +215,8 @@ class ChatRequestMixin:
         self._reload_current()
         self.render_current()
         self._show_unfinished(unfinished)
-        self.status.SetLabel("Request cancelled. Completed chat history is preserved; provider charges may still apply.")
+        self.status.SetLabel("Request cancelled. Completed chat history is preserved; provider charges may still "
+                             "apply.")
         speech.announce("Request cancelled.")
 
     def _reload_current(self) -> None:
@@ -268,7 +269,8 @@ class ChatRequestMixin:
             shown = full = f"{shown} Reason: {error}"
         wx.CallAfter(self._show_progress_item, session.id, shown, full=full)
 
-    def _show_progress_item(self, session_id: str, item: str, *, announce_it: bool = True, full: str | None = None) -> None:
+    def _show_progress_item(self, session_id: str, item: str, *, announce_it: bool = True,
+                            full: str | None = None) -> None:
         """Shows a step of the running request in the chat history while the model works."""
         if self._closing or not self.current or self.current.id != session_id:
             return
@@ -311,7 +313,8 @@ class ChatRequestMixin:
             model = self.size_skip_after_answer[1]
             self.size_skip_after_answer = None
             if model not in self.config.size_check_skipped_models:
-                self.config = replace(self.config, size_check_skipped_models=(*self.config.size_check_skipped_models, model))
+                self.config = replace(self.config,
+                                      size_check_skipped_models=(*self.config.size_check_skipped_models, model))
                 save_config(self.config_path, self.config)
         if self.size_confirm_after_answer == session_id:
             self.size_confirm_after_answer = ""

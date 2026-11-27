@@ -36,7 +36,8 @@ class AdvancedDialog(wx.Dialog):
             layout.Add(self.youtube_quality, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
         else:
             self.youtube_quality.Hide()
-        self.auto_shrink = wx.CheckBox(self, label="Shrink videos that are too large automatically with ffmpeg, without asking")
+        self.auto_shrink = wx.CheckBox(
+            self, label="Shrink videos that are too large automatically with ffmpeg, without asking")
         self.auto_shrink.SetValue(auto_shrink)
         target_label = wx.StaticText(self, label="Largest size to send, in MB after Base64 encoding")
         self.shrink_target = wx.SpinCtrl(self, min=5, max=2000, initial=shrink_target_mb)
@@ -49,7 +50,8 @@ class AdvancedDialog(wx.Dialog):
 
     def value(self) -> tuple[int, bool, int]:
         """The YouTube height, whether to shrink automatically, and the size to shrink to in MB."""
-        return self.heights[self.youtube_quality.GetSelection()], self.auto_shrink.GetValue(), self.shrink_target.GetValue()
+        return (self.heights[self.youtube_quality.GetSelection()], self.auto_shrink.GetValue(),
+                self.shrink_target.GetValue())
 
 
 # What the size dialog returns besides wx.ID_CANCEL.
@@ -61,14 +63,15 @@ def size_message(file_size: int, model: str, online: bool) -> str:
     sent = base64_size(file_size)
     lower = (", or YouTube can be asked for a lower resolution, one step at a time until the video fits"
              if online else "")
-    skip = (f"If you send it and it works, check \"Don't show this dialog again\" to skip this question for {model}.\n\n"
-            if model != AUTO_ROUTER else "")
+    skip = ("If you send it and it works, check \"Don't show this dialog again\" to skip this question for "
+            f"{model}.\n\n" if model != AUTO_ROUTER else "")
     choices = ("Shrink the video, request a lower resolution, or send it as it is?" if online
                else "Shrink the video or send it as it is?")
-    return (f"Some models accept videos only up to about {megabytes(SIZE_LIMIT)}. This video is {megabytes(file_size)}; "
-            f"the Base64 encoding used for sending adds about {megabytes(sent - file_size)}, so "
-            f"{megabytes(sent)} would be sent.\n\n"
-            f"The video can be shrunk automatically{lower}. You can also send it as it is, but then it may not work.\n\n"
+    return (f"Some models accept videos only up to about {megabytes(SIZE_LIMIT)}. This video is "
+            f"{megabytes(file_size)}; the Base64 encoding used for sending adds about {megabytes(sent - file_size)}, "
+            f"so {megabytes(sent)} would be sent.\n\n"
+            f"The video can be shrunk automatically{lower}. You can also send it as it is, but then it may not "
+            "work.\n\n"
             f"{skip}"
             "Settings can turn this size check off completely; then a video that is too large for the model causes "
             "an error. In the Start a video chat dialog, Advanced… changes the YouTube quality or sets up automatic "
@@ -111,8 +114,8 @@ SIZE_CHAT_SETTINGS = wx.ID_HIGHEST + 105
 
 
 def stored_size_message(sent_size: int, model: str) -> str:
-    skip = (f"If you send it and it works, check \"Don't show this dialog again\" to skip this question for {model}.\n\n"
-            if model != AUTO_ROUTER else "")
+    skip = ("If you send it and it works, check \"Don't show this dialog again\" to skip this question for "
+            f"{model}.\n\n" if model != AUTO_ROUTER else "")
     return (f"This chat's stored video is {megabytes(sent_size)} once sent, but some models accept videos only up "
             f"to about {megabytes(SIZE_LIMIT)}, so this question may fail with \"Invalid content\".\n\n"
             "Shrink the stored video: SceneAccess makes a smaller copy for this chat with ffmpeg. The next question "
@@ -280,7 +283,8 @@ class StartChatDialog(wx.Dialog):
         self.profiles = profiles
         self.online = online
         self.max_height, self.auto_shrink, self.shrink_target_mb = max_height, auto_shrink, shrink_target_mb
-        question_label = wx.StaticText(self, label="First question about the video (Enter starts, Shift+Enter adds a line)")
+        question_label = wx.StaticText(
+            self, label="First question about the video (Enter starts, Shift+Enter adds a line)")
         self.question = wx.TextCtrl(self, value=question, style=wx.TE_MULTILINE, size=(-1, 110))
         profile_label = wx.StaticText(self, label="Prompt profile")
         self.choices = [NO_PROFILE, *(name for name, _text in profiles)]

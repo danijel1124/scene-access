@@ -49,7 +49,9 @@ class ChatSetupMixin:
     def on_update_path(self, _event: wx.CommandEvent) -> None:
         if not self.current or self._chat_busy():
             return
-        with wx.FileDialog(self, "Choose the original video at its new location", wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
+        with wx.FileDialog(self, "Choose the original video at its new location",
+                           wildcard="Video (*.mp4;*.webm;*.mov)|*.mp4;*.webm;*.mov",
+                           style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return
             try:
@@ -92,7 +94,8 @@ class ChatSetupMixin:
                                 audio_only=self.current.audio_only)
         self.current = self.store.get_session(self.current.id, OWNER_ID)
         self.render_current()
-        self.status.SetLabel(self.status.GetLabel() + f"\nPrompt profile set to {profile or NO_PROFILE}; tools enabled.")
+        self.status.SetLabel(self.status.GetLabel()
+                             + f"\nPrompt profile set to {profile or NO_PROFILE}; tools enabled.")
 
     def update_system_prompt(self) -> None:
         """Gives the open chat the current version of its system prompt, keeping its profile, tools and transcript."""
@@ -241,15 +244,18 @@ class ChatSetupMixin:
             length = f", {format_time(result['duration'])}" if result.get("duration") else ""
             choices.append((f"{result['title']}, by {result['channel'] or 'unknown'}{length}", result["url"]))
         choices += [("Enter a link…", "enter"), ("Not a YouTube video", "none")]
-        message = f"Which YouTube video is \"{session.title}\"? With the link, the model can also load moments in high resolution and read the video information."
-        with wx.SingleChoiceDialog(self, message, "Online source of this chat", [label for label, _url in choices]) as dialog:
+        message = (f"Which YouTube video is \"{session.title}\"? With the link, the model can also load moments in "
+                   "high resolution and read the video information.")
+        with wx.SingleChoiceDialog(self, message, "Online source of this chat",
+                                   [label for label, _url in choices]) as dialog:
             if dialog.ShowModal() != wx.ID_OK:
                 return False
             url = choices[dialog.GetSelection()][1]
         if url == "none":
             return True
         if url == "enter":
-            with wx.TextEntryDialog(self, "YouTube link:", "Online source of this chat", url_from_clipboard()) as dialog:
+            with wx.TextEntryDialog(self, "YouTube link:", "Online source of this chat",
+                                    url_from_clipboard()) as dialog:
                 if dialog.ShowModal() != wx.ID_OK:
                     return False
                 url = dialog.GetValue().strip()
@@ -262,7 +268,8 @@ class ChatSetupMixin:
         except RequestCancelled:
             return False
         except Exception as error:
-            wx.MessageBox(f"The video information could not be loaded: {error}", "Link not used", wx.OK | wx.ICON_WARNING)
+            wx.MessageBox(f"The video information could not be loaded: {error}", "Link not used",
+                          wx.OK | wx.ICON_WARNING)
             return True
         self.store.update_source(session.id, OWNER_ID, url, info)
         self.current = self.store.get_session(session.id, OWNER_ID)
@@ -302,7 +309,8 @@ class ChatSetupMixin:
             except RequestCancelled:
                 wx.CallAfter(self._request_callback, control, self._cancelled)
             except Exception as error:
-                wx.CallAfter(self._request_callback, control, self._failed, f"The speech could not be transcribed: {error}")
+                wx.CallAfter(self._request_callback, control, self._failed,
+                             f"The speech could not be transcribed: {error}")
             finally:
                 if self.windows:
                     wx.CallAfter(self.windows.request_finished, session.id, control)

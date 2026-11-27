@@ -89,7 +89,8 @@ def test_a_new_chat_opens_in_its_own_chat_window(windows, monkeypatch):
     assert created.IsShown() and created.current.title == 'New' and created.current.tools == []
     assert created.size_skip_after_answer == (created.current.id, 'fixture/model')
     assert main.pending_size_skip == ''
-    assert main.sessions.GetStrings() == ['New'] and main.session_ids[main.sessions.GetSelection()] == created.current.id
+    assert main.sessions.GetStrings() == ['New']
+    assert main.session_ids[main.sessions.GetSelection()] == created.current.id
 
 
 def test_refreshing_the_list_keeps_the_selected_chat(windows):

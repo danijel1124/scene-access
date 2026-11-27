@@ -9,7 +9,8 @@ def test_parallel_turn_appends_are_atomic(tmp_path, monkeypatch):
     source = tmp_path/'source.mp4'
     source.write_bytes(b'fixture')
     store = VideoSessionStore(tmp_path/'store')
-    session = store.create_session(owner_id='owner', source_path=source, title='Chat', model='test', initial_question='?')
+    session = store.create_session(owner_id='owner', source_path=source, title='Chat', model='test',
+                                   initial_question='?')
     # The old turn pauses inside record_turn, after reading the history and before writing it back.
     # A second turn appends meanwhile; an append that is not one write transaction would then
     # overwrite it with the stale history it read.

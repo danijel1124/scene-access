@@ -7,10 +7,14 @@ from sceneaccess.llm.models import ModelCatalog, api_url, routing
 MODELS = {"data": [
     {"id": "google/gemini-flash", "architecture": {"input_modalities": ["text", "image", "audio", "video"]},
      "supported_parameters": ["tools"]},
-    {"id": "google/gemini-flash:batch", "architecture": {"input_modalities": ["audio", "video"]}, "supported_parameters": ["tools"]},
-    {"id": "acme/listen-no-tools", "architecture": {"input_modalities": ["audio", "video"]}, "supported_parameters": []},
-    {"id": "acme/some-router", "architecture": {"input_modalities": ["audio", "video"]}, "supported_parameters": ["tools"]},
-    {"id": "z-ai/glm-flash", "architecture": {"input_modalities": ["text", "image", "video"]}, "supported_parameters": ["tools"]},
+    {"id": "google/gemini-flash:batch", "architecture": {"input_modalities": ["audio", "video"]},
+     "supported_parameters": ["tools"]},
+    {"id": "acme/listen-no-tools", "architecture": {"input_modalities": ["audio", "video"]},
+     "supported_parameters": []},
+    {"id": "acme/some-router", "architecture": {"input_modalities": ["audio", "video"]},
+     "supported_parameters": ["tools"]},
+    {"id": "z-ai/glm-flash", "architecture": {"input_modalities": ["text", "image", "video"]},
+     "supported_parameters": ["tools"]},
 ]}
 
 
@@ -85,7 +89,8 @@ def test_catalog_knows_which_models_hear_and_lists_only_real_tool_models():
 
 
 def test_routing_excludes_providers_for_every_model_and_models_only_for_auto():
-    catalog = ModelCatalog("https://openrouter.ai/api/v1/chat/completions", opener=lambda request, timeout: FakeResponse())
+    catalog = ModelCatalog("https://openrouter.ai/api/v1/chat/completions",
+                           opener=lambda request, timeout: FakeResponse())
     assert routing("openrouter/auto", True, catalog, ("google-ai-studio",), ("google/*",)) == {
         "provider": {"ignore": ["google-ai-studio"]},
         "plugins": [{"id": "auto-router", "allowed_models": ["google/gemini-flash"], "excluded_models": ["google/*"]}]}
@@ -97,7 +102,8 @@ def test_routing_excludes_providers_for_every_model_and_models_only_for_auto():
 
 
 def test_catalog_lists_providers_by_name_and_all_model_ids():
-    providers = {"data": [{"name": "Novita", "slug": "novita"}, {"name": "Google AI Studio", "slug": "google-ai-studio"}]}
+    providers = {"data": [{"name": "Novita", "slug": "novita"},
+                          {"name": "Google AI Studio", "slug": "google-ai-studio"}]}
     calls = []
 
     def opener(request, timeout):

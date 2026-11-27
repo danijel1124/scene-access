@@ -95,7 +95,8 @@ def test_advanced_quality_change_replaces_cached_file_only_when_requested(tmp_pa
 
 @pytest.mark.parametrize('selection', [0, 1, None])
 @pytest.mark.parametrize('misleading_titles', [False, True])
-def test_playlist_hides_existing_chats_reuses_orphans_and_downloads_only_selected(tmp_path, monkeypatch, selection, misleading_titles):
+def test_playlist_hides_existing_chats_reuses_orphans_and_downloads_only_selected(tmp_path, monkeypatch, selection,
+                                                                                  misleading_titles):
     monkeypatch.setattr(app_window, 'config_path_from_standard_paths', lambda _: tmp_path/'config.json')
     monkeypatch.setattr(new_chat, 'url_from_clipboard', lambda: '')
     app = wx.App(False)
@@ -169,7 +170,8 @@ def test_playlist_hides_existing_chats_reuses_orphans_and_downloads_only_selecte
                 assert frame.current.video_info['tags'] == ['known product']
                 assert frame.current.video_info['chapters'][0]['title'] == 'Introduction'
             assert sent == [frame.current.id]
-            assert Path(frame.current.source_path) == (orphan if selection == 0 else downloads/'Missing [ccccccccccc].mp4')
+            assert Path(frame.current.source_path) == (orphan if selection == 0
+                                                        else downloads/'Missing [ccccccccccc].mp4')
         assert hidden.read_bytes() == b'hidden video' and orphan.read_bytes() == b'orphan video'
     finally:
         frame.Destroy()

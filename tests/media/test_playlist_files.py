@@ -9,7 +9,8 @@ def choice(identifier='abcdefghijk'):
 
 
 def test_youtube_aliases_have_the_same_identity():
-    assert video_key('https://youtu.be/abcdefghijk') == video_key('https://www.youtube.com/watch?v=abcdefghijk&list=PL1')
+    assert (video_key('https://youtu.be/abcdefghijk')
+            == video_key('https://www.youtube.com/watch?v=abcdefghijk&list=PL1'))
     assert video_key('https://unrelated.example/watch?v=abcdefghijk') != video_key(choice()['url'])
 
 

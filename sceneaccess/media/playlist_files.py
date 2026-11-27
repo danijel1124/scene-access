@@ -34,7 +34,8 @@ def _completed(path: Path, folder: Path) -> bool:
         return False
 
 
-def playlist_options(entries: list[dict], folder: Path, chats: list[dict], *, hide_existing_chats: bool = True) -> list[dict]:
+def playlist_options(entries: list[dict], folder: Path, chats: list[dict], *,
+                     hide_existing_chats: bool = True) -> list[dict]:
     """Existing file+chat: hidden. Existing orphan: reusable. Missing file: downloadable."""
     folder = folder.resolve()
     by_key: dict[str, Path] = {}

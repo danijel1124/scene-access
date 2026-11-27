@@ -59,7 +59,8 @@ def test_the_history_menu_hides_shows_and_deletes_an_answer_round(tmp_path, monk
         assert menus[-1][1][0].startswith("Show this answer to the model again")
         assert "Second answer." in json.dumps(frame.current.messages)
         # Several items: both answers' rounds are hidden together.
-        answers = [frame.history_items.index("Model: First answer."), frame.history_items.index("Model: Second answer.")]
+        answers = [frame.history_items.index("Model: First answer."),
+                   frame.history_items.index("Model: Second answer.")]
         frame.show_history_menu(answers)
         assert menus[-1][1][0] == "Hide these 2 answers from the model (cache miss from here on)"
         assert all(entry.get("excluded") for entry in frame.current.history)
@@ -125,7 +126,8 @@ def test_a_transcript_is_added_at_the_end_without_asking_the_model(tmp_path, mon
         assert asked == []
         assert frame.current.history[-1]["content"].endswith("[00:01] Hello")
         assert frame.history_items[-1].startswith("Transcript added later: 1 lines")
-        assert frame.reader_texts[-1].endswith("[00:01] Hello") and frame.history_caret() == len(frame.history_items) - 1
+        assert frame.reader_texts[-1].endswith("[00:01] Hello")
+        assert frame.history_caret() == len(frame.history_items) - 1
         assert frame._request is None and frame.send_button.GetLabel() == "Send question"
     finally:
         frame.Destroy()

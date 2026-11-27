@@ -22,8 +22,8 @@ def data_dir(tmp_path):
     store = VideoSessionStore(tmp_path / 'chats')
     video = tmp_path / 'v.mp4'
     video.write_bytes(b'fixture, no media decoding')
-    session = store.create_session(owner_id=OWNER_ID, source_path=video, title='Chat', model='', initial_question='Describe it.',
-                                   system_prompt=OLD_PROMPT)
+    session = store.create_session(owner_id=OWNER_ID, source_path=video, title='Chat', model='',
+                                   initial_question='Describe it.', system_prompt=OLD_PROMPT)
     store.record_turn(session.id, OWNER_ID, [{'role': 'assistant', 'content': 'Old answer'}])
     store.set_rounds_in_context(session.id, OWNER_ID, [0], False)
     store.update_transcript(session.id, OWNER_ID, 'done', '[00:01] Hello\n[00:02] Second line')
@@ -48,7 +48,8 @@ def test_show_prints_the_prompt_and_marks_what_the_model_no_longer_gets(data_dir
 
 def test_an_ambiguous_or_unknown_chat_is_refused(data_dir):
     store = VideoSessionStore(data_dir / 'chats')
-    store.create_session(owner_id=OWNER_ID, source_path=data_dir / 'v.mp4', title='Chat', model='', initial_question='?')
+    store.create_session(owner_id=OWNER_ID, source_path=data_dir / 'v.mp4', title='Chat', model='',
+                         initial_question='?')
     with pytest.raises(SystemExit, match='several chats'):
         run(data_dir, 'show', 'Chat')
     with pytest.raises(SystemExit, match='no chat'):
@@ -100,7 +101,8 @@ def test_compare_sends_a_hearing_llama_cpp_model_its_sound_and_can_try_another_t
     sent = []
     monkeypatch.setattr(answering, 'llama_cpp_catalog', Server)
     monkeypatch.setattr(cli, 'ModelCatalog', Server)
-    monkeypatch.setattr(answering, 'sound_parts', lambda session, control=None: [{'type': 'input_audio', 'input_audio': {'data': 'x'}}])
+    monkeypatch.setattr(answering, 'sound_parts',
+                        lambda session, control=None: [{'type': 'input_audio', 'input_audio': {'data': 'x'}}])
     monkeypatch.setattr(ChatClient, 'run_turn', lambda client, session, messages, *a, **kw: sent.append(
         json.dumps(messages)) or Turn(entries=[], completion=Completion('Answer', 'omni', 1, None, None)))
     text = run(data_dir, 'compare', 'Chat', 'llama.cpp')

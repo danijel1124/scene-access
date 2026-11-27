@@ -141,7 +141,8 @@ def test_auto_transcribes_a_llama_cpp_chat_through_openrouter_not_its_server(fra
     # llama.cpp reads only the pictures, so in Auto mode its models never hear.
     start(frame, transcribe=TRANSCRIBE_AUTO)
     clients = []
-    monkeypatch.setattr(transcript, 'make_transcript', lambda session, client: clients.append(client) or '[00:00] Hello')
+    monkeypatch.setattr(transcript, 'make_transcript',
+                        lambda session, client: clients.append(client) or '[00:00] Hello')
     monkeypatch.setattr(ChatClient, 'run_turn', answered([]))
     frame._send('Describe it.', initial=True)
     [client] = clients
@@ -260,7 +261,8 @@ def test_a_long_video_is_described_in_sections_and_later_questions_get_the_text(
     # Each section is described and checked, then all are put together, and the answer is split into moments.
     assert frame.errors == [] and len(requests) == 6
     assert 'split that description into its moments' in requests[5] and 'The whole video.' in requests[5]
-    assert 'describe part 1 of 2' in requests[0] and 'You are the reviewer' in requests[1] and 'Part 1 of the video' in requests[1]
+    assert 'describe part 1 of 2' in requests[0]
+    assert 'You are the reviewer' in requests[1] and 'Part 1 of the video' in requests[1]
     assert 'describe part 2 of 2' in requests[2] and 'video_url' not in requests[1]
     stored = frame.store.get_session(frame.current.id, OWNER_ID)
     assert [entry['text'] for entry in stored.sections['sections']] == ['00:00 Part 1.', '00:30 Part 2.']
@@ -287,7 +289,8 @@ def test_a_reviewer_model_without_an_openrouter_key_stops_before_any_section_is_
     path = frame.current.directory / f'{SECTION_FILE_PREFIX}30s-000.mp4'
     path.write_bytes(b'section')
     monkeypatch.setattr(answering, 'video_duration', lambda session: 60.0)
-    monkeypatch.setattr(answering, 'cut_sections', lambda session, duration, control=None: [Section(0, 0.0, 60.0, path)])
+    monkeypatch.setattr(answering, 'cut_sections',
+                        lambda session, duration, control=None: [Section(0, 0.0, 60.0, path)])
     requests = []
     monkeypatch.setattr(ChatClient, 'run_turn', lambda *a, **kw: requests.append(a))
     frame._send('Describe it.', initial=True)
@@ -572,7 +575,8 @@ def test_chats_from_before_the_transcript_mode_all_get_auto(tmp_path):
         conn.execute("ALTER TABLE sessions RENAME COLUMN transcribe TO dropped")
         conn.execute("ALTER TABLE sessions ADD COLUMN openrouter_transcript TEXT NOT NULL DEFAULT '0'")
         conn.execute("INSERT INTO sessions (id, owner_id, title, source_path, model, initial_question, history_json, "
-                     "provider, openrouter_transcript) VALUES ('vid_a', 'o', 'A', 'x.mp4', '', '?', '[]', 'llama.cpp', '0'), "
+                     "provider, openrouter_transcript) VALUES "
+                     "('vid_a', 'o', 'A', 'x.mp4', '', '?', '[]', 'llama.cpp', '0'), "
                      "('vid_b', 'o', 'B', 'x.mp4', '', '?', '[]', 'openrouter', '0')")
     store = VideoSessionStore(root)
     assert [store.get_session(name, 'o').transcribe for name in ('vid_a', 'vid_b')] == [TRANSCRIBE_AUTO] * 2

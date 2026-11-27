@@ -62,7 +62,8 @@ REDO_TOOL = {"type": "function", "function": {
                    "wrong with its description; returns the new description. Each part at most once.",
     "parameters": {"type": "object", "properties": {
         "part": {"type": "integer", "description": "The part's number, from 1."},
-        "problems": {"type": "string", "description": "What is wrong with the part's description, and at which times."}},
+        "problems": {"type": "string",
+                     "description": "What is wrong with the part's description, and at which times."}},
         "required": ["part", "problems"]}}}
 
 

@@ -186,7 +186,8 @@ class ToolRunner:
         extract_frame(source, seconds, region, self.session.directory / name,
                       **({"control": self.control} if self.control else {}))
         x, y, w, h = region
-        region_text = "the whole frame" if region == (0.0, 0.0, 1.0, 1.0) else f"region x {x:g}, y {y:g}, width {w:g}, height {h:g}"
+        region_text = ("the whole frame" if region == (0.0, 0.0, 1.0, 1.0)
+                       else f"region x {x:g}, y {y:g}, width {w:g}, height {h:g}")
         pixels = f"{round(width * w)}x{round(height * h)} source pixels of a {width}x{height} frame"
         text = f"Image of {format_time(shown)} from {origin}, {region_text} ({pixels}). It follows as the next message."
         return ToolResult(text, image=name, caption=f"Image of {format_time(shown)}, {region_text}, {pixels}")

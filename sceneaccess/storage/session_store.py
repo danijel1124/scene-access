@@ -37,8 +37,8 @@ WIRE_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name", "reasoning
 SESSION_FILE_PREFIX = "session-file:"
 
 COLUMNS = ("id", "owner_id", "title", "source_path", "model", "initial_question", "history_json",
-           "system_prompt", "tools_json", "source_url", "video_info_json", "transcript", "transcript_state", "audio_only",
-           "size_confirmed", "provider", "transcribe", "section_seconds", "sections_json")
+           "system_prompt", "tools_json", "source_url", "video_info_json", "transcript", "transcript_state",
+           "audio_only", "size_confirmed", "provider", "transcribe", "section_seconds", "sections_json")
 # Columns added after the first release, with the value older chats get. Older chats get no transcript,
 # so opening them does not change what is sent and their cache stays valid. Chats from before llama.cpp
 # support were all answered by OpenRouter, and older chats transcribe as needed. Databases from before the
@@ -58,8 +58,9 @@ TRANSCRIBE_LABELS = {TRANSCRIBE_AUTO: "Auto: only while the model cannot hear th
 TRANSCRIBE_HEADING = "Transcript of the speech (through OpenRouter and ElevenLabs; needs an OpenRouter API key)"
 
 # transcript_state: "pending" until the first request decides whether the model needs a transcript,
-# "none" if the chat's transcript mode asked for none (each question decides again), "done" (text may be empty: no speech), "failed", or "appended": added
-# later at the end of the chat as a history entry, so the cached video and history before it stay valid.
+# "none" if the chat's transcript mode asked for none (each question decides again), "done" (text may be empty:
+# no speech), "failed", or "appended": added later at the end of the chat as a history entry, so the cached video
+# and history before it stay valid.
 TRANSCRIPT_PENDING, TRANSCRIPT_NONE, TRANSCRIPT_DONE, TRANSCRIPT_FAILED, TRANSCRIPT_APPENDED = (
     "pending", "none", "done", "failed", "appended")
 # A stored entry marked like this stays in the Chat history but is not sent to the model.
@@ -232,7 +233,8 @@ class VideoSession:
         # video, question, transcript, title and language, is cached together.
         content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
         return _merge_user_runs([*system, {"role": "user", "content": content},
-                                 *(self.wire_message(message) for message in self.history if not message.get(EXCLUDED))])
+                                 *(self.wire_message(message) for message in self.history
+                                   if not message.get(EXCLUDED))])
 
     def follow_up_messages(self, question: str) -> list[dict[str, Any]]:
         """What a later question sends: the chat so far, then the question."""
@@ -250,7 +252,8 @@ class VideoSession:
         if not url.startswith(SESSION_FILE_PREFIX):
             return part
         data = (self.directory / Path(url[len(SESSION_FILE_PREFIX):]).name).read_bytes()
-        return {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")}}
+        return {"type": "image_url",
+                "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")}}
 
 
 class VideoSessionStore:
@@ -303,7 +306,8 @@ class VideoSessionStore:
                 context.write(data_url)
             data_url_path.chmod(0o600)
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute(f"INSERT INTO sessions ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})", values)
+                conn.execute(f"INSERT INTO sessions ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
+                             values)
         except BaseException:
             if created_file:
                 data_url_path.unlink(missing_ok=True)
@@ -428,12 +432,14 @@ class VideoSessionStore:
         """Remembers that a question with the stored video was answered, so its size is not asked about again."""
         self.get_session(session_id, owner_id)
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE sessions SET size_confirmed = '1' WHERE id = ? AND owner_id = ?", (session_id, owner_id))
+            conn.execute("UPDATE sessions SET size_confirmed = '1' WHERE id = ? AND owner_id = ?",
+                         (session_id, owner_id))
 
     def replace_video(self, session_id: str, owner_id: str, video: Path) -> None:
         """Stores another copy of the chat's video to send, e.g. one shrunk for a provider's size limit."""
         session = self.get_session(session_id, owner_id)
-        mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mov"}.get(Path(video).suffix.lower(), "video/mp4")
+        mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mov"}.get(Path(video).suffix.lower(),
+                                                                                       "video/mp4")
         data_url = f"data:{mime};base64," + base64.b64encode(Path(video).read_bytes()).decode("ascii")
         temporary = session.data_url_path.with_suffix(".tmp")
         temporary.write_text(data_url, encoding="ascii")

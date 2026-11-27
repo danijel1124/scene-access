@@ -29,7 +29,8 @@ def test_settings_keep_the_profiles_and_the_profile_chosen_last():
     app = wx.App(False)
     frame = wx.Frame(None)
     try:
-        config = AppConfig(profiles=(("Mine", "My text"),), profile="Mine", youtube_cookies="firefox", audio_only_auto=True)
+        config = AppConfig(profiles=(("Mine", "My text"),), profile="Mine", youtube_cookies="firefox",
+                           audio_only_auto=True)
         dialog = SettingsDialog(frame, config)
         assert dialog.value().profiles == (("Mine", "My text"),)
         assert dialog.value().profile == "Mine"

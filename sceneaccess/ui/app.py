@@ -180,7 +180,8 @@ def main() -> int:
             if instance.activate_existing():
                 return 0
             wx.MessageBox("SceneAccess is already running, but its window could not be activated. "
-                          "Please switch to the existing instance.", "SceneAccess is already running", wx.OK | wx.ICON_WARNING)
+                          "Please switch to the existing instance.", "SceneAccess is already running",
+                          wx.OK | wx.ICON_WARNING)
             return 1
         config = load_config(path)  # Validate before constructing any application window.
         windows = ChatWindows()

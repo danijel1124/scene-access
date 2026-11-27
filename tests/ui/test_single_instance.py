@@ -84,7 +84,8 @@ from sceneaccess.ui import app, app_window
 app_window.config_path_from_standard_paths = lambda _: Path(sys.argv[1])/'config.json'
 raise SystemExit(app.main())
 '''
-    primary = subprocess.Popen([sys.executable, '-c', HIDDEN + primary_script, str(tmp_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    primary = subprocess.Popen([sys.executable, '-c', HIDDEN + primary_script, str(tmp_path)],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         deadline = time.monotonic()+10
         while not ready.exists() and primary.poll() is None and time.monotonic() < deadline:

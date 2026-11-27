@@ -60,7 +60,8 @@ def test_size_message_explains_the_sizes_and_offers_only_what_fits():
     assert "lower resolution" in online and "Don't show this dialog again" in online
     local = chat_dialogs.size_message(46_000_000, "openrouter/auto", online=False)
     assert "lower resolution" not in local and "Don't show this dialog again" not in local
-    assert local.endswith("Shrink the video or send it as it is? Back returns to the Start a video chat dialog for these settings.")
+    assert local.endswith("Shrink the video or send it as it is? Back returns to the Start a video chat dialog for "
+                          "these settings.")
 
 
 def test_size_dialog_offers_lower_resolution_and_dont_ask_only_where_they_apply():

@@ -185,12 +185,13 @@ class ChatFrame(AppWindow, NewChatMixin, ChatSetupMixin, ChatRequestMixin, wx.Fr
         session = self.current
         self.SetTitle(f"{session.title} - SceneAccess")
         context = "The local video context is stored; the original file is not required."
-        source = "The original file is no longer available." if session.source_missing else "The original file is still available."
+        source = ("The original file is no longer available." if session.source_missing
+                  else "The original file is still available.")
         model = session.model or f"{self.config.model_for(session.provider)} (from Settings)"
         self.status.SetLabel(f"{session.title} | {model} via {PROVIDER_LABELS.get(session.provider, session.provider)}"
                              f"\n{context} {source}")
-        rows = chat_history_rows(session.initial_question, session.history, session.transcript_state, session.transcript,
-                                 session.sections)
+        rows = chat_history_rows(session.initial_question, session.history, session.transcript_state,
+                                 session.transcript, session.sections)
         items = [shown for shown, _full, _index, _kind in rows]
         self.history_items = items
         self.reader_texts = [full for _shown, full, _index, _kind in rows]
@@ -281,7 +282,8 @@ class ChatFrame(AppWindow, NewChatMixin, ChatSetupMixin, ChatRequestMixin, wx.Fr
                               "Hidden from the model; the answers stay in the history.")
 
     def delete_answers(self, indices: list[int], rounds: int) -> None:
-        """Deletes the answers' rounds, with their questions, tool steps and images, from the history and the context."""
+        """Deletes the answers' rounds, with their questions, tool steps and images, from the history and the
+        context."""
         if not self.current or self._chat_busy():
             return
         what = "This answer, its question and its tool steps" if rounds == 1 else \

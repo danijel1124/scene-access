@@ -149,9 +149,9 @@ def clean_description(text: str, heard: str, whole: bool = False) -> tuple[str, 
     """A description with what needs no model removed: text before the first time, tenths of seconds, and in the
     timed lines each sentence that only repeats what is said or says what someone talks about, and such a clause
     after what is seen. A description of the whole video (whole) keeps its overview before the first time, but not a
-    first line only announcing it (_lead_in), and its paragraphs, and judges its lines after the first time also when they carry none: models put the time in a
-    heading such as "**00:00 – 00:26: Zahnpflege**" and the description below it. Returns the cleaned text and a
-    note for each change."""
+    first line only announcing it (_lead_in), and its paragraphs, and judges its lines after the first time also
+    when they carry none: models put the time in a heading such as "**00:00 – 00:26: Zahnpflege**" and the
+    description below it. Returns the cleaned text and a note for each change."""
     spoken = _spoken(heard)
     notes, kept = [], []
     timed_before = False
